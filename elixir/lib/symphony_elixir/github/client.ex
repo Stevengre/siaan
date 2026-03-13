@@ -383,9 +383,8 @@ defmodule SymphonyElixir.GitHub.Client do
     tracker = Config.settings!().tracker
 
     api_key = Map.get(tracker, :api_key)
-    {fallback_owner, fallback_name} = parse_repo_slug(Map.get(tracker, :project_slug) || "")
-    repo_owner = Map.get(tracker, :repo_owner) || fallback_owner
-    repo_name = Map.get(tracker, :repo_name) || fallback_name
+    repo_owner = Map.get(tracker, :repo_owner)
+    repo_name = Map.get(tracker, :repo_name)
 
     with {:ok, _api_key} <- ensure_present_string(api_key, :missing_github_api_token),
          {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
@@ -438,13 +437,6 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(value), do: to_string(value)
-
-  defp parse_repo_slug(value) when is_binary(value) do
-    case value |> String.trim() |> String.split("/", parts: 2) do
-      [owner, repo] when owner != "" and repo != "" -> {owner, repo}
-      _ -> {nil, nil}
-    end
-  end
 
   defp ensure_present_string(value, error) when is_binary(value) do
     trimmed = String.trim(value)

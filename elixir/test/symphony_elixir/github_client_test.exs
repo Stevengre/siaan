@@ -240,6 +240,19 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
+      tracker_project_slug: "acme/repo",
+      tracker_repo_owner: nil,
+      tracker_repo_name: nil,
+      tracker_api_token: "gh-token"
+    )
+
+    assert {:error, :missing_github_repo_owner} =
+             Client.fetch_candidate_issues_for_test(fn _method, _url, _opts ->
+               flunk("project_slug must not bypass missing repo_owner validation")
+             end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
       tracker_repo_owner: "acme",
       tracker_repo_name: nil,
       tracker_api_token: "gh-token"
