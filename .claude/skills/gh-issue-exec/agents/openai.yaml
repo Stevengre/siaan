@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Issue Exec"
+  short_description: "Execute in-progress GitHub issues end to end"
+  default_prompt: "Use $gh-issue-exec to execute GitHub issue <issue-number> from its Agent Workpad in an isolated worktree and drive it to a review-ready PR."

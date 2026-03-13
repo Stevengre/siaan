@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Workpad"
+  short_description: "Keep GitHub issue workpads current"
+  default_prompt: "Use $agent-workpad to update the Agent Workpad section for this GitHub issue without touching the human-facing issue body."
