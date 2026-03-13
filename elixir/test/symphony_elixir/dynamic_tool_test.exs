@@ -3,23 +3,19 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
   alias SymphonyElixir.Codex.DynamicTool
 
-  test "tool_specs advertises the linear_graphql input contract" do
-    assert [
-             %{
-               "description" => description,
-               "inputSchema" => %{
-                 "properties" => %{
-                   "query" => _,
-                   "variables" => _
-                 },
-                 "required" => ["query"],
-                 "type" => "object"
-               },
-               "name" => "linear_graphql"
-             }
-           ] = DynamicTool.tool_specs()
+  test "tool_specs advertises linear_graphql and github_graphql input contracts" do
+    specs = DynamicTool.tool_specs()
 
-    assert description =~ "Linear"
+    assert Enum.map(specs, & &1["name"]) == ["linear_graphql", "github_graphql"]
+
+    assert Enum.all?(specs, fn spec ->
+             get_in(spec, ["inputSchema", "type"]) == "object" and
+               get_in(spec, ["inputSchema", "required"]) == ["query"] and
+               is_map(get_in(spec, ["inputSchema", "properties"]))
+           end)
+
+    assert Enum.any?(specs, &String.contains?(&1["description"], "Linear"))
+    assert Enum.any?(specs, &String.contains?(&1["description"], "GitHub"))
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
@@ -30,7 +26,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_graphql"]
+               "supportedTools" => ["linear_graphql", "github_graphql"]
              }
            }
 
@@ -306,5 +302,69 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert response["success"] == true
     assert response["output"] == ":ok"
+  end
+
+  test "github_graphql returns successful GraphQL responses as tool text" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "github_graphql",
+        %{
+          "query" => "query Viewer { viewer { login } }",
+          "variables" => %{"enterprise" => false}
+        },
+        github_client: fn query, variables, opts ->
+          send(test_pid, {:github_client_called, query, variables, opts})
+          {:ok, %{"data" => %{"viewer" => %{"login" => "octocat"}}}}
+        end
+      )
+
+    assert_received {:github_client_called, "query Viewer { viewer { login } }", %{"enterprise" => false}, []}
+    assert response["success"] == true
+    assert Jason.decode!(response["output"]) == %{"data" => %{"viewer" => %{"login" => "octocat"}}}
+  end
+
+  test "github_graphql formats auth, status, and request failures" do
+    missing_token =
+      DynamicTool.execute(
+        "github_graphql",
+        %{"query" => "query Viewer { viewer { login } }"},
+        github_client: fn _query, _variables, _opts -> {:error, :missing_github_api_token} end
+      )
+
+    assert Jason.decode!(missing_token["output"]) == %{
+             "error" => %{
+               "message" => "Symphony is missing GitHub auth. Set `tracker.api_key` in `WORKFLOW.md` or export `GITHUB_TOKEN`."
+             }
+           }
+
+    status_error =
+      DynamicTool.execute(
+        "github_graphql",
+        %{"query" => "query Viewer { viewer { login } }"},
+        github_client: fn _query, _variables, _opts -> {:error, {:github_api_status, 502}} end
+      )
+
+    assert Jason.decode!(status_error["output"]) == %{
+             "error" => %{
+               "message" => "GitHub GraphQL request failed with HTTP 502.",
+               "status" => 502
+             }
+           }
+
+    request_error =
+      DynamicTool.execute(
+        "github_graphql",
+        %{"query" => "query Viewer { viewer { login } }"},
+        github_client: fn _query, _variables, _opts -> {:error, {:github_api_request, :timeout}} end
+      )
+
+    assert Jason.decode!(request_error["output"]) == %{
+             "error" => %{
+               "message" => "GitHub GraphQL request failed before receiving a successful response.",
+               "reason" => ":timeout"
+             }
+           }
   end
 end
