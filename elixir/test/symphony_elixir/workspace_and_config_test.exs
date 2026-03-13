@@ -307,6 +307,33 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute issue.assigned_to_worker
   end
 
+  test "github issue helpers normalize labels and convert to tracker issue shape" do
+    github_issue = %SymphonyElixir.GitHub.Issue{
+      id: "1234",
+      number: 42,
+      title: "Add GitHub tracker support",
+      body: "Implement adapter and client",
+      state: "status:ready",
+      url: "https://github.com/acme/repo/issues/42",
+      labels: ["Status:Ready", "Infra"],
+      assignees: ["octocat"]
+    }
+
+    assert SymphonyElixir.GitHub.Issue.label_names(github_issue) == ["status:ready", "infra"]
+    assert SymphonyElixir.GitHub.Issue.status_label(github_issue) == "status:ready"
+
+    tracker_issue = SymphonyElixir.GitHub.Issue.to_tracker_issue(github_issue)
+
+    assert tracker_issue.id == "1234"
+    assert tracker_issue.identifier == "GH-42"
+    assert tracker_issue.title == "Add GitHub tracker support"
+    assert tracker_issue.description == "Implement adapter and client"
+    assert tracker_issue.state == "status:ready"
+    assert tracker_issue.url == "https://github.com/acme/repo/issues/42"
+    assert tracker_issue.labels == ["status:ready", "infra"]
+    assert tracker_issue.assignee_id == "octocat"
+  end
+
   test "linear client normalizes blockers from inverse relations" do
     raw_issue = %{
       "id" => "issue-1",
