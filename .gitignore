@@ -16,6 +16,9 @@ erl_crash.dump
 *.swp
 *.swo
 
+# Worktrees
+.worktrees/
+
 # Env
 .env
 .env.*
