@@ -12,4 +12,4 @@ An autonomous agent orchestrator that monitors GitHub Issues and dispatches AI c
 
 ## Acknowledgments
 
-Architecture inspired by [OpenAI Symphony](https://github.com/openai/symphony) (MIT). Core orchestration built on Elixir/OTP.
+Architecture inspired by [OpenAI Symphony](https://github.com/openai/symphony) (Apache-2.0). Core orchestration built on Elixir/OTP.

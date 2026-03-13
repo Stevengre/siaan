@@ -1,0 +1,54 @@
+name: Restrict Issues and PRs
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, reopened]
+
+jobs:
+  check-author:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close if not repo owner
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = 'Stevengre';
+            const sender = context.payload.sender.login;
+
+            if (sender === owner) {
+              console.log(`Author ${sender} is the repo owner. Allowing.`);
+              return;
+            }
+
+            const isIssue = !!context.payload.issue;
+            const number = isIssue
+              ? context.payload.issue.number
+              : context.payload.pull_request.number;
+            const type = isIssue ? 'issue' : 'pull request';
+
+            // Add a comment explaining why it's closed
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body: [
+                `Hi @${sender}, thank you for your interest!`,
+                '',
+                'This repository only accepts issues and pull requests from the maintainer.',
+                `Please use [GitHub Discussions](https://github.com/${context.repo.owner}/${context.repo.repo}/discussions) for questions, suggestions, and community conversations.`,
+                '',
+                `Closing this ${type} automatically.`
+              ].join('\n')
+            });
+
+            // Close the issue or PR
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              state: 'closed'
+            });
+
+            console.log(`Closed ${type} #${number} by ${sender}`);
