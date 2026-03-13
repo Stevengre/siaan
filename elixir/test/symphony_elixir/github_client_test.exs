@@ -27,6 +27,21 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert issue.assignees == ["octocat"]
     assert DateTime.to_iso8601(issue.created_at) == "2026-03-01T12:00:00Z"
     assert DateTime.to_iso8601(issue.updated_at) == "2026-03-02T13:00:00Z"
+
+    closed_issue =
+      Client.normalize_issue_for_test(%{
+        "id" => 22_222,
+        "number" => 22,
+        "title" => "Closed issue",
+        "body" => "Done",
+        "html_url" => "https://github.com/acme/repo/issues/22",
+        "state" => "closed",
+        "labels" => [%{"name" => "status:in-progress"}],
+        "assignees" => []
+      })
+
+    assert %Issue{} = closed_issue
+    assert closed_issue.state == "closed"
   end
 
   test "fetch_candidate_issues_for_test fetches ready-label issues and skips pull requests" do
@@ -297,6 +312,64 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, [%Issue{id: "11"}]} =
              Client.fetch_issues_by_states_for_test(["status:in-progress", "status:review"], request_fun)
+  end
+
+  test "fetch_issues_by_states_for_test supports open/closed issue state filters" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token"
+    )
+
+    request_fun = fn :get, _url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      send(self(), {:params, params})
+
+      body =
+        case params[:state] do
+          "closed" ->
+            [
+              %{
+                "id" => 222,
+                "number" => 22,
+                "title" => "Closed issue",
+                "body" => "Done",
+                "state" => "closed",
+                "html_url" => "https://github.com/acme/repo/issues/22",
+                "labels" => [%{"name" => "status:in-progress"}],
+                "assignees" => []
+              }
+            ]
+
+          "open" ->
+            [
+              %{
+                "id" => 333,
+                "number" => 33,
+                "title" => "Open issue",
+                "body" => "Todo",
+                "state" => "open",
+                "html_url" => "https://github.com/acme/repo/issues/33",
+                "labels" => [],
+                "assignees" => []
+              }
+            ]
+        end
+
+      {:ok, %{status: 200, body: body}}
+    end
+
+    assert {:ok, [%Issue{id: "22", state: "closed"}, %Issue{id: "33", state: "open"}]} =
+             Client.fetch_issues_by_states_for_test(["Closed", "Open"], request_fun)
+
+    assert_receive {:params, params_closed}
+    assert params_closed[:state] == "closed"
+    refute Keyword.has_key?(params_closed, :labels)
+
+    assert_receive {:params, params_open}
+    assert params_open[:state] == "open"
+    refute Keyword.has_key?(params_open, :labels)
   end
 
   test "fetch_issues_by_states_for_test surfaces transport failures" do

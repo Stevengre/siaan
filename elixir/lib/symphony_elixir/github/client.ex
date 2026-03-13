@@ -174,7 +174,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp do_fetch_issues_by_states(state_names, tracker, request_fun) do
     Enum.reduce_while(state_names, {:ok, {[], MapSet.new()}}, fn state_name, {:ok, {acc, seen}} ->
-      case list_issues_by_labels(tracker, [state_name], "all", request_fun) do
+      case list_issues_for_state_name(tracker, state_name, request_fun) do
         {:ok, issues} ->
           {next_acc, next_seen} = append_new_issues(acc, seen, issues)
           {:cont, {:ok, {next_acc, next_seen}}}
@@ -186,6 +186,14 @@ defmodule SymphonyElixir.GitHub.Client do
     |> case do
       {:ok, {issues, _seen}} -> {:ok, issues}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp list_issues_for_state_name(tracker, state_name, request_fun) do
+    case state_name |> to_string() |> String.trim() |> String.downcase() do
+      "open" -> list_issues_by_labels(tracker, [], "open", request_fun)
+      "closed" -> list_issues_by_labels(tracker, [], "closed", request_fun)
+      _ -> list_issues_by_labels(tracker, [state_name], "all", request_fun)
     end
   end
 
@@ -218,12 +226,9 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page, acc) do
-    params = [
-      state: state,
-      labels: Enum.join(labels, ","),
-      per_page: @issue_page_size,
-      page: page
-    ]
+    params =
+      [state: state, per_page: @issue_page_size, page: page]
+      |> maybe_put_labels_param(labels)
 
     case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
       {:ok, %{status: 200, body: body}} when is_list(body) ->
@@ -298,7 +303,17 @@ defmodule SymphonyElixir.GitHub.Client do
   defp normalize_issue(_raw_issue), do: nil
 
   defp issue_state(raw_issue, labels) do
-    Enum.find(labels, &String.starts_with?(&1, "status:")) || raw_issue["state"]
+    case raw_issue["state"] do
+      state when is_binary(state) and state != "" ->
+        if String.downcase(state) == "closed" do
+          "closed"
+        else
+          Enum.find(labels, &String.starts_with?(&1, "status:")) || state
+        end
+
+      _ ->
+        Enum.find(labels, &String.starts_with?(&1, "status:")) || raw_issue["state"]
+    end
   end
 
   defp issue_id(_raw_issue, number) when is_integer(number), do: Integer.to_string(number)
@@ -428,6 +443,19 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp issue_url(tracker, number), do: "#{issues_url(tracker)}/#{number}"
   defp issue_comments_url(tracker, number), do: "#{issue_url(tracker, number)}/comments"
+
+  defp maybe_put_labels_param(params, labels) when is_list(labels) do
+    cleaned_labels =
+      labels
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    case cleaned_labels do
+      [] -> params
+      _ -> Keyword.put(params, :labels, Enum.join(cleaned_labels, ","))
+    end
+  end
 
   defp normalize_label(value) when is_binary(value) do
     value
