@@ -49,6 +49,9 @@ defmodule SymphonyElixir.Config.Schema do
       field(:endpoint, :string, default: "https://api.linear.app/graphql")
       field(:api_key, :string)
       field(:project_slug, :string)
+      field(:repo_owner, :string)
+      field(:repo_name, :string)
+      field(:ready_label, :string, default: "status:ready")
       field(:assignee, :string)
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
@@ -59,7 +62,18 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
+        [
+          :kind,
+          :endpoint,
+          :api_key,
+          :project_slug,
+          :repo_owner,
+          :repo_name,
+          :ready_label,
+          :assignee,
+          :active_states,
+          :terminal_states
+        ],
         empty_values: []
       )
     end
@@ -366,10 +380,26 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
+    api_key_fallback =
+      case settings.tracker.kind do
+        "github" -> System.get_env("GITHUB_TOKEN")
+        _ -> System.get_env("LINEAR_API_KEY")
+      end
+
+    assignee_fallback =
+      case settings.tracker.kind do
+        "linear" -> System.get_env("LINEAR_ASSIGNEE")
+        _ -> nil
+      end
+
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
-        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+      | endpoint: resolve_tracker_endpoint(settings.tracker.kind, settings.tracker.endpoint),
+        api_key: resolve_secret_setting(settings.tracker.api_key, api_key_fallback),
+        repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
+        repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
+        ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
+        assignee: resolve_secret_setting(settings.tracker.assignee, assignee_fallback)
     }
 
     workspace = %{
@@ -385,6 +415,41 @@ defmodule SymphonyElixir.Config.Schema do
 
     %{settings | tracker: tracker, workspace: workspace, codex: codex}
   end
+
+  defp resolve_tracker_endpoint(kind, endpoint) when is_binary(kind) do
+    default_endpoint =
+      case kind do
+        "github" -> "https://api.github.com/graphql"
+        _ -> "https://api.linear.app/graphql"
+      end
+
+    case endpoint do
+      value when is_binary(value) ->
+        resolved_endpoint =
+          value
+          |> resolve_env_value(default_endpoint)
+          |> normalize_endpoint(default_endpoint)
+
+        normalize_tracker_endpoint_for_kind(kind, resolved_endpoint)
+
+      _ ->
+        default_endpoint
+    end
+  end
+
+  defp resolve_tracker_endpoint(_kind, endpoint), do: resolve_tracker_endpoint("", endpoint)
+
+  defp normalize_endpoint(value, default_endpoint) when is_binary(value) do
+    case String.trim(value) do
+      "" -> default_endpoint
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_tracker_endpoint_for_kind("github", "https://api.linear.app/graphql"),
+    do: "https://api.github.com/graphql"
+
+  defp normalize_tracker_endpoint_for_kind(_kind, endpoint), do: endpoint
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

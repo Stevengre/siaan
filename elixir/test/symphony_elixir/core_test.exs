@@ -86,6 +86,41 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "123")
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
+
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
+    System.put_env("GITHUB_TOKEN", "fallback-github-token")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      tracker_repo_owner: nil,
+      tracker_repo_name: nil
+    )
+
+    assert {:error, :missing_github_repo_owner} = Config.validate!()
+    assert Config.settings!().tracker.api_key == "fallback-github-token"
+    assert Config.settings!().tracker.endpoint == "https://api.github.com/graphql"
+    assert Config.settings!().tracker.ready_label == "status:ready"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: nil
+    )
+
+    assert {:error, :missing_github_repo_name} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo"
+    )
+
+    assert :ok = Config.validate!()
   end
 
   test "current WORKFLOW.md file is valid and complete" do
@@ -515,6 +550,8 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "normal worker exit schedules active-state continuation retry" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+
     issue_id = "issue-resume"
     ref = make_ref()
     orchestrator_name = Module.concat(__MODULE__, :ContinuationOrchestrator)
@@ -555,6 +592,8 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+
     issue_id = "issue-crash"
     ref = make_ref()
     orchestrator_name = Module.concat(__MODULE__, :CrashRetryOrchestrator)
