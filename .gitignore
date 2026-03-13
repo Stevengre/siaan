@@ -1,0 +1,21 @@
+# Elixir
+/_build/
+/deps/
+*.ez
+*.beam
+
+# Generated on crash
+erl_crash.dump
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.*
