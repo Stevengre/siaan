@@ -53,7 +53,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:repo_name, :string)
       field(:ready_label, :string, default: "status:ready")
       field(:assignee, :string)
-      field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
+      field(:active_states, {:array, :string})
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
     end
 
@@ -399,6 +399,7 @@ defmodule SymphonyElixir.Config.Schema do
         repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
         ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
+        active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
         assignee: resolve_secret_setting(settings.tracker.assignee, assignee_fallback)
     }
 
@@ -444,6 +445,10 @@ defmodule SymphonyElixir.Config.Schema do
     do: "https://api.github.com/graphql"
 
   defp normalize_tracker_endpoint_for_kind(_kind, endpoint), do: endpoint
+
+  defp resolve_active_states("github", nil), do: ["status:ready", "status:in-progress"]
+  defp resolve_active_states(_kind, nil), do: ["Todo", "In Progress"]
+  defp resolve_active_states(_kind, active_states), do: active_states
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

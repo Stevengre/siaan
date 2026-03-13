@@ -96,13 +96,26 @@ defmodule SymphonyElixir.CoreTest do
       tracker_api_token: nil,
       tracker_project_slug: nil,
       tracker_repo_owner: nil,
-      tracker_repo_name: nil
+      tracker_repo_name: nil,
+      tracker_active_states: nil
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
     assert Config.settings!().tracker.api_key == "fallback-github-token"
     assert Config.settings!().tracker.endpoint == "https://api.github.com/graphql"
     assert Config.settings!().tracker.ready_label == "status:ready"
+    assert Config.settings!().tracker.active_states == ["status:ready", "status:in-progress"]
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_project_slug: "acme/repo",
+      tracker_repo_owner: nil,
+      tracker_repo_name: nil,
+      tracker_active_states: nil
+    )
+
+    assert {:error, :missing_github_repo_owner} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
