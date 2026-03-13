@@ -20,7 +20,7 @@ defmodule SymphonyElixir.GitHub.Issue do
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
-          number: non_neg_integer() | nil,
+          number: non_neg_integer() | String.t() | nil,
           title: String.t() | nil,
           body: String.t() | nil,
           state: String.t() | nil,

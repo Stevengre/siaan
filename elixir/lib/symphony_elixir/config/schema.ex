@@ -394,7 +394,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     tracker = %{
       settings.tracker
-      | endpoint: resolve_tracker_endpoint(settings.tracker.kind, settings.tracker.endpoint),
+      | endpoint: resolve_tracker_endpoint(settings.tracker.kind, settings.tracker.endpoint || ""),
         api_key: resolve_secret_setting(settings.tracker.api_key, api_key_fallback),
         repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
@@ -416,25 +416,19 @@ defmodule SymphonyElixir.Config.Schema do
     %{settings | tracker: tracker, workspace: workspace, codex: codex}
   end
 
-  defp resolve_tracker_endpoint(kind, endpoint) when is_binary(kind) do
+  defp resolve_tracker_endpoint(kind, endpoint) when is_binary(kind) and is_binary(endpoint) do
     default_endpoint =
       case kind do
         "github" -> "https://api.github.com/graphql"
         _ -> "https://api.linear.app/graphql"
       end
 
-    case endpoint do
-      value when is_binary(value) ->
-        resolved_endpoint =
-          value
-          |> resolve_env_value(default_endpoint)
-          |> normalize_endpoint(default_endpoint)
+    resolved_endpoint =
+      endpoint
+      |> resolve_env_value(default_endpoint)
+      |> normalize_endpoint(default_endpoint)
 
-        normalize_tracker_endpoint_for_kind(kind, resolved_endpoint)
-
-      _ ->
-        default_endpoint
-    end
+    normalize_tracker_endpoint_for_kind(kind, resolved_endpoint)
   end
 
   defp resolve_tracker_endpoint(_kind, endpoint), do: resolve_tracker_endpoint("", endpoint)

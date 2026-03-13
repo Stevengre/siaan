@@ -30,6 +30,17 @@ defmodule SymphonyElixir.GitHub.Client do
     fetch_issues_by_states(state_names, &request/3)
   end
 
+  @doc false
+  @spec fetch_issues_by_states_for_test(
+          [String.t()],
+          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
+        ) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issues_by_states_for_test(state_names, request_fun)
+      when is_list(state_names) and is_function(request_fun, 3) do
+    fetch_issues_by_states(state_names, request_fun)
+  end
+
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) when is_list(issue_ids) do
     fetch_issue_states_by_ids(issue_ids, &request/3)
@@ -47,11 +58,27 @@ defmodule SymphonyElixir.GitHub.Client do
 
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) when is_binary(issue_id) and is_binary(body) do
+    create_comment(issue_id, body, &request/3)
+  end
+
+  @doc false
+  @spec create_comment_for_test(
+          String.t(),
+          String.t(),
+          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
+        ) ::
+          :ok | {:error, term()}
+  def create_comment_for_test(issue_id, body, request_fun)
+      when is_binary(issue_id) and is_binary(body) and is_function(request_fun, 3) do
+    create_comment(issue_id, body, request_fun)
+  end
+
+  defp create_comment(issue_id, body, request_fun) when is_function(request_fun, 3) do
     with {:ok, tracker} <- github_tracker_config(),
          {:ok, number} <- parse_issue_number(issue_id),
          {:ok, headers} <- github_headers(),
          {:ok, %{status: status}} when status in [200, 201] <-
-           request(:post, issue_comments_url(tracker, number), [headers: headers, json: %{"body" => body}]) do
+           request_fun.(:post, issue_comments_url(tracker, number), headers: headers, json: %{"body" => body}) do
       :ok
     else
       {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
@@ -63,14 +90,30 @@ defmodule SymphonyElixir.GitHub.Client do
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
   def update_issue_state(issue_id, state_name)
       when is_binary(issue_id) and is_binary(state_name) do
+    update_issue_state(issue_id, state_name, &request/3)
+  end
+
+  @doc false
+  @spec update_issue_state_for_test(
+          String.t(),
+          String.t(),
+          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
+        ) ::
+          :ok | {:error, term()}
+  def update_issue_state_for_test(issue_id, state_name, request_fun)
+      when is_binary(issue_id) and is_binary(state_name) and is_function(request_fun, 3) do
+    update_issue_state(issue_id, state_name, request_fun)
+  end
+
+  defp update_issue_state(issue_id, state_name, request_fun) when is_function(request_fun, 3) do
     with {:ok, tracker} <- github_tracker_config(),
          {:ok, number} <- parse_issue_number(issue_id),
-         {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, &request/3),
+         {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, request_fun),
          %Issue{} = existing_issue <- existing_issue,
          {:ok, headers} <- github_headers(),
          labels <- retarget_status_labels(existing_issue.labels, state_name),
          {:ok, %{status: status}} when status in [200, 201] <-
-           request(:patch, issue_url(tracker, number), [headers: headers, json: %{"labels" => labels}]) do
+           request_fun.(:patch, issue_url(tracker, number), headers: headers, json: %{"labels" => labels}) do
       :ok
     else
       nil -> {:error, :issue_not_found}
@@ -93,7 +136,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
     with {:ok, headers} <- github_headers(),
          {:ok, %{status: 200, body: body}} <-
-           request_fun.(:post, endpoint, [headers: headers, json: payload]) do
+           request_fun.(:post, endpoint, headers: headers, json: payload) do
       {:ok, body}
     else
       {:ok, %{status: status, body: body}} ->
@@ -113,9 +156,8 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp fetch_candidate_issues(request_fun) when is_function(request_fun, 3) do
-    with {:ok, tracker} <- github_tracker_config(),
-         {:ok, issues} <- list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun) do
-      {:ok, issues}
+    with {:ok, tracker} <- github_tracker_config() do
+      list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun)
     end
   end
 
@@ -183,7 +225,7 @@ defmodule SymphonyElixir.GitHub.Client do
       page: page
     ]
 
-    case request_fun.(:get, issues_url(tracker), [headers: headers, params: params]) do
+    case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
       {:ok, %{status: 200, body: body}} when is_list(body) ->
         normalized =
           body
@@ -209,7 +251,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp fetch_issue_by_number(tracker, number, request_fun) do
     with {:ok, headers} <- github_headers() do
-      case request_fun.(:get, issue_url(tracker, number), [headers: headers]) do
+      case request_fun.(:get, issue_url(tracker, number), headers: headers) do
         {:ok, %{status: 200, body: body}} when is_map(body) ->
           {:ok, normalize_issue(body)}
 
@@ -337,33 +379,23 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp parse_issue_number(_issue_id), do: {:error, :invalid_github_issue_id}
-
   defp github_tracker_config do
     tracker = Config.settings!().tracker
 
     api_key = Map.get(tracker, :api_key)
-    {fallback_owner, fallback_name} = parse_repo_slug(Map.get(tracker, :project_slug))
+    {fallback_owner, fallback_name} = parse_repo_slug(Map.get(tracker, :project_slug) || "")
     repo_owner = Map.get(tracker, :repo_owner) || fallback_owner
     repo_name = Map.get(tracker, :repo_name) || fallback_name
 
-    cond do
-      not is_binary(api_key) or String.trim(api_key) == "" ->
-        {:error, :missing_github_api_token}
-
-      not is_binary(repo_owner) or String.trim(repo_owner) == "" ->
-        {:error, :missing_github_repo_owner}
-
-      not is_binary(repo_name) or String.trim(repo_name) == "" ->
-        {:error, :missing_github_repo_name}
-
-      true ->
-        {:ok,
-         %{
-           repo_owner: String.trim(repo_owner),
-           repo_name: String.trim(repo_name),
-           ready_label: normalize_label(Map.get(tracker, :ready_label) || "status:ready")
-         }}
+    with {:ok, _api_key} <- ensure_present_string(api_key, :missing_github_api_token),
+         {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
+         {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name) do
+      {:ok,
+       %{
+         repo_owner: normalized_owner,
+         repo_name: normalized_repo,
+         ready_label: normalize_label(Map.get(tracker, :ready_label) || "status:ready")
+       }}
     end
   end
 
@@ -388,8 +420,8 @@ defmodule SymphonyElixir.GitHub.Client do
       "https://api.linear.app/graphql" ->
         @graphql_endpoint
 
-      endpoint when is_binary(endpoint) and endpoint != "" -> endpoint
-      _ -> @graphql_endpoint
+      endpoint ->
+        endpoint
     end
   end
 
@@ -404,8 +436,6 @@ defmodule SymphonyElixir.GitHub.Client do
     |> String.downcase()
   end
 
-  defp normalize_label(value), do: value |> to_string() |> normalize_label()
-
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(value), do: to_string(value)
 
@@ -416,7 +446,12 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp parse_repo_slug(_value), do: {nil, nil}
+  defp ensure_present_string(value, error) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: {:error, error}, else: {:ok, trimmed}
+  end
+
+  defp ensure_present_string(_value, error), do: {:error, error}
 
   defp request(method, url, opts) when is_atom(method) and is_binary(url) and is_list(opts) do
     Req.request(

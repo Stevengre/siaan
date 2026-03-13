@@ -48,6 +48,14 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     end
   end
 
+  defmodule RawGitHubClient do
+    def fetch_candidate_issues, do: {:ok, [:candidate]}
+    def fetch_issues_by_states(_states), do: {:ok, [:state_issue]}
+    def fetch_issue_states_by_ids(_ids), do: {:ok, [:state_refresh]}
+    def create_comment(_issue_id, _body), do: {:error, :boom}
+    def update_issue_state(_issue_id, _state_name), do: {:error, :boom}
+  end
+
   setup do
     previous_module = Application.get_env(:symphony_elixir, :github_client_module)
 
@@ -100,5 +108,15 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     )
 
     assert SymphonyElixir.Tracker.adapter() == SymphonyElixir.GitHub.Adapter
+  end
+
+  test "adapter leaves non-GitHub issue values untouched" do
+    Application.put_env(:symphony_elixir, :github_client_module, RawGitHubClient)
+
+    assert {:ok, [:candidate]} = Adapter.fetch_candidate_issues()
+    assert {:ok, [:state_issue]} = Adapter.fetch_issues_by_states(["status:ready"])
+    assert {:ok, [:state_refresh]} = Adapter.fetch_issue_states_by_ids(["7"])
+    assert {:error, :boom} = Adapter.create_comment("7", "hello")
+    assert {:error, :boom} = Adapter.update_issue_state("7", "status:review")
   end
 end

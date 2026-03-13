@@ -3,6 +3,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
+  alias SymphonyElixir.GitHub.Issue, as: GitHubIssue
   alias SymphonyElixir.Linear.Client
 
   test "workspace bootstrap can be implemented in after_create hook" do
@@ -308,7 +309,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   end
 
   test "github issue helpers normalize labels and convert to tracker issue shape" do
-    github_issue = %SymphonyElixir.GitHub.Issue{
+    github_issue = %GitHubIssue{
       id: "1234",
       number: 42,
       title: "Add GitHub tracker support",
@@ -319,10 +320,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assignees: ["octocat"]
     }
 
-    assert SymphonyElixir.GitHub.Issue.label_names(github_issue) == ["status:ready", "infra"]
-    assert SymphonyElixir.GitHub.Issue.status_label(github_issue) == "status:ready"
+    assert GitHubIssue.label_names(github_issue) == ["status:ready", "infra"]
+    assert GitHubIssue.status_label(github_issue) == "status:ready"
 
-    tracker_issue = SymphonyElixir.GitHub.Issue.to_tracker_issue(github_issue)
+    tracker_issue = GitHubIssue.to_tracker_issue(github_issue)
 
     assert tracker_issue.id == "1234"
     assert tracker_issue.identifier == "GH-42"
@@ -1074,6 +1075,20 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert settings.tracker.api_key == "fallback-linear-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+
+    assert {:ok, github_settings} =
+             Schema.parse(%{
+               tracker: %{kind: "github", endpoint: nil}
+             })
+
+    assert github_settings.tracker.endpoint == "https://api.github.com/graphql"
+
+    assert {:ok, blank_endpoint_settings} =
+             Schema.parse(%{
+               tracker: %{kind: "linear", endpoint: "   "}
+             })
+
+    assert blank_endpoint_settings.tracker.endpoint == "https://api.linear.app/graphql"
   end
 
   test "schema resolves sandbox policies from explicit and default workspaces" do

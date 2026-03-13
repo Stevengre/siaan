@@ -115,30 +115,38 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_semantics(settings) do
-    cond do
-      is_nil(settings.tracker.kind) ->
+    case settings.tracker.kind do
+      nil ->
         {:error, :missing_tracker_kind}
 
-      settings.tracker.kind not in ["linear", "github", "memory"] ->
-        {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
-
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
-        {:error, :missing_linear_api_token}
-
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
-        {:error, :missing_linear_project_slug}
-
-      settings.tracker.kind == "github" and not is_binary(settings.tracker.api_key) ->
-        {:error, :missing_github_api_token}
-
-      settings.tracker.kind == "github" and not is_binary(settings.tracker.repo_owner) ->
-        {:error, :missing_github_repo_owner}
-
-      settings.tracker.kind == "github" and not is_binary(settings.tracker.repo_name) ->
-        {:error, :missing_github_repo_name}
-
-      true ->
+      "memory" ->
         :ok
+
+      "linear" ->
+        validate_linear_tracker(settings.tracker)
+
+      "github" ->
+        validate_github_tracker(settings.tracker)
+
+      kind ->
+        {:error, {:unsupported_tracker_kind, kind}}
+    end
+  end
+
+  defp validate_linear_tracker(tracker) do
+    cond do
+      not is_binary(tracker.api_key) -> {:error, :missing_linear_api_token}
+      not is_binary(tracker.project_slug) -> {:error, :missing_linear_project_slug}
+      true -> :ok
+    end
+  end
+
+  defp validate_github_tracker(tracker) do
+    cond do
+      not is_binary(tracker.api_key) -> {:error, :missing_github_api_token}
+      not is_binary(tracker.repo_owner) -> {:error, :missing_github_repo_owner}
+      not is_binary(tracker.repo_name) -> {:error, :missing_github_repo_name}
+      true -> :ok
     end
   end
 

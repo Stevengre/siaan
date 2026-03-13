@@ -160,8 +160,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(tool_name, :invalid_arguments) do
     %{
       "error" => %{
-        "message" =>
-          "`#{tool_name}` expects either a GraphQL query string or an object with `query` and optional `variables`."
+        "message" => "`#{tool_name}` expects either a GraphQL query string or an object with `query` and optional `variables`."
       }
     }
   end
