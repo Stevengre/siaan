@@ -3,6 +3,18 @@ defmodule SymphonyElixir.Install.RunnerTest do
 
   alias SymphonyElixir.Install.{Runner, SecurityFile}
 
+  defmodule PromptEofShell do
+    @behaviour Mix.Shell
+
+    def flush(callback \\ fn message -> message end), do: callback
+    def print_app, do: :ok
+    def info(_message), do: :ok
+    def error(_message), do: :ok
+    def prompt(_message), do: :eof
+    def yes?(_message, _options \\ []), do: true
+    def cmd(_command, _options \\ []), do: :ok
+  end
+
   defmodule FakeClient do
     def build_repo_context(owner, repo, token) do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
@@ -348,5 +360,533 @@ defmodule SymphonyElixir.Install.RunnerTest do
     log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
     assert log =~ "Branch protection on main — create skipped ({:github_api_status, 422})"
     assert log =~ "Done. Run mix siaan.install again anytime."
+  end
+
+  test "run/0 uses the current directory when no opts are passed" do
+    repo_root = tmp_dir!("siaan-install-default-run")
+
+    File.cd!(repo_root, fn ->
+      assert {:error, :missing_github_repository} = Runner.run()
+    end)
+  end
+
+  defmodule LabelListFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+    def list_labels(_repo), do: {:error, {:github_api_status, 503}}
+  end
+
+  test "run/1 returns a label sync error when labels cannot be listed" do
+    repo_root = tmp_dir!("siaan-install-label-list-failure")
+
+    assert {:error, {:label_sync_failed, {:list_labels_failed, {:github_api_status, 503}}}} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: LabelListFailureClient,
+               info: fn _line -> :ok end
+             )
+  end
+
+  defmodule LabelCreateFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+    def list_labels(_repo), do: {:ok, [%{"name" => "status:ready"}]}
+    def create_label(_repo, _attrs), do: {:error, {:github_api_status, 422}}
+  end
+
+  test "run/1 returns a label sync error when label creation fails" do
+    repo_root = tmp_dir!("siaan-install-label-create-failure")
+
+    assert {:error, {:label_sync_failed, {:create_label_failed, "status:triage", {:github_api_status, 422}}}} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: LabelCreateFailureClient,
+               info: fn _line -> :ok end
+             )
+  end
+
+  defmodule InvalidSecurityFileClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def list_collaborators(_repo) do
+      flunk("list_collaborators should not run when the security file is invalid")
+    end
+  end
+
+  test "run/1 fails before collaborator lookup when the security file is invalid" do
+    repo_root = tmp_dir!("siaan-install-invalid-security-file")
+    config_path = Path.join([repo_root, ".github", "siaan-security.yml"])
+    File.mkdir_p!(Path.dirname(config_path))
+    File.write!(config_path, "maintainers: [alice\n")
+
+    assert {:error, {:invalid_security_file, {:yaml_decode_failed, _reason}}} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: InvalidSecurityFileClient,
+               info: fn _line -> :ok end
+             )
+  end
+
+  defmodule MissingDefaultBranchClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:error, :missing_default_branch}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+  end
+
+  test "run/1 warns when the default branch lookup fails" do
+    repo_root = tmp_dir!("siaan-install-missing-default-branch")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: MissingDefaultBranchClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection — skipped (could not determine default branch: :missing_default_branch)"
+  end
+
+  defmodule EmptyDefaultBranchClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "   "}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+  end
+
+  test "run/1 warns when the default branch name is blank" do
+    repo_root = tmp_dir!("siaan-install-empty-default-branch")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: EmptyDefaultBranchClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection — skipped (could not determine default branch: :missing_default_branch)"
+  end
+
+  defmodule NonBinaryDefaultBranchClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: 123
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+  end
+
+  test "run/1 warns when the default branch name is non-binary" do
+    repo_root = tmp_dir!("siaan-install-nonbinary-default-branch")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: NonBinaryDefaultBranchClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection — skipped (could not determine default branch: :missing_default_branch)"
+  end
+
+  defmodule ProtectionRead403Client do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:error, {:github_api_status, 403}}
+  end
+
+  test "run/1 warns when branch protection cannot be read without admin permission" do
+    repo_root = tmp_dir!("siaan-install-protection-read-403")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: ProtectionRead403Client,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection on main — skipped (admin permission required)"
+  end
+
+  defmodule ProtectionReadFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:error, :timeout}
+  end
+
+  test "run/1 warns when branch protection lookup fails generically" do
+    repo_root = tmp_dir!("siaan-install-protection-read-failure")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: ProtectionReadFailureClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection on main — skipped (:timeout)"
+  end
+
+  defmodule DryRunCreationClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice", "bob"]}
+    def list_labels(_repo), do: {:ok, [%{"name" => "status:ready"}]}
+    def create_label(_repo, _attrs), do: raise("dry-run should not create labels")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+    def put_branch_protection(_repo, _branch, _payload), do: raise("dry-run should not update branch protection")
+  end
+
+  test "run/1 reports planned label and branch protection changes during dry-run" do
+    repo_root = tmp_dir!("siaan-install-dry-run-create")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               dry_run: true,
+               yes: true,
+               client: DryRunCreationClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "type:feature — creating"
+    assert log =~ "Branch protection on main — creating"
+  end
+
+  defmodule ExplicitDefaultBranchClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: raise("explicit default_branch should bypass client lookup")
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, branch, _payload) do
+      send(self(), {:explicit_branch_used, branch})
+      :ok
+    end
+  end
+
+  test "run/1 honors an explicit default_branch option" do
+    repo_root = tmp_dir!("siaan-install-explicit-default-branch")
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               default_branch: "release",
+               yes: true,
+               client: ExplicitDefaultBranchClient,
+               info: fn _line -> :ok end
+             )
+
+    assert_received {:explicit_branch_used, "release"}
+  end
+
+  defmodule ProtectionWrite403Client do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+    def put_branch_protection(_repo, _branch, _payload), do: {:error, {:github_api_status, 403}}
+  end
+
+  test "run/1 warns when branch protection writes need admin permission" do
+    repo_root = tmp_dir!("siaan-install-protection-write-403")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: ProtectionWrite403Client,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection on main — skipped (admin permission required)"
+  end
+
+  defmodule WeirdProtectionClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+
+    def get_branch_protection(_repo, _branch) do
+      {:ok,
+       %{
+         "required_status_checks" => %{
+           "strict" => true,
+           "contexts" => "not-a-list",
+           "checks" => [%{}, "oops"]
+         },
+         "required_pull_request_reviews" => %{
+           "dismiss_stale_reviews" => "yes",
+           "required_approving_review_count" => "2",
+           "dismissal_restrictions" => %{"users" => [" ", 123]},
+           "bypass_pull_request_allowances" => %{"users" => [" "]}
+         },
+         "restrictions" => %{
+           "users" => [" ", 123],
+           "teams" => ["core"],
+           "apps" => [123]
+         },
+         "enforce_admins" => %{enabled: true},
+         "allow_force_pushes" => %{enabled: true}
+       }}
+    end
+
+    def put_branch_protection(_repo, _branch, payload) do
+      send(self(), {:weird_branch_payload, payload})
+      :ok
+    end
+  end
+
+  test "run/1 normalizes unexpected branch protection payload shapes" do
+    repo_root = tmp_dir!("siaan-install-weird-protection")
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: WeirdProtectionClient,
+               info: fn _line -> :ok end
+             )
+
+    assert_received {:weird_branch_payload, payload}
+    assert payload["required_status_checks"] == %{"strict" => true, "contexts" => [], "checks" => []}
+    assert payload["required_pull_request_reviews"]["dismissal_restrictions"] == nil
+    assert payload["required_pull_request_reviews"]["required_approving_review_count"] == 1
+    assert payload["required_pull_request_reviews"]["dismiss_stale_reviews"] == true
+    assert payload["restrictions"] == %{"users" => ["alice"], "teams" => ["core"], "apps" => []}
+    assert payload["enforce_admins"] == false
+    assert payload["allow_force_pushes"] == false
+  end
+
+  test "run/1 uses the default prompt when the shell returns eof" do
+    original_shell = Mix.shell()
+    Mix.shell(PromptEofShell)
+
+    on_exit(fn -> Mix.shell(original_shell) end)
+
+    repo_root = tmp_dir!("siaan-install-prompt-eof")
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: false,
+               client: FakeClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.maintainers == ["alice", "bob"]
+  end
+
+  test "run/1 uses the default prompt and keeps defaults for blank input" do
+    original_shell = Mix.shell()
+    Mix.shell(Mix.Shell.Process)
+    on_exit(fn -> Mix.shell(original_shell) end)
+
+    repo_root = tmp_dir!("siaan-install-prompt-blank")
+    send(self(), {:mix_shell_input, :prompt, "   "})
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: false,
+               client: FakeClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.maintainers == ["alice", "bob"]
+    assert_received {:mix_shell, :prompt, [_message]}
+  end
+
+  test "run/1 uses the default prompt and parses edited maintainers" do
+    original_shell = Mix.shell()
+    Mix.shell(Mix.Shell.Process)
+    on_exit(fn -> Mix.shell(original_shell) end)
+
+    repo_root = tmp_dir!("siaan-install-prompt-edited")
+    send(self(), {:mix_shell_input, :prompt, "alice, bob, alice"})
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: false,
+               client: FakeClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.maintainers == ["alice", "bob"]
+    assert_received {:mix_shell, :prompt, [_message]}
   end
 end
