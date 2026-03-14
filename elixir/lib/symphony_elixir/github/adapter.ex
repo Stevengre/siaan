@@ -71,26 +71,24 @@ defmodule SymphonyElixir.GitHub.Adapter do
       |> Enum.uniq()
       |> Enum.reject(&Map.has_key?(known_by_number, &1))
 
-    fetched =
-      case unknown_numbers do
-        [] ->
-          %{}
-
-        nums ->
-          ids = Enum.map(nums, &Integer.to_string/1)
-
-          case client_module().fetch_issue_states_by_ids(ids) do
-            {:ok, fetched_issues} ->
-              fetched_issues
-              |> Enum.filter(&match?(%Issue{number: n} when is_integer(n), &1))
-              |> Map.new(fn %Issue{number: n} = i -> {n, i} end)
-
-            {:error, _} ->
-              %{}
-          end
-      end
-
+    fetched = fetch_unknown_blockers(unknown_numbers)
     Map.merge(known_by_number, fetched)
+  end
+
+  defp fetch_unknown_blockers([]), do: %{}
+
+  defp fetch_unknown_blockers(numbers) do
+    ids = Enum.map(numbers, &Integer.to_string/1)
+
+    case client_module().fetch_issue_states_by_ids(ids) do
+      {:ok, fetched_issues} ->
+        fetched_issues
+        |> Enum.filter(&match?(%Issue{number: n} when is_integer(n), &1))
+        |> Map.new(fn %Issue{number: n} = i -> {n, i} end)
+
+      {:error, _} ->
+        %{}
+    end
   end
 
   defp build_blocked_by(%Issue{} = issue, lookup) do
