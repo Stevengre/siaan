@@ -124,14 +124,14 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
 5. For `status:ready` tickets, do startup sequencing in this exact order:
    - `update_issue(..., state: "status:in-progress")`
-   - find/create `## Codex Workpad` bootstrap comment
+   - find/create `## Agent Workpad` bootstrap comment
    - only then begin analysis/planning/implementation work.
 6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
 
 ## Step 1: Start/continue execution (`status:ready` or `status:in-progress`)
 
 1.  Find or create a single persistent scratchpad comment for the issue:
-    - Search existing comments for a marker header: `## Codex Workpad`.
+    - Search existing comments for a marker header: `## Agent Workpad`.
     - Ignore resolved comments while searching; only active/unresolved comments are eligible to be reused as the live workpad.
     - If found, reuse that comment; do not create a new workpad comment.
     - If not found, create one workpad comment and use it for all updates.
@@ -142,22 +142,18 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
     - Expand/fix the plan so it is comprehensive for current scope.
     - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
 4.  Start work by writing/updating a hierarchical plan in the workpad comment.
-5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
-    - Format: `<host>:<abs-workdir>@<short-sha>`
-    - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/MT-32@7bdde33bc`
-    - Do not include metadata already inferable from GitHub issue fields (`issue ID`, `status`, `branch`, `PR link`).
-6.  Add explicit acceptance criteria and TODOs in checklist form in the same comment.
+5.  Add explicit acceptance criteria and TODOs in checklist form in the same comment.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
     - If the ticket description/comment context includes `Validation`, `Test Plan`, or `Testing` sections, copy those requirements into the workpad `Acceptance Criteria` and `Validation` sections as required checkboxes (no optional downgrade).
-7.  Run a principal-style self-review of the plan and refine it in the comment.
-8.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
-9.  Run the `pull` skill to sync with latest `origin/main` before any code edits, then record the pull/sync result in the workpad `Notes`.
+6.  Run a principal-style self-review of the plan and refine it in the comment.
+7.  Before implementing, capture a concrete reproduction signal and record it in the workpad `Notes` section (command/output, screenshot, or deterministic UI behavior).
+8.  Run the `pull` skill to sync with latest `origin/main` before any code edits, then record the pull/sync result in the workpad `Notes`.
     - Include a `pull skill evidence` note with:
       - merge source(s),
       - result (`clean` or `conflicts resolved`),
       - resulting `HEAD` short SHA.
-10. Compact context and proceed to execution.
+9.  Compact context and proceed to execution.
 
 ## PR feedback sweep protocol (required)
 
@@ -209,8 +205,9 @@ Use this only when completion is blocked by missing required tools or missing au
     - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
 6.  Re-check all acceptance criteria and close any gaps.
 7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
-    - Ensure the GitHub PR has label `symphony` (add it if missing).
+8.  Create or update a PR whose body includes `closes #<issue-number>` to auto-link it to the issue.
+    - If PR creation is unavailable, record the PR URL in the workpad comment as a fallback.
+    - Ensure the GitHub PR has label `siaan` (add it if missing).
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -246,11 +243,11 @@ Use this only when completion is blocked by missing required tools or missing au
 1. Treat review-requested rework as a full approach reset, not incremental patching.
 2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
 3. Close the existing PR tied to the issue.
-4. Remove the existing `## Codex Workpad` comment from the issue.
+4. Remove the existing `## Agent Workpad` comment from the issue.
 5. Create a fresh branch from `origin/main`.
 6. Start over from the normal kickoff flow:
    - If current issue state is `status:ready`, move it to `status:in-progress`; otherwise keep the current state.
-   - Create a new bootstrap `## Codex Workpad` comment.
+   - Create a new bootstrap `## Agent Workpad` comment.
    - Build a fresh plan/checklist and execute end-to-end.
 
 ## Completion bar before `status:review`
@@ -260,7 +257,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Validation/tests are green for the latest commit.
 - PR feedback sweep is complete and no actionable comments remain.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
-- Required PR metadata is present (`symphony` label).
+- Required PR metadata is present (`siaan` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 
 ## Guardrails
@@ -269,7 +266,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
 - If issue state is `status:triage`, do not modify it; wait for human to move to `status:ready`.
 - Do not edit the issue body/description for planning or progress tracking.
-- Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.
+- Use exactly one persistent workpad comment (`## Agent Workpad`) per issue.
 - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.
 - If out-of-scope improvements are found, create a separate `status:triage` issue rather
@@ -288,11 +285,7 @@ Use this only when completion is blocked by missing required tools or missing au
 Use this exact structure for the persistent workpad comment and keep it updated in place throughout execution:
 
 ````md
-## Codex Workpad
-
-```text
-<hostname>:<abs-path>@<short-sha>
-```
+## Agent Workpad
 
 ### Plan
 
