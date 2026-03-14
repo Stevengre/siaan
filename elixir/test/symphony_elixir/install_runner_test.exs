@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
     end
 
+    def get_default_branch(_repo), do: {:ok, "main"}
     def list_collaborators(_repo), do: {:ok, ["alice", "bob"]}
     def list_labels(_repo), do: {:ok, [%{"name" => "status:ready"}]}
     def create_label(_repo, _attrs), do: :ok
@@ -20,6 +21,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
     end
 
+    def get_default_branch(_repo), do: {:ok, "main"}
     def list_collaborators(_repo), do: {:ok, ["alice"]}
 
     def list_labels(_repo) do
@@ -45,6 +47,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
     end
 
+    def get_default_branch(_repo), do: {:ok, "main"}
     def list_collaborators(_repo), do: {:ok, ["alice", "bob"]}
 
     def list_labels(_repo) do
@@ -220,6 +223,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
     end
 
+    def get_default_branch(_repo), do: {:ok, "main"}
     def list_collaborators(_repo), do: {:ok, ["alice"]}
 
     def list_labels(_repo) do
@@ -263,5 +267,86 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert_received {:drifted_branch_protection_payload, payload}
     assert payload["restrictions"]["users"] == ["alice"]
     assert payload["required_conversation_resolution"] == true
+  end
+
+  defmodule DefaultBranchClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "trunk"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, branch, _payload) do
+      send(self(), {:default_branch_used, branch})
+      :ok
+    end
+  end
+
+  test "run/1 resolves branch protection against the repository default branch" do
+    repo_root = tmp_dir!("siaan-install-default-branch")
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: DefaultBranchClient,
+               info: fn _line -> :ok end
+             )
+
+    assert_received {:default_branch_used, "trunk"}
+  end
+
+  defmodule BranchProtectionFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+    def put_branch_protection(_repo, _branch, _payload), do: {:error, {:github_api_status, 422}}
+  end
+
+  test "run/1 warns and continues when branch protection updates fail" do
+    repo_root = tmp_dir!("siaan-install-branch-protection-failure")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: BranchProtectionFailureClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Branch protection on main — create skipped ({:github_api_status, 422})"
+    assert log =~ "Done. Run mix siaan.install again anytime."
   end
 end

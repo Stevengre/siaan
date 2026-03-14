@@ -35,12 +35,13 @@ defmodule SymphonyElixir.Install.Runner do
     info = Keyword.get(opts, :info, fn line -> Mix.shell().info(line) end)
     prompt = Keyword.get(opts, :prompt, &default_prompt/2)
     client = Keyword.get(opts, :client, Client)
-    branch = Keyword.get(opts, :default_branch, "main")
 
     with {:ok, %{owner: owner, repo: repo_name}} <- Repository.github_repo(repo_root, opts),
          {:ok, repo_ctx} <- client.build_repo_context(owner, repo_name, Keyword.get(opts, :api_key)),
          {:ok, collaborators} <- client.list_collaborators(repo_ctx),
          {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)) do
+      branch = resolve_default_branch(client, repo_ctx, opts)
+
       info.("")
       info.("siaan install for #{owner}/#{repo_name}")
       info.("Current collaborators: #{Enum.map_join(collaborators, ", ", &"@#{&1}")}")
@@ -121,6 +122,15 @@ defmodule SymphonyElixir.Install.Runner do
   end
 
   defp ensure_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info) do
+    with {:ok, branch_name} <- normalize_branch_name(branch) do
+      ensure_branch_protection_for_branch(client, repo_ctx, branch_name, maintainers, dry_run, info)
+    else
+      {:error, reason} ->
+        info.("   ~ Branch protection — skipped (could not determine default branch: #{inspect(reason)})")
+    end
+  end
+
+  defp ensure_branch_protection_for_branch(client, repo_ctx, branch, maintainers, dry_run, info) do
     case client.get_branch_protection(repo_ctx, branch) do
       {:ok, current} when is_map(current) ->
         desired = branch_protection_payload(maintainers, current)
@@ -129,13 +139,17 @@ defmodule SymphonyElixir.Install.Runner do
           info.("   ✓ Branch protection on #{branch} — already configured")
         else
           info.("   ~ Branch protection on #{branch} — updating to match install policy")
-          unless dry_run, do: :ok = client.put_branch_protection(repo_ctx, branch, desired)
+
+          unless dry_run,
+            do: apply_branch_protection(client, repo_ctx, branch, desired, "update", info)
         end
 
       {:ok, nil} ->
         desired = branch_protection_payload(maintainers)
         info.("   + Branch protection on #{branch} — creating")
-        unless dry_run, do: :ok = client.put_branch_protection(repo_ctx, branch, desired)
+
+        unless dry_run,
+          do: apply_branch_protection(client, repo_ctx, branch, desired, "create", info)
 
       {:error, {:github_api_status, 403}} ->
         info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
@@ -178,6 +192,38 @@ defmodule SymphonyElixir.Install.Runner do
       "lock_branch" => false,
       "allow_fork_syncing" => true
     }
+  end
+
+  defp resolve_default_branch(client, repo_ctx, opts) do
+    case Keyword.get(opts, :default_branch) do
+      branch when is_binary(branch) -> branch
+      _ -> client.get_default_branch(repo_ctx)
+    end
+  end
+
+  defp normalize_branch_name({:ok, branch}), do: normalize_branch_name(branch)
+  defp normalize_branch_name({:error, reason}), do: {:error, reason}
+
+  defp normalize_branch_name(branch) when is_binary(branch) do
+    case String.trim(branch) do
+      "" -> {:error, :missing_default_branch}
+      normalized -> {:ok, normalized}
+    end
+  end
+
+  defp normalize_branch_name(_branch), do: {:error, :missing_default_branch}
+
+  defp apply_branch_protection(client, repo_ctx, branch, desired, action, info) do
+    case client.put_branch_protection(repo_ctx, branch, desired) do
+      :ok ->
+        :ok
+
+      {:error, {:github_api_status, 403}} ->
+        info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
+
+      {:error, reason} ->
+        info.("   ~ Branch protection on #{branch} — #{action} skipped (#{inspect(reason)})")
+    end
   end
 
   defp branch_protection_matches?(current, desired) do

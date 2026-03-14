@@ -14,7 +14,12 @@ defmodule SymphonyElixir.GitHub.Client do
   @max_error_body_log_bytes 1_000
 
   @type request_fun :: (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
-  @type repo_context :: %{repo_owner: String.t(), repo_name: String.t(), api_key: String.t()}
+  @type repo_context :: %{
+          repo_owner: String.t(),
+          repo_name: String.t(),
+          api_key: String.t(),
+          rest_endpoint: String.t()
+        }
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -105,7 +110,13 @@ defmodule SymphonyElixir.GitHub.Client do
     with {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
          {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name),
          {:ok, normalized_token} <- ensure_present_string(api_key || System.get_env("GITHUB_TOKEN"), :missing_github_api_token) do
-      {:ok, %{repo_owner: normalized_owner, repo_name: normalized_repo, api_key: normalized_token}}
+      {:ok,
+       %{
+         repo_owner: normalized_owner,
+         repo_name: normalized_repo,
+         api_key: normalized_token,
+         rest_endpoint: github_rest_endpoint()
+       }}
     end
   end
 
@@ -164,6 +175,17 @@ defmodule SymphonyElixir.GitHub.Client do
   def put_branch_protection_for_test(repo, branch, payload, request_fun)
       when is_map(repo) and is_binary(branch) and is_map(payload) and is_function(request_fun, 3) do
     put_branch_protection(repo, branch, payload, request_fun)
+  end
+
+  @spec get_default_branch(repo_context()) :: {:ok, String.t()} | {:error, term()}
+  def get_default_branch(repo) when is_map(repo) do
+    get_default_branch(repo, &request/3)
+  end
+
+  @spec get_default_branch_for_test(repo_context(), request_fun()) :: {:ok, String.t()} | {:error, term()}
+  def get_default_branch_for_test(repo, request_fun)
+      when is_map(repo) and is_function(request_fun, 3) do
+    get_default_branch(repo, request_fun)
   end
 
   defp fetch_candidate_issues(request_fun) when is_function(request_fun, 3) do
@@ -404,6 +426,18 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
+  defp get_default_branch(repo, request_fun) do
+    with {:ok, headers} <- repo_headers(repo),
+         {:ok, %{status: 200, body: body}} when is_map(body) <-
+           request_fun.(:get, repo_url(repo), headers: headers),
+         {:ok, branch} <- extract_default_branch(body) do
+      {:ok, branch}
+    else
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, {:github_api_request, reason}}
+    end
+  end
+
   defp append_new_issues(acc, seen, issues) do
     Enum.reduce(issues, {acc, seen}, fn issue, {acc_issues, seen_ids} ->
       if MapSet.member?(seen_ids, issue.id) do
@@ -533,7 +567,8 @@ defmodule SymphonyElixir.GitHub.Client do
          repo_name: normalized_repo,
          ready_label: normalize_label(tracker.ready_label || "status:ready"),
          active_states: normalize_state_names(tracker.active_states || []),
-         api_key: tracker.api_key
+         api_key: tracker.api_key,
+         rest_endpoint: github_rest_endpoint()
        }}
     end
   end
@@ -565,16 +600,58 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp issues_url(%{repo_owner: owner, repo_name: repo}), do: "#{@rest_endpoint}/repos/#{owner}/#{repo}/issues"
+  defp github_rest_endpoint do
+    tracker = Config.settings!().tracker
+
+    case tracker.endpoint do
+      nil -> @rest_endpoint
+      "https://api.linear.app/graphql" -> @rest_endpoint
+      endpoint -> rest_endpoint_from_graphql(endpoint)
+    end
+  end
+
+  defp rest_endpoint_from_graphql(endpoint) when is_binary(endpoint) do
+    uri = URI.parse(endpoint)
+
+    case {uri.scheme, uri.host} do
+      {scheme, host} when is_binary(scheme) and is_binary(host) ->
+        path =
+          case uri.path || "" do
+            "" -> ""
+            "/graphql" -> ""
+            path -> String.trim_trailing(path, "/graphql")
+          end
+
+        uri
+        |> Map.put(:path, path)
+        |> Map.put(:query, nil)
+        |> Map.put(:fragment, nil)
+        |> URI.to_string()
+        |> String.trim_trailing("/")
+
+      _ ->
+        @rest_endpoint
+    end
+  end
+
+  defp rest_endpoint_from_graphql(_endpoint), do: @rest_endpoint
+
+  defp repo_url(%{repo_owner: owner, repo_name: repo} = context),
+    do: "#{rest_endpoint(context)}/repos/#{owner}/#{repo}"
+
+  defp issues_url(context), do: "#{repo_url(context)}/issues"
   defp issue_url(tracker, number), do: "#{issues_url(tracker)}/#{number}"
   defp issue_comments_url(tracker, number), do: "#{issue_url(tracker, number)}/comments"
-  defp labels_url(%{repo_owner: owner, repo_name: repo}), do: "#{@rest_endpoint}/repos/#{owner}/#{repo}/labels"
-  defp collaborators_url(%{repo_owner: owner, repo_name: repo}), do: "#{@rest_endpoint}/repos/#{owner}/#{repo}/collaborators"
+  defp labels_url(context), do: "#{repo_url(context)}/labels"
+  defp collaborators_url(context), do: "#{repo_url(context)}/collaborators"
 
-  defp branch_protection_url(%{repo_owner: owner, repo_name: repo}, branch) do
+  defp branch_protection_url(%{repo_owner: owner, repo_name: repo} = context, branch) do
     encoded_branch = URI.encode(branch)
-    "#{@rest_endpoint}/repos/#{owner}/#{repo}/branches/#{encoded_branch}/protection"
+    "#{rest_endpoint(context)}/repos/#{owner}/#{repo}/branches/#{encoded_branch}/protection"
   end
+
+  defp rest_endpoint(%{rest_endpoint: endpoint}) when is_binary(endpoint) and endpoint != "", do: endpoint
+  defp rest_endpoint(_context), do: @rest_endpoint
 
   defp maybe_put_labels_param(params, labels) when is_list(labels) do
     cleaned_labels =
@@ -604,6 +681,12 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp ensure_present_string(_value, error), do: {:error, error}
+
+  defp extract_default_branch(%{"default_branch" => branch}) when is_binary(branch) do
+    ensure_present_string(branch, :missing_default_branch)
+  end
+
+  defp extract_default_branch(_body), do: {:error, :missing_default_branch}
 
   defp request(method, url, opts) when is_atom(method) and is_binary(url) and is_list(opts) do
     Req.request(

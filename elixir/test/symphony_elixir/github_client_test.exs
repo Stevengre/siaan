@@ -316,6 +316,73 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, :post, "https://api.github.com/graphql"}
   end
 
+  test "build_repo_context derives a REST base URL from the configured GitHub endpoint" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/graphql"
+    )
+
+    assert {:ok, context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert context.rest_endpoint == "https://ghe.example.com/api"
+  end
+
+  test "fetch_candidate_issues_for_test uses the configured REST endpoint" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/graphql",
+      tracker_active_states: ["status:ready"]
+    )
+
+    request_fun = fn method, url, opts ->
+      send(self(), {:request, method, url, opts})
+
+      {:ok,
+       %{
+         status: 200,
+         body: [
+           %{
+             "id" => 111,
+             "number" => 7,
+             "title" => "Ready issue",
+             "body" => "body",
+             "state" => "open",
+             "html_url" => "https://ghe.example.com/acme/repo/issues/7",
+             "labels" => [%{"name" => "status:ready"}],
+             "assignees" => []
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/issues", _opts}
+  end
+
+  test "get_default_branch_for_test uses the repository REST endpoint" do
+    repo = %{
+      repo_owner: "acme",
+      repo_name: "repo",
+      api_key: "gh-token",
+      rest_endpoint: "https://ghe.example.com/api"
+    }
+
+    request_fun = fn method, url, _opts ->
+      send(self(), {:request, method, url})
+      {:ok, %{status: 200, body: %{"default_branch" => "trunk"}}}
+    end
+
+    assert {:ok, "trunk"} = Client.get_default_branch_for_test(repo, request_fun)
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo"}
+  end
+
   test "public wrappers return fast validation errors without network dependencies" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
