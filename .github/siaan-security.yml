@@ -1,6 +1,6 @@
 # Maintainer usernames allowed to administer and merge changes for this repository.
 maintainers:
-  - Stevengre
+  - stevengre
 
 setup:
   # Ensure the issue lifecycle label taxonomy exists and stays current.
