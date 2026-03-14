@@ -364,6 +364,13 @@ defmodule SymphonyElixir.Install.RunnerTest do
 
   test "run/0 uses the current directory when no opts are passed" do
     repo_root = tmp_dir!("siaan-install-default-run")
+    previous_github_repository = System.get_env("GITHUB_REPOSITORY")
+
+    on_exit(fn ->
+      restore_env("GITHUB_REPOSITORY", previous_github_repository)
+    end)
+
+    System.delete_env("GITHUB_REPOSITORY")
 
     File.cd!(repo_root, fn ->
       assert {:error, :missing_github_repository} = Runner.run()
