@@ -101,6 +101,12 @@ Important boundary:
 8. `Logging`
    - Emits structured runtime logs to one or more configured sinks.
 
+9. `Repository Install Task`
+   - Provides `mix siaan.install` as the bootstrap and convergence entry point for GitHub-backed
+     repos.
+   - Maintains lifecycle labels, `.github/siaan-security.yml`, repository guardrails, and
+     default-branch protection in a single idempotent flow.
+
 ### 3.2 Abstraction Levels
 
 Symphony is easiest to port when kept in these layers:
@@ -618,998 +624,690 @@ Important nuance:
   coding-agent thread in the same workspace, up to `agent.max_turns`.
 - The first turn should use the full rendered task prompt.
 - Continuation turns should send only continuation guidance to the existing thread, not resend the
-  original task prompt that is already present in thread history.
-- Once the worker exits normally, the orchestrator still schedules a short continuation retry
-  (about 1 second) so it can re-check whether the issue remains active and needs another worker
-  session.
+  original task prompt that is already present in the session.
+- Reconciliation or external tracker state changes may still stop the run between turns.
 
-### 7.2 Run Attempt Lifecycle
+### 7.2 Active vs Terminal vs Other Tracker States
 
-A run attempt transitions through these phases:
+Tracker state categories are defined by config:
 
-1. `PreparingWorkspace`
-2. `BuildingPrompt`
-3. `LaunchingAgentProcess`
-4. `InitializingSession`
-5. `StreamingTurn`
-6. `Finishing`
-7. `Succeeded`
-8. `Failed`
-9. `TimedOut`
-10. `Stalled`
-11. `CanceledByReconciliation`
+- `Active States`
+  - Eligible for dispatch or continuation.
+- `Terminal States`
+  - Require workspace cleanup and run cancellation when reconciled.
+- `Other States`
+  - Not dispatchable; running work is stopped without cleanup when reconciled.
 
-Distinct terminal reasons are important because retry logic and logs differ.
+Normalization:
 
-### 7.3 Transition Triggers
+- Compare states case-insensitively after lowering both config values and issue state.
 
-- `Poll Tick`
-  - Reconcile active runs.
-  - Validate config.
-  - Fetch candidate issues.
-  - Dispatch until slots are exhausted.
+### 7.3 Dispatch Eligibility Rules
 
-- `Worker Exit (normal)`
-  - Remove running entry.
-  - Update aggregate runtime totals.
-  - Schedule continuation retry (attempt `1`) after the worker exhausts or finishes its in-process
-    turn loop.
+The orchestrator should dispatch an issue only if all of the following are true:
 
-- `Worker Exit (abnormal)`
-  - Remove running entry.
-  - Update aggregate runtime totals.
-  - Schedule exponential-backoff retry.
+1. Issue is in an active state.
+2. Issue is not already claimed (running or queued for retry).
+3. Global concurrency has capacity.
+4. If per-state concurrency override exists, that state also has capacity.
+5. Workflow/config validation passes.
+6. Required tracker credentials and config are present.
+7. For `Todo` issues:
+   - If blockers exist, all blockers must be in terminal states.
+   - Otherwise issue is not eligible.
+8. For non-`Todo` active issues:
+   - Blockers do not prevent dispatch by default unless workflow policy says otherwise.
 
-- `Codex Update Event`
-  - Update live session fields, token counters, and rate limits.
+Dispatch ordering:
 
-- `Retry Timer Fired`
-  - Re-fetch active candidates and attempt re-dispatch, or release claim if no longer eligible.
+1. Lower numeric priority first (`1` before `2`, `null` last).
+2. Older `created_at` first.
+3. Stable fallback by identifier if needed.
 
-- `Reconciliation State Refresh`
-  - Stop runs whose issue states are terminal or no longer active.
+### 7.4 Continuation Turns vs Continuation Retries
 
-- `Stall Timeout`
-  - Kill worker and schedule retry.
+Two separate continuation mechanisms exist:
 
-### 7.4 Idempotency and Recovery Rules
+1. `In-worker continuation turn`
+   - Happens immediately after a normal turn completion while the issue remains active and
+     `turn_number < agent.max_turns`.
+   - Reuses the same workspace and the same coding-agent thread.
+   - Does not leave the `Running` state.
 
-- The orchestrator serializes state mutations through one authority to avoid duplicate dispatch.
-- `claimed` and `running` checks are required before launching any worker.
-- Reconciliation runs before dispatch on every tick.
-- Restart recovery is tracker-driven and filesystem-driven (no durable orchestrator DB required).
-- Startup terminal cleanup removes stale workspaces for issues already in terminal states.
+2. `Orchestrator continuation retry`
+   - Happens after the worker exits normally.
+   - Schedules a short retry timer (attempt 1) so the issue can be re-polled/re-dispatched if it
+     still remains active.
+   - Used as a simple re-entry point for long-running issues that may need more work beyond one
+     worker lifetime.
 
-## 8. Polling, Scheduling, and Reconciliation
+This distinction matters because:
 
-### 8.1 Poll Loop
+- `turn_number` is per worker lifetime.
+- `attempt` is per orchestrator retry lifecycle.
 
-At startup, the service validates config, performs startup cleanup, schedules an immediate tick, and
-then repeats every `polling.interval_ms`.
+### 7.5 Retry Scheduling Rules
 
-The effective poll interval should be updated when workflow config changes are re-applied.
+Retry should be used for:
 
-Tick sequence:
+- Worker spawn failure
+- Workspace creation/pre-run failure
+- Coding-agent startup/turn failure
+- Reconciliation-triggered termination if the implementation chooses to requeue
+- Retry timer dispatch failure due to no capacity
+- Continuation after a normal worker exit
 
-1. Reconcile running issues.
-2. Run dispatch preflight validation.
-3. Fetch candidate issues from tracker using active states.
-4. Sort issues by dispatch priority.
-5. Dispatch eligible issues while slots remain.
-6. Notify observability/status consumers of state changes.
+Backoff rules:
 
-If per-tick validation fails, dispatch is skipped for that tick, but reconciliation still happens
-first.
+- Continuation after normal exit:
+  - Use a small fixed delay (example: 1000 ms).
+  - Store as retry `attempt = 1`.
+- Failure retry:
+  - Exponential backoff starting at 10 seconds.
+  - Formula example: `min(10_000 * 2^(attempt-1), max_retry_backoff_ms)`
+- If config changes `max_retry_backoff_ms`, future scheduling uses the new cap.
 
-### 8.2 Candidate Selection Rules
+Retry queue invariants:
 
-An issue is dispatch-eligible only if all are true:
+- Only one retry timer per issue ID at a time.
+- Retried issue remains claimed until explicitly released or re-dispatched.
 
-- It has `id`, `identifier`, `title`, and `state`.
-- Its state is in `active_states` and not in `terminal_states`.
-- It is not already in `running`.
-- It is not already in `claimed`.
-- Global concurrency slots are available.
-- Per-state concurrency slots are available.
-- Blocker rule for `Todo` state passes:
-  - If the issue state is `Todo`, do not dispatch when any blocker is non-terminal.
+### 7.6 Stop/Release Rules
 
-Sorting order (stable intent):
+Running session should be stopped when:
 
-1. `priority` ascending (1..4 are preferred; null/unknown sorts last)
-2. `created_at` oldest first
-3. `identifier` lexicographic tie-breaker
+- Issue enters a terminal state
+- Issue leaves active states for a non-terminal state
+- Operator/runtime stop is requested
+- Stall timeout fires
 
-### 8.3 Concurrency Control
+Release claim when:
 
-Global limit:
+- Retry timer fires and issue is no longer active/eligible
+- Issue is terminal/missing during reconciliation
+- Cleanup path finishes and the issue should no longer be retained in memory
 
-- `available_slots = max(max_concurrent_agents - running_count, 0)`
+Workspace cleanup should happen when:
 
-Per-state limit:
+- Issue is in terminal state at reconciliation
+- Issue is in terminal state during startup cleanup sweep
 
-- `max_concurrent_agents_by_state[state]` if present (state key normalized)
-- otherwise fallback to global limit
+Workspace cleanup should not happen when:
 
-The runtime counts issues by their current tracked state in the `running` map.
+- Issue is simply moved to a non-active but non-terminal state
+- Worker exits abnormally but the issue is still active and retryable
 
-Optional SSH host limit:
+## 8. Orchestrator Runtime Behavior
 
-- When `worker.max_concurrent_agents_per_host` is set, each configured SSH host may run at most
-  that many concurrent agents at once.
-- Hosts at that cap are skipped for new dispatch until capacity frees up.
-
-### 8.4 Retry and Backoff
-
-Retry entry creation:
-
-- Cancel any existing retry timer for the same issue.
-- Store `attempt`, `identifier`, `error`, `due_at_ms`, and new timer handle.
-
-Backoff formula:
-
-- Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
-- Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
-- Power is capped by the configured max retry backoff (default `300000` / 5m).
-
-Retry handling behavior:
-
-1. Fetch active candidate issues (not all issues).
-2. Find the specific issue by `issue_id`.
-3. If not found, release claim.
-4. If found and still candidate-eligible:
-   - Dispatch if slots are available.
-   - Otherwise requeue with error `no available orchestrator slots`.
-5. If found but no longer active, release claim.
-
-Note:
-
-- Terminal-state workspace cleanup is handled by startup cleanup and active-run reconciliation
-  (including terminal transitions for currently running issues).
-- Retry handling mainly operates on active candidates and releases claims when the issue is absent,
-  rather than performing terminal cleanup itself.
-
-### 8.5 Active Run Reconciliation
-
-Reconciliation runs every tick and has two parts.
-
-Part A: Stall detection
-
-- For each running issue, compute `elapsed_ms` since:
-  - `last_codex_timestamp` if any event has been seen, else
-  - `started_at`
-- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry.
-- If `stall_timeout_ms <= 0`, skip stall detection entirely.
-
-Part B: Tracker state refresh
-
-- Fetch current issue states for all running issue IDs.
-- For each running issue:
-  - If tracker state is terminal: terminate worker and clean workspace.
-  - If tracker state is still active: update the in-memory issue snapshot.
-  - If tracker state is neither active nor terminal: terminate worker without workspace cleanup.
-- If state refresh fails, keep workers running and try again on the next tick.
-
-### 8.6 Startup Terminal Workspace Cleanup
-
-When the service starts:
-
-1. Query tracker for issues in terminal states.
-2. For each returned issue identifier, remove the corresponding workspace directory.
-3. If the terminal-issues fetch fails, log a warning and continue startup.
-
-This prevents stale terminal workspaces from accumulating after restarts.
-
-## 9. Workspace Management and Safety
-
-### 9.1 Workspace Layout
-
-Workspace root:
-
-- `workspace.root` (normalized path; the current config layer expands path-like values and preserves
-  bare relative names)
-
-Per-issue workspace path:
-
-- `<workspace.root>/<sanitized_issue_identifier>`
-
-Workspace persistence:
-
-- Workspaces are reused across runs for the same issue.
-- Successful runs do not auto-delete workspaces.
-
-### 9.2 Workspace Creation and Reuse
-
-Input: `issue.identifier`
-
-Algorithm summary:
-
-1. Sanitize identifier to `workspace_key`.
-2. Compute workspace path under workspace root.
-3. Ensure the workspace path exists as a directory.
-4. Mark `created_now=true` only if the directory was created during this call; otherwise
-   `created_now=false`.
-5. If `created_now=true`, run `after_create` hook if configured.
-
-Notes:
-
-- This section does not assume any specific repository/VCS workflow.
-- Workspace preparation beyond directory creation (for example dependency bootstrap, checkout/sync,
-  code generation) is implementation-defined and is typically handled via hooks.
-
-### 9.3 Optional Workspace Population (Implementation-Defined)
-
-The spec does not require any built-in VCS or repository bootstrap behavior.
-
-Implementations may populate or synchronize the workspace using implementation-defined logic and/or
-hooks (for example `after_create` and/or `before_run`).
-
-Failure handling:
-
-- Workspace population/synchronization failures return an error for the current attempt.
-- If failure happens while creating a brand-new workspace, implementations may remove the partially
-  prepared directory.
-- Reused workspaces should not be destructively reset on population failure unless that policy is
-  explicitly chosen and documented.
-
-### 9.4 Workspace Hooks
-
-Supported hooks:
-
-- `hooks.after_create`
-- `hooks.before_run`
-- `hooks.after_run`
-- `hooks.before_remove`
-
-Execution contract:
-
-- Execute in a local shell context appropriate to the host OS, with the workspace directory as
-  `cwd`.
-- On POSIX systems, `sh -lc <script>` (or a stricter equivalent such as `bash -lc <script>`) is a
-  conforming default.
-- Hook timeout uses `hooks.timeout_ms`; default: `60000 ms`.
-- Log hook start, failures, and timeouts.
-
-Failure semantics:
-
-- `after_create` failure or timeout is fatal to workspace creation.
-- `before_run` failure or timeout is fatal to the current run attempt.
-- `after_run` failure or timeout is logged and ignored.
-- `before_remove` failure or timeout is logged and ignored.
-
-### 9.5 Safety Invariants
-
-This is the most important portability constraint.
-
-Invariant 1: Run the coding agent only in the per-issue workspace path.
-
-- Before launching the coding-agent subprocess, validate:
-  - `cwd == workspace_path`
-
-Invariant 2: Workspace path must stay inside workspace root.
-
-- Normalize both paths to absolute.
-- Require `workspace_path` to have `workspace_root` as a prefix directory.
-- Reject any path outside the workspace root.
-
-Invariant 3: Workspace key is sanitized.
-
-- Only `[A-Za-z0-9._-]` allowed in workspace directory names.
-- Replace all other characters with `_`.
-
-## 10. Agent Runner Protocol (Coding Agent Integration)
-
-This section defines the language-neutral contract for integrating a coding agent app-server.
-
-Compatibility profile:
-
-- The normative contract is message ordering, required behaviors, and the logical fields that must
-  be extracted (for example session IDs, completion state, approval handling, and usage/rate-limit
-  telemetry).
-- Exact JSON field names may vary slightly across compatible app-server versions.
-- Implementations should tolerate equivalent payload shapes when they carry the same logical
-  meaning, especially for nested IDs, approval requests, user-input-required signals, and
-  token/rate-limit metadata.
-
-### 10.1 Launch Contract
-
-Subprocess launch parameters:
-
-- Command: `codex.command`
-- Invocation: `bash -lc <codex.command>`
-- Working directory: workspace path
-- Stdout/stderr: separate streams
-- Framing: line-delimited protocol messages on stdout (JSON-RPC-like JSON per line)
-
-Notes:
-
-- The default command is `codex app-server`.
-- Approval policy, cwd, and prompt are expressed in the protocol messages in Section 10.2.
-
-Recommended additional process settings:
-
-- Max line size: 10 MB (for safe buffering)
-
-### 10.2 Session Startup Handshake
-
-Reference: https://developers.openai.com/codex/app-server/
-
-The client must send these protocol messages in order:
-
-Illustrative startup transcript (equivalent payload shapes are acceptable if they preserve the same
-semantics):
-
-```json
-{"id":1,"method":"initialize","params":{"clientInfo":{"name":"symphony","version":"1.0"},"capabilities":{}}}
-{"method":"initialized","params":{}}
-{"id":2,"method":"thread/start","params":{"approvalPolicy":"<implementation-defined>","sandbox":"<implementation-defined>","cwd":"/abs/workspace"}}
-{"id":3,"method":"turn/start","params":{"threadId":"<thread-id>","input":[{"type":"text","text":"<rendered prompt-or-continuation-guidance>"}],"cwd":"/abs/workspace","title":"ABC-123: Example","approvalPolicy":"<implementation-defined>","sandboxPolicy":{"type":"<implementation-defined>"}}}
-```
-
-1. `initialize` request
-   - Params include:
-     - `clientInfo` object (for example `{name, version}`)
-     - `capabilities` object (may be empty)
-   - If the targeted Codex app-server requires capability negotiation for dynamic tools, include the
-     necessary capability flag(s) here.
-   - Wait for response (`read_timeout_ms`)
-2. `initialized` notification
-3. `thread/start` request
-   - Params include:
-     - `approvalPolicy` = implementation-defined session approval policy value
-     - `sandbox` = implementation-defined session sandbox value
-     - `cwd` = absolute workspace path
-     - If optional client-side tools are implemented, include their advertised tool specs using the
-       protocol mechanism supported by the targeted Codex app-server version.
-4. `turn/start` request
-   - Params include:
-     - `threadId`
-     - `input` = single text item containing rendered prompt for the first turn, or continuation
-       guidance for later turns on the same thread
-     - `cwd`
-     - `title` = `<issue.identifier>: <issue.title>`
-     - `approvalPolicy` = implementation-defined turn approval policy value
-     - `sandboxPolicy` = implementation-defined object-form sandbox policy payload when required by
-       the targeted app-server version
-
-Session identifiers:
-
-- Read `thread_id` from `thread/start` result `result.thread.id`
-- Read `turn_id` from each `turn/start` result `result.turn.id`
-- Emit `session_id = "<thread_id>-<turn_id>"`
-- Reuse the same `thread_id` for all continuation turns inside one worker run
-
-### 10.3 Streaming Turn Processing
-
-The client reads line-delimited messages until the turn terminates.
-
-Completion conditions:
-
-- `turn/completed` -> success
-- `turn/failed` -> failure
-- `turn/cancelled` -> failure
-- turn timeout (`turn_timeout_ms`) -> failure
-- subprocess exit -> failure
-
-Continuation processing:
-
-- If the worker decides to continue after a successful turn, it should issue another `turn/start`
-  on the same live `threadId`.
-- The app-server subprocess should remain alive across those continuation turns and be stopped only
-  when the worker run is ending.
-
-Line handling requirements:
-
-- Read protocol messages from stdout only.
-- Buffer partial stdout lines until newline arrives.
-- Attempt JSON parse on complete stdout lines.
-- Stderr is not part of the protocol stream:
-  - ignore it or log it as diagnostics
-  - do not attempt protocol JSON parsing on stderr
-
-### 10.4 Emitted Runtime Events (Upstream to Orchestrator)
-
-The app-server client emits structured events to the orchestrator callback. Each event should
-include:
-
-- `event` (enum/string)
-- `timestamp` (UTC timestamp)
-- `codex_app_server_pid` (if available)
-- optional `usage` map (token counts)
-- payload fields as needed
-
-Important emitted events may include:
-
-- `session_started`
-- `startup_failed`
-- `turn_completed`
-- `turn_failed`
-- `turn_cancelled`
-- `turn_ended_with_error`
-- `turn_input_required`
-- `approval_auto_approved`
-- `unsupported_tool_call`
-- `notification`
-- `other_message`
-- `malformed`
-
-### 10.5 Approval, Tool Calls, and User Input Policy
-
-Approval, sandbox, and user-input behavior is implementation-defined.
-
-Policy requirements:
-
-- Each implementation should document its chosen approval, sandbox, and operator-confirmation
-  posture.
-- Approval requests and user-input-required events must not leave a run stalled indefinitely. An
-  implementation should either satisfy them, surface them to an operator, auto-resolve them, or
-  fail the run according to its documented policy.
-
-Example high-trust behavior:
-
-- Auto-approve command execution approvals for the session.
-- Auto-approve file-change approvals for the session.
-- Treat user-input-required turns as hard failure.
-
-Unsupported dynamic tool calls:
-
-- Supported dynamic tool calls that are explicitly implemented and advertised by the runtime should
-  be handled according to their extension contract.
-- If the agent requests a dynamic tool call (`item/tool/call`) that is not supported, return a tool
-  failure response and continue the session.
-- This prevents the session from stalling on unsupported tool execution paths.
-
-Optional client-side tool extension:
-
-- An implementation may expose a limited set of client-side tools to the app-server session.
-- Current optional standardized tool: `linear_graphql`.
-- If implemented, supported tools should be advertised to the app-server session during startup
-  using the protocol mechanism supported by the targeted Codex app-server version.
-- Unsupported tool names should still return a failure result and continue the session.
-
-`linear_graphql` extension contract:
-
-- Purpose: execute a raw GraphQL query or mutation against Linear using Symphony's configured
-  tracker auth for the current session.
-- Availability: only meaningful when `tracker.kind == "linear"` and valid Linear auth is configured.
-- Preferred input shape:
-
-  ```json
-  {
-    "query": "single GraphQL query or mutation document",
-    "variables": {
-      "optional": "graphql variables object"
-    }
-  }
-  ```
-
-- `query` must be a non-empty string.
-- `query` must contain exactly one GraphQL operation.
-- `variables` is optional and, when present, must be a JSON object.
-- Implementations may additionally accept a raw GraphQL query string as shorthand input.
-- Execute one GraphQL operation per tool call.
-- If the provided document contains multiple operations, reject the tool call as invalid input.
-- `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Linear endpoint and auth from the active Symphony workflow/runtime config; do
-  not require the coding agent to read raw tokens from disk.
-- Tool result semantics:
-  - transport success + no top-level GraphQL `errors` -> `success=true`
-  - top-level GraphQL `errors` present -> `success=false`, but preserve the GraphQL response body
-    for debugging
-  - invalid input, missing auth, or transport failure -> `success=false` with an error payload
-- Return the GraphQL response or error payload as structured tool output that the model can inspect
-  in-session.
-
-Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
-
-```json
-{"id":"<approval-id>","result":{"approved":true}}
-{"id":"<tool-call-id>","result":{"success":false,"error":"unsupported_tool_call"}}
-```
-
-Hard failure on user input requirement:
-
-- If the agent requests user input, fail the run attempt immediately.
-- The client detects this via:
-  - explicit method (`item/tool/requestUserInput`), or
-  - turn methods/flags indicating input is required.
-
-### 10.6 Timeouts and Error Mapping
-
-Timeouts:
-
-- `codex.read_timeout_ms`: request/response timeout during startup and sync requests
-- `codex.turn_timeout_ms`: total turn stream timeout
-- `codex.stall_timeout_ms`: enforced by orchestrator based on event inactivity
-
-Error mapping (recommended normalized categories):
-
-- `codex_not_found`
-- `invalid_workspace_cwd`
-- `response_timeout`
-- `turn_timeout`
-- `port_exit`
-- `response_error`
-- `turn_failed`
-- `turn_cancelled`
-- `turn_input_required`
-
-### 10.7 Agent Runner Contract
-
-The `Agent Runner` wraps workspace + prompt + app-server client.
+### 8.1 Polling Loop
 
 Behavior:
 
-1. Create/reuse workspace for issue.
-2. Build prompt from workflow template.
-3. Start app-server session.
-4. Forward app-server events to orchestrator.
-5. On any error, fail the worker attempt (the orchestrator will retry).
+- Start a poll tick immediately on service startup after validation and startup cleanup.
+- Schedule next tick using the current effective `polling.interval_ms`.
+- Only one orchestrator loop should own scheduling state.
 
-Note:
+Per tick sequence:
 
-- Workspaces are intentionally preserved after successful runs.
+1. Reconcile currently running issues against tracker state.
+2. Re-validate workflow/config preconditions for dispatch.
+3. Fetch candidate issues from tracker.
+4. Sort issues for dispatch.
+5. Dispatch as many as capacity allows.
+6. Publish status snapshot/update to observers (if implemented).
+7. Schedule the next tick.
 
-## 11. Issue Tracker Integration Contract (Linear-Compatible)
+Failure handling:
 
-### 11.1 Required Operations
+- Tracker fetch errors should log and skip dispatch for that tick.
+- Validation errors should log and skip dispatch for that tick.
+- Reconciliation failures should not crash the loop.
 
-An implementation must support these tracker adapter operations:
+### 8.2 Startup Cleanup
 
-1. `fetch_candidate_issues()`
-   - Return issues in configured active states for a configured project.
+On startup:
 
-2. `fetch_issues_by_states(state_names)`
-   - Used for startup terminal cleanup.
+1. Load config/workflow.
+2. Query tracker for issues already in terminal states (using configured `terminal_states`).
+3. Remove any corresponding workspaces.
 
-3. `fetch_issue_states_by_ids(issue_ids)`
-   - Used for active-run reconciliation.
+Properties:
 
-### 11.2 Query Semantics (Linear)
+- Best-effort: failure to clean one workspace should not crash startup.
+- Safe when workspace root does not exist.
 
-Linear-specific requirements for `tracker.kind == "linear"`:
+### 8.3 Concurrency Management
 
-- `tracker.kind == "linear"`
-- GraphQL endpoint (default `https://api.linear.app/graphql`)
-- Auth token sent in `Authorization` header
-- `tracker.project_slug` maps to Linear project `slugId`
-- Candidate issue query filters project using `project: { slugId: { eq: $projectSlug } }`
-- Issue-state refresh query uses GraphQL issue IDs with variable type `[ID!]`
-- Pagination required for candidate issues
-- Page size default: `50`
-- Network timeout: `30000 ms`
+Global cap:
 
-Important:
+- Do not dispatch above `agent.max_concurrent_agents`.
 
-- Linear GraphQL schema details can drift. Keep query construction isolated and test the exact query
-  fields/types required by this specification.
+Per-state cap:
 
-A non-Linear implementation may change transport details, but the normalized outputs must match the
-domain model in Section 4.
+- If `agent.max_concurrent_agents_by_state[state]` exists, also enforce that cap for issues in that
+  normalized state.
+
+Counting:
+
+- Count only currently running worker entries.
+- Retry-queued issues are claimed but do not consume active execution slots.
+
+### 8.4 Reconciliation
+
+Reconciliation runs each tick before dispatch:
+
+1. If no running issues, return immediately.
+2. Ask tracker for latest states of running issue IDs.
+3. For each running issue:
+   - If terminal -> stop worker and clean workspace.
+   - Else if still active -> update cached issue state.
+   - Else -> stop worker without cleanup.
+
+If refresh fails:
+
+- Keep workers running.
+- Log the error.
+
+### 8.5 Stall Detection
+
+Stall detection is based on coding-agent event freshness.
+
+Rules:
+
+- If `codex.stall_timeout_ms <= 0`, disabled.
+- A run is stalled if:
+  - it is still marked running, and
+  - it has a `last_codex_timestamp`, and
+  - current monotonic/UTC time exceeds that timestamp by `stall_timeout_ms`
+  - OR startup/turn-start has not completed within an implementation-defined reasonable window.
+
+On stall:
+
+- Stop the worker/coding-agent process.
+- Schedule failure retry.
+- Emit operator-visible log/status event.
+
+## 9. Workspace Manager Specification
+
+### 9.1 Workspace Path Derivation
+
+Given:
+
+- `workspace_root`
+- `issue.identifier`
+
+Compute:
+
+- `workspace_key = sanitize(issue.identifier)`
+- `workspace_path = join(workspace_root, workspace_key)`
+
+Containment requirement:
+
+- After expansion/resolution, `workspace_path` must remain under `workspace_root`.
+
+### 9.2 Create / Ensure Workspace
+
+Behavior:
+
+- If workspace path does not exist:
+  - create directory recursively
+  - mark `created_now = true`
+- If workspace path exists and is a directory:
+  - reuse it
+  - mark `created_now = false`
+- If workspace path exists and is not a directory:
+  - replace or fail per implementation policy, but never launch agent against a non-directory path
+
+Cleanup before use:
+
+- May remove implementation-specific temp artifacts from the workspace, such as:
+  - `tmp`
+  - `.elixir_ls`
+
+### 9.3 Hook Execution Contract
+
+Hooks run via shell in the workspace directory.
+
+Shell semantics:
+
+- Execute with `bash -lc "<script>"`.
+- cwd must be the workspace path.
+
+Timeout semantics:
+
+- Kill hook process on timeout.
+- `after_create` and `before_run` timeouts/failures abort current attempt.
+- `after_run` and `before_remove` timeouts/failures are logged and ignored.
+
+Suggested logging:
+
+- Hook name
+- workspace path
+- exit code or timeout
+- truncated stdout/stderr or combined output
+
+### 9.4 Cleanup Behavior
+
+On workspace removal:
+
+1. If path exists and is a directory:
+   - run `before_remove` best-effort
+   - delete directory recursively
+2. If path does not exist:
+   - succeed as no-op
+
+Best-effort means:
+
+- errors are logged
+- cleanup still continues where safe
+
+## 10. Agent Runner and Prompt Construction
+
+### 10.1 Prompt Rendering Inputs
+
+Inputs to render:
+
+- workflow prompt template
+- normalized issue
+- attempt number
+
+Strictness:
+
+- Unknown variables/filters are errors.
+
+### 10.2 Turn Prompt Model
+
+First turn:
+
+- Render the full workflow prompt template with:
+  - `issue`
+  - `attempt = null` (or omitted according to template engine semantics)
+
+Continuation turn (same worker lifetime):
+
+- Do not resend the original rendered workflow prompt.
+- Send a smaller continuation prompt that at minimum includes:
+  - issue identifier
+  - current tracker state
+  - current turn number and `agent.max_turns`
+  - explicit instruction to continue from current workspace state
+- Implementations may include a concise summary of prior turn outcome if available.
+
+Example continuation prompt concept:
+
+```text
+Continue working on issue ABC-123 from the current workspace state.
+This is continuation turn 2 of 5 for the current worker run.
+The issue is still in active state `In Progress`.
+Do not repeat completed work; inspect the workspace and proceed.
+```
+
+### 10.3 Agent Run Lifecycle
+
+Worker attempt sequence:
+
+1. Ensure workspace exists.
+2. Run `before_run` hook.
+3. Start coding-agent app-server session.
+4. Run first turn.
+5. After each normal turn completion:
+   - refresh issue state
+   - if still active and under `max_turns`, run another continuation turn
+6. Stop session.
+7. Run `after_run` hook.
+8. Exit:
+   - `normal` on success/clean completion
+   - abnormal on any error/timeout/startup failure
+
+### 10.4 Run Outcome Classes
+
+- `success/normal`
+  - Worker finished cleanly.
+  - Schedules short continuation retry so issue can be picked up again if still active.
+- `configuration failure`
+  - Prompt/template/hook setup issue.
+  - Retry or release based on implementation policy; retry is acceptable if transient.
+- `runtime failure`
+  - Coding-agent startup/read/turn/stall failure.
+  - Schedule exponential retry.
+- `cancellation`
+  - Reconciliation or operator-driven stop due to issue state change.
+  - Usually release claim or requeue depending on new state.
+
+## 11. Issue Tracker Integration Contract
+
+This specification version defines the Linear adapter contract. Other tracker adapters can follow
+the same normalized issue model and orchestration hooks.
+
+## 11.1 Required Capabilities
+
+Tracker integration must provide:
+
+1. `fetch_candidate_issues(active_states)` -> list of normalized issues
+2. `fetch_issues_by_states(states)` -> list of normalized issues
+3. `fetch_issue_states_by_ids(ids)` -> list of minimal normalized issues
+
+### 11.2 Linear Query Semantics
+
+Candidate issues query:
+
+- Filter by:
+  - team project slug = configured `tracker.project_slug`
+  - state name in `active_states`
+- Include fields needed to build normalized issue model and blockers.
+- Support pagination.
+
+Refresh by IDs query:
+
+- Query by internal IDs using GraphQL type `[ID!]`.
+- Return minimal fields needed for reconciliation (`id`, `identifier`, `state`, optionally labels/url`).
+
+Terminal fetch query:
+
+- Filter by configured `terminal_states`.
 
 ### 11.3 Normalization Rules
 
-Candidate issue normalization should produce fields listed in Section 4.1.1.
+Labels:
 
-Additional normalization details:
+- Convert each label name to lowercase.
 
-- `labels` -> lowercase strings
-- `blocked_by` -> derived from inverse relations where relation type is `blocks`
-- `priority` -> integer only (non-integers become null)
-- `created_at` and `updated_at` -> parse ISO-8601 timestamps
+Blocked-by:
 
-### 11.4 Error Handling Contract
+- Derive from inverse issue relations where relation type indicates the other issue blocks this one.
 
-Recommended error categories:
+Priority:
 
-- `unsupported_tracker_kind`
-- `missing_tracker_api_key`
-- `missing_tracker_project_slug`
-- `linear_api_request` (transport failures)
-- `linear_api_status` (non-200 HTTP)
-- `linear_graphql_errors`
-- `linear_unknown_payload`
-- `linear_missing_end_cursor` (pagination integrity error)
+- Preserve numeric value if present.
 
-Orchestrator behavior on tracker errors:
+Null handling:
 
-- Candidate fetch failure: log and skip dispatch for this tick.
-- Running-state refresh failure: log and keep active workers running.
-- Startup terminal cleanup failure: log warning and continue startup.
+- Missing optional fields should become `null` or empty list as appropriate.
 
-### 11.5 Tracker Writes (Important Boundary)
+### 11.4 Error Handling Requirements
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Map tracker failures into typed categories or consistent error payloads for logging, including:
 
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
-- The service remains a scheduler/runner and tracker reader.
-- Workflow-specific success often means "reached the next handoff state" (for example
-  `Human Review`) rather than tracker terminal state `Done`.
-- If the optional `linear_graphql` client-side tool extension is implemented, it is still part of
-  the agent toolchain rather than orchestrator business logic.
+- request transport failure
+- non-200 HTTP response
+- malformed JSON
+- GraphQL errors
+- invalid expected shape
 
-## 12. Prompt Construction and Context Assembly
+## 12. Coding-Agent App-Server Client Specification
 
-### 12.1 Inputs
+This section describes the expected behavior of the coding-agent subprocess wrapper. The exact wire
+schema may evolve with the target coding-agent version, but a conforming implementation needs the
+following behavioral contract.
 
-Inputs to prompt rendering:
+### 12.1 Process Launch
 
-- `workflow.prompt_template`
-- normalized `issue` object
-- optional `attempt` integer (retry/continuation metadata)
+Launch:
 
-### 12.2 Rendering Rules
-
-- Render with strict variable checking.
-- Render with strict filter checking.
-- Convert issue object keys to strings for template compatibility.
-- Preserve nested arrays/maps (labels, blockers) so templates can iterate.
-
-### 12.3 Retry/Continuation Semantics
-
-`attempt` should be passed to the template because the workflow prompt may provide different
-instructions for:
-
-- first run (`attempt` null or absent)
-- continuation run after a successful prior session
-- retry after error/timeout/stall
-
-### 12.4 Failure Semantics
-
-If prompt rendering fails:
-
-- Fail the run attempt immediately.
-- Let the orchestrator treat it like any other worker failure and decide retry behavior.
-
-## 13. Logging, Status, and Observability
-
-### 13.1 Logging Conventions
-
-Required context fields for issue-related logs:
-
-- `issue_id`
-- `issue_identifier`
-
-Required context for coding-agent session lifecycle logs:
-
-- `session_id`
-
-Message formatting requirements:
-
-- Use stable `key=value` phrasing.
-- Include action outcome (`completed`, `failed`, `retrying`, etc.).
-- Include concise failure reason when present.
-- Avoid logging large raw payloads unless necessary.
-
-### 13.2 Logging Outputs and Sinks
-
-The spec does not prescribe where logs must go (stderr, file, remote sink, etc.).
+- cwd = workspace path
+- command = `bash -lc <codex.command>`
 
 Requirements:
 
-- Operators must be able to see startup/validation/dispatch failures without attaching a debugger.
-- Implementations may write to one or more sinks.
-- If a configured log sink fails, the service should continue running when possible and emit an
-  operator-visible warning through any remaining sink.
+- stdout and stderr are read separately.
+- JSON protocol frames are newline-delimited on stdout.
+- Partial lines must be buffered until newline.
 
-### 13.3 Runtime Snapshot / Monitoring Interface (Optional but Recommended)
+### 12.2 Startup / Handshake Behavior
 
-If the implementation exposes a synchronous runtime snapshot (for dashboards or monitoring), it
-should return:
+Required startup sequence (names illustrative):
 
-- `running` (list of running session rows)
-- each running row should include `turn_count`
-- `retrying` (list of retry queue rows)
-- `codex_totals`
-  - `input_tokens`
-  - `output_tokens`
-  - `total_tokens`
-  - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
-- `rate_limits` (latest coding-agent rate limit payload, if available)
+1. Send `initialize`
+2. Receive initialize result
+3. Send `initialized`
+4. Send `thread/start`
+5. Receive `thread_id`
+6. Send `turn/start`
+7. Receive `turn_id`
 
-Recommended snapshot error modes:
+Implementation must:
 
-- `timeout`
-- `unavailable`
+- extract `thread_id`
+- extract `turn_id`
+- emit `session_started` event to orchestrator
+- build `session_id = "<thread_id>-<turn_id>"`
 
-### 13.4 Optional Human-Readable Status Surface
+The exact JSON schema for `initialize`, `thread/start`, and `turn/start` depends on the targeted
+coding-agent app-server protocol version, but the implementation must preserve the logical behavior
+above and expose a compatibility surface documented for operators.
 
-A human-readable status surface (terminal output, dashboard, etc.) is optional and
-implementation-defined.
+### 12.3 Event Handling
 
-If present, it should draw from orchestrator state/metrics only and must not be required for
-correctness.
+The client should interpret coding-agent messages into higher-level events, such as:
 
-### 13.5 Session Metrics and Token Accounting
+- `session_started`
+- `message_delta`
+- `tool_call_started`
+- `tool_call_completed`
+- `tool_call_failed`
+- `approval_requested`
+- `input_requested`
+- `turn_completed`
+- `turn_failed`
+- `rate_limits`
+- `usage`
 
-Token accounting rules:
+Requirements:
 
-- Agent events may include token counts in multiple payload shapes.
-- Prefer absolute thread totals when available, such as:
-  - `thread/tokenUsage/updated` payloads
-  - `total_token_usage` within token-count wrapper events
-- Ignore delta-style payloads such as `last_token_usage` for dashboard/API totals.
-- Extract input/output/total token counts leniently from common field names within the selected
-  payload.
-- For absolute totals, track deltas relative to last reported totals to avoid double-counting.
-- Do not treat generic `usage` maps as cumulative totals unless the event type defines them that
-  way.
-- Accumulate aggregate totals in orchestrator state.
+- Unsupported events should not crash the client.
+- Unsupported dynamic tool calls should fail fast and return an error payload to the session if
+  client-side tool support is implemented.
+- Unsupported or disallowed approval/input requests should be handled according to the runtime's
+  documented policy instead of hanging forever.
 
-Runtime accounting:
+### 12.4 Timeouts
 
-- Runtime should be reported as a live aggregate at snapshot/render time.
-- Implementations may maintain a cumulative counter for ended sessions and add active-session
-  elapsed time derived from `running` entries (for example `started_at`) when producing a
-  snapshot/status view.
-- Add run duration seconds to the cumulative ended-session runtime when a session ends (normal exit
-  or cancellation/termination).
-- Continuous background ticking of runtime totals is not required.
+Required timeouts:
 
-Rate-limit tracking:
+- `read_timeout_ms`
+  - for response/read inactivity during request/response phases
+- `turn_timeout_ms`
+  - hard cap for a turn
+- `stall_timeout_ms`
+  - monitored at orchestrator level using event freshness
 
-- Track the latest rate-limit payload seen in any agent update.
-- Any human-readable presentation of rate-limit data is implementation-defined.
+### 12.5 Usage and Rate Limits
 
-### 13.6 Humanized Agent Event Summaries (Optional)
+The client should collect, when present:
 
-Humanized summaries of raw agent protocol events are optional.
+- input tokens
+- output tokens
+- total tokens
+- any rate-limit snapshot information exposed by the coding agent
+
+These should be reported to the orchestrator incrementally and aggregated into runtime totals.
+
+### 12.6 Client-Side Dynamic Tool Extension (Optional)
+
+This extension is optional for conformance but common in practice.
 
 If implemented:
 
-- Treat them as observability-only output.
-- Do not make orchestrator logic depend on humanized strings.
+- The client advertises supported tools during startup/initialize according to the targeted
+  app-server protocol.
+- Supported tool calls should execute locally and respond back into the active session.
+- Unsupported tool names should produce a failure response without hanging the session.
+
+One common tool is `linear_graphql`, which allows the coding agent to query or mutate tracker data
+using the runtime's configured Linear credentials.
+
+If `linear_graphql` is implemented:
+
+- input schema:
+  - `query` (string, required)
+  - `variables` (object, optional)
+- execution:
+  - send raw GraphQL request to configured Linear endpoint using resolved API key
+- success/failure response:
+  - wrap tool result into a session-compatible success/failure payload
+  - if top-level GraphQL `errors` exist, return `success=false` while preserving the body
+- malformed args or missing auth should return structured failure payloads, not crash the worker
+
+## 13. Observability and Optional Status Surface
+
+### 13.1 Structured Logging
+
+At minimum log:
+
+- issue lifecycle events
+- worker start/stop
+- retry scheduling
+- workspace hook outcomes
+- coding-agent session lifecycle
+- validation failures
+
+Recommended structured fields:
+
+- `issue_id`
+- `issue_identifier`
+- `session_id`
+- `worker_pid` or task id
+- `retry_attempt`
+- `workspace_path`
+- `issue_state`
+- `event`
+- `error`
+
+### 13.2 Aggregate Metrics (In-Memory is Acceptable)
+
+Recommended aggregates:
+
+- total running seconds across completed sessions
+- total input tokens
+- total output tokens
+- total tokens
+- latest rate-limit snapshot
+
+### 13.3 Humanized Event Summaries (Optional)
+
+An implementation may convert low-level agent events into human-readable summaries for operator
+surfaces.
+
+Example summaries:
+
+- `thinking`
+- `running tests`
+- `writing file`
+- `waiting for approval`
+
+This is optional and should not change correctness.
+
+### 13.4 Snapshot Interface (Optional)
+
+An implementation may expose a read-only runtime snapshot API for operator visibility.
+
+Possible snapshot content:
+
+- running issue rows
+- queued retry rows
+- totals
+- rate limits
+- last events
+- effective config values
+
+### 13.5 Status Rendering (Optional)
+
+An implementation may render:
+
+- terminal dashboard
+- HTTP JSON endpoint
+- HTML page
+- logs only
+
+The rendering mechanism is not prescribed by this spec.
+
+### 13.6 Failure Visibility
+
+Minimum requirement:
+
+- configuration validation failures must be operator-visible
+- worker failures must be operator-visible
+- reload failures must be operator-visible
 
 ### 13.7 Optional HTTP Server Extension
 
-This section defines an optional HTTP interface for observability and operational control.
+This section describes a common extension profile. It is not required for conformance, but if an
+implementation ships an HTTP server, it should follow these baseline rules.
 
-If implemented:
+Config / startup:
 
-- The HTTP server is an extension and is not required for conformance.
-- The implementation may serve server-rendered HTML or a client-side application for the dashboard.
-- The dashboard/API must be observability/control surfaces only and must not become required for
-  orchestrator correctness.
+- The server is enabled only when a port is configured via `server.port` in `WORKFLOW.md` or an
+  equivalent CLI flag.
+- If a CLI port override is present, it takes precedence over `server.port`.
+- The bind host should default to loopback (`127.0.0.1`) unless the implementation explicitly
+  documents a different choice.
+- Binding to port `0` may be allowed for ephemeral local development; if so, the chosen port should
+  be logged or otherwise surfaced.
+- The HTTP server should not start if the configured port is invalid or unavailable; the
+  implementation may fail startup or continue without the server, but it must do so explicitly and
+  visibly.
 
-Enablement (extension):
+Baseline endpoints:
 
-- Start the HTTP server when a CLI `--port` argument is provided.
-- Start the HTTP server when `server.port` is present in `WORKFLOW.md` front matter.
-- `server.port` is extension configuration and is intentionally not part of the core front-matter
-  schema in Section 5.3.
-- Precedence: CLI `--port` overrides `server.port` when both are present.
-- `server.port` must be an integer. Positive values bind that port. `0` may be used to request an
-  ephemeral port for local development and tests.
-- Implementations should bind loopback by default (`127.0.0.1` or host equivalent) unless explicitly
-  configured otherwise.
-- Changes to HTTP listener settings (for example `server.port`) do not need to hot-rebind;
-  restart-required behavior is conformant.
+- `GET /healthz`
+  - Returns a simple success payload when the process is healthy enough to serve.
+- `GET /status`
+  - Returns a snapshot of running issues, retry queue, and selected runtime totals.
+- `GET /logs`
+  - Returns recent operator-relevant log lines or a pointer/summary if logs are file-backed.
 
-#### 13.7.1 Human-Readable Dashboard (`/`)
+Response semantics:
 
-- Host a human-readable dashboard at `/`.
-- The returned document should depict the current state of the system (for example active sessions,
-  retry delays, token consumption, runtime totals, recent events, and health/error indicators).
-- It is up to the implementation whether this is server-generated HTML or a client-side app that
-  consumes the JSON API below.
+- `GET /healthz`
+  - `200` with a small JSON or text body when healthy.
+- `GET /status`
+  - `200` with JSON snapshot on success.
+  - `503` or `500` if the snapshot subsystem is unavailable and the implementation chooses not to
+    degrade gracefully.
+- `GET /logs`
+  - `200` with plain text or JSON if logs are available.
+  - `404` or `501` if log serving is not enabled.
 
-#### 13.7.2 JSON REST API (`/api/v1/*`)
+Security / safety:
 
-Provide a JSON REST API under `/api/v1/*` for current runtime state and operational debugging.
+- Default bind host should avoid exposing the service publicly without deliberate operator action.
+- If the server can expose issue metadata, prompts, or logs, implementations should document that
+  behavior because it may contain sensitive data.
+- If access control is not implemented, the server should be treated as a local-development /
+  trusted-network feature.
 
-Minimum endpoints:
+Observability:
 
-- `GET /api/v1/state`
-  - Returns a summary view of the current system state (running sessions, retry queue/delays,
-    aggregate token/runtime totals, latest rate limits, and any additional tracked summary fields).
-  - Suggested response shape:
+- Server start/stop and chosen bind address should be logged.
+- Request logging should avoid leaking secrets or excessive prompt content.
 
-    ```json
-    {
-      "generated_at": "2026-02-24T20:15:30Z",
-      "counts": {
-        "running": 2,
-        "retrying": 1
-      },
-      "running": [
-        {
-          "issue_id": "abc123",
-          "issue_identifier": "MT-649",
-          "state": "In Progress",
-          "session_id": "thread-1-turn-1",
-          "turn_count": 7,
-          "last_event": "turn_completed",
-          "last_message": "",
-          "started_at": "2026-02-24T20:10:12Z",
-          "last_event_at": "2026-02-24T20:14:59Z",
-          "tokens": {
-            "input_tokens": 1200,
-            "output_tokens": 800,
-            "total_tokens": 2000
-          }
-        }
-      ],
-      "retrying": [
-        {
-          "issue_id": "def456",
-          "issue_identifier": "MT-650",
-          "attempt": 3,
-          "due_at": "2026-02-24T20:16:00Z",
-          "error": "no available orchestrator slots"
-        }
-      ],
-      "codex_totals": {
-        "input_tokens": 5000,
-        "output_tokens": 2400,
-        "total_tokens": 7400,
-        "seconds_running": 1834.2
-      },
-      "rate_limits": null
-    }
-    ```
+## 14. CLI Contract
 
-- `GET /api/v1/<issue_identifier>`
-  - Returns issue-specific runtime/debug details for the identified issue, including any information
-    the implementation tracks that is useful for debugging.
-  - Suggested response shape:
+### 14.1 Startup Interface
 
-    ```json
-    {
-      "issue_identifier": "MT-649",
-      "issue_id": "abc123",
-      "status": "running",
-      "workspace": {
-        "path": "/tmp/symphony_workspaces/MT-649"
-      },
-      "attempts": {
-        "restart_count": 1,
-        "current_retry_attempt": 2
-      },
-      "running": {
-        "session_id": "thread-1-turn-1",
-        "turn_count": 7,
-        "state": "In Progress",
-        "started_at": "2026-02-24T20:10:12Z",
-        "last_event": "notification",
-        "last_message": "Working on tests",
-        "last_event_at": "2026-02-24T20:14:59Z",
-        "tokens": {
-          "input_tokens": 1200,
-          "output_tokens": 800,
-          "total_tokens": 2000
-        }
-      },
-      "retry": null,
-      "logs": {
-        "codex_session_logs": [
-          {
-            "label": "latest",
-            "path": "/var/log/symphony/codex/MT-649/latest.log",
-            "url": null
-          }
-        ]
-      },
-      "recent_events": [
-        {
-          "at": "2026-02-24T20:14:59Z",
-          "event": "notification",
-          "message": "Working on tests"
-        }
-      ],
-      "last_error": null,
-      "tracked": {}
-    }
-    ```
+Required CLI behavior:
 
-  - If the issue is unknown to the current in-memory state, return `404` with an error response (for
-    example `{\"error\":{\"code\":\"issue_not_found\",\"message\":\"...\"}}`).
+- Accept optional positional workflow path.
+- If absent, default to `./WORKFLOW.md`.
+- Optionally accept additional implementation-specific flags (for example log level, HTTP port
+  override).
 
-- `POST /api/v1/refresh`
-  - Queues an immediate tracker poll + reconciliation cycle (best-effort trigger; implementations
-    may coalesce repeated requests).
-  - Suggested request body: empty body or `{}`.
-  - Suggested response (`202 Accepted`) shape:
+Example:
 
-    ```json
-    {
-      "queued": true,
-      "coalesced": false,
-      "requested_at": "2026-02-24T20:15:30Z",
-      "operations": ["poll", "reconcile"]
-    }
-    ```
+```bash
+symphony ./WORKFLOW.md
+```
 
-API design notes:
+Or:
 
-- The JSON shapes above are the recommended baseline for interoperability and debugging ergonomics.
-- Implementations may add fields, but should avoid breaking existing fields within a version.
-- Endpoints should be read-only except for operational triggers like `/refresh`.
-- Unsupported methods on defined routes should return `405 Method Not Allowed`.
-- API errors should use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
-- If the dashboard is a client-side app, it should consume this API rather than duplicating state
-  logic.
+```bash
+symphony
+```
 
-## 14. Failure Model and Recovery Strategy
+### 14.2 Exit Semantics
 
-### 14.1 Failure Classes
-
-1. `Workflow/Config Failures`
-   - Missing `WORKFLOW.md`
-   - Invalid YAML front matter
-   - Unsupported tracker kind or missing tracker credentials/project slug
-   - Missing coding-agent executable
-
-2. `Workspace Failures`
-   - Workspace directory creation failure
-   - Workspace population/synchronization failure (implementation-defined; may come from hooks)
-   - Invalid workspace path configuration
-   - Hook timeout/failure
-
-3. `Agent Session Failures`
-   - Startup handshake failure
-   - Turn failed/cancelled
-   - Turn timeout
-   - User input requested (hard fail)
-   - Subprocess exit
-   - Stalled session (no activity)
-
-4. `Tracker Failures`
-   - API transport errors
-   - Non-200 status
-   - GraphQL errors
-   - malformed payloads
-
-5. `Observability Failures`
-   - Snapshot timeout
-   - Dashboard render errors
-   - Log sink configuration failure
-
-### 14.2 Recovery Behavior
-
-- Dispatch validation failures:
-  - Skip new dispatches.
-  - Keep service alive.
-  - Continue reconciliation where possible.
-
-- Worker failures:
-  - Convert to retries with exponential backoff.
-
-- Tracker candidate-fetch failures:
-  - Skip this tick.
-  - Try again on next tick.
-
-- Reconciliation state-refresh failures:
-  - Keep current workers.
-  - Retry on next tick.
-
-- Dashboard/log failures:
-  - Do not crash the orchestrator.
-
-### 14.3 Partial State Recovery (Restart)
-
-Current design is intentionally in-memory for scheduler state.
-
-After restart:
-
-- No retry timers are restored from prior process memory.
-- No running sessions are assumed recoverable.
-- Service recovers by:
-  - startup terminal workspace cleanup
-  - fresh polling of active issues
-  - re-dispatching eligible work
-
-### 14.4 Operator Intervention Points
-
-Operators can control behavior by:
-
-- Editing `WORKFLOW.md` (prompt and most runtime settings).
-- `WORKFLOW.md` changes should be detected and re-applied automatically without restart.
-- Changing issue states in the tracker:
-  - terminal state -> running session is stopped and workspace cleaned when reconciled
-  - non-active state -> running session is stopped without cleanup
-- Restarting the service for process recovery or deployment (not as the normal path for applying
-  workflow config changes).
+- Exit `0` when application starts and later shuts down normally.
+- Exit non-zero when startup validation fails or the host process exits abnormally.
 
 ## 15. Security and Operational Safety
 

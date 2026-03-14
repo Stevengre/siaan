@@ -1,0 +1,103 @@
+name: siaan allowlist drift
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/siaan-security.yml"
+      - "WORKFLOW.md"
+      - "elixir/WORKFLOW.md"
+      - "elixir/lib/mix/tasks/siaan.install.ex"
+      - "elixir/lib/symphony_elixir/install/**"
+      - "elixir/lib/symphony_elixir/config.ex"
+      - "elixir/lib/symphony_elixir/workflow.ex"
+      - ".github/workflows/siaan-allowlist-drift.yml"
+      - ".github/scripts/siaan_allowlist_drift.rb"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR merge ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: Evaluate allowlist consistency
+        id: drift
+        shell: bash
+        run: |
+          ruby .github/scripts/siaan_allowlist_drift.rb --format json > drift.json
+          ruby .github/scripts/siaan_allowlist_drift.rb --format markdown > drift_comment.md
+
+          ruby <<'RUBY'
+          require "json"
+
+          data = JSON.parse(File.read("drift.json"))
+
+          File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
+            file.puts("status=#{data.fetch("status")}")
+            file.puts("summary=#{data.fetch("summary").gsub("\n", " ")}")
+          end
+          RUBY
+
+      - name: Annotate workflow summary
+        if: ${{ steps.drift.outputs.status == 'warn' }}
+        run: echo "::warning::${{ steps.drift.outputs.summary }}"
+
+      - name: Update PR drift comment
+        uses: actions/github-script@v7
+        env:
+          DRIFT_STATUS: ${{ steps.drift.outputs.status }}
+        with:
+          script: |
+            const fs = require("fs");
+
+            const marker = "<!-- siaan-allowlist-drift -->";
+            const issueNumber = context.payload.pull_request.number;
+            const status = process.env.DRIFT_STATUS;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100
+            });
+
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+
+            if (status === "ok") {
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id
+                });
+              }
+
+              return;
+            }
+
+            const body = `${marker}\n${fs.readFileSync("drift_comment.md", "utf8").trim()}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body
+              });
+            }
