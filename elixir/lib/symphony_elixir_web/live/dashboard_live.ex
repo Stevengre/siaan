@@ -45,13 +45,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <div class="hero-grid">
           <div>
             <p class="eyebrow">
-              Symphony Observability
+              SIAAN Observability
             </p>
             <h1 class="hero-title">
               Operations Dashboard
             </h1>
             <p class="hero-copy">
-              Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
+              Current state, retry pressure, token usage, and orchestration health for the active SIAAN runtime.
             </p>
           </div>
 

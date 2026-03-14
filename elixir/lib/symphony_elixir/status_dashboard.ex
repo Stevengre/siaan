@@ -130,7 +130,7 @@ defmodule SymphonyElixir.StatusDashboard do
   def render_offline_status do
     content =
       [
-        colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+        colorize("╭─ SIAAN STATUS", @ansi_bold),
         colorize("│ app_status=offline", @ansi_red),
         closing_border()
       ]
@@ -348,7 +348,7 @@ defmodule SymphonyElixir.StatusDashboard do
         backoff_rows = format_retry_rows(retrying)
 
         ([
-           colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+           colorize("╭─ SIAAN STATUS", @ansi_bold),
            colorize("│ Agents: ", @ansi_bold) <>
              colorize("#{agent_count}", @ansi_green) <>
              colorize("/", @ansi_gray) <>
@@ -380,7 +380,7 @@ defmodule SymphonyElixir.StatusDashboard do
 
       :error ->
         [
-          colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+          colorize("╭─ SIAAN STATUS", @ansi_bold),
           colorize("│ Orchestrator snapshot unavailable", @ansi_red),
           colorize("│ Throughput: ", @ansi_bold) <> colorize("#{format_tps(tps)} tps", @ansi_cyan),
           format_project_link_lines(),
