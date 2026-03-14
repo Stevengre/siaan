@@ -16,6 +16,9 @@ defmodule SymphonyElixir.GitHub.IssueTest do
 
     assert Issue.extract_blocker_numbers(%Issue{body: "No blockers here"}) == []
     assert Issue.extract_blocker_numbers(%Issue{body: nil}) == []
+
+    # word boundary: "unblocked by #12" should NOT match
+    assert Issue.extract_blocker_numbers(%Issue{body: "unblocked by #12"}) == []
   end
 
   test "to_tracker_issue accepts resolved blocked_by list" do

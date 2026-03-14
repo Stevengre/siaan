@@ -69,7 +69,7 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
            body: "No blockers",
            state: "closed",
            url: "https://github.com/acme/repo/issues/3",
-           labels: [],
+           labels: ["status:review"],
            assignees: []
          }
        ]}

@@ -5,7 +5,7 @@ defmodule SymphonyElixir.GitHub.Issue do
 
   alias SymphonyElixir.Linear.Issue, as: TrackerIssue
 
-  @blocker_pattern ~r/[Bb]locked\s+by\s+#(\d+)/
+  @blocker_pattern ~r/\b[Bb]locked\s+by\s+#(\d+)/
 
   defstruct [
     :id,

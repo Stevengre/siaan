@@ -100,7 +100,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
           %{
             id: Integer.to_string(num),
             identifier: "GH-#{num}",
-            state: Issue.status_label(blocker) || blocker.state || "open"
+            state: blocker_state(blocker)
           }
 
         nil ->
@@ -108,4 +108,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
       end
     end)
   end
+
+  defp blocker_state(%Issue{state: "closed"}), do: "closed"
+  defp blocker_state(%Issue{} = blocker), do: Issue.status_label(blocker) || blocker.state || "open"
 end
