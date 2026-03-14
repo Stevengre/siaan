@@ -87,21 +87,28 @@ defmodule SymphonyElixir.Install.SecurityFile do
     |> List.wrap()
     |> Enum.reduce_while({:ok, []}, fn
       maintainer, {:ok, acc} when is_binary(maintainer) ->
-        trimmed = String.trim(maintainer)
+        normalized = normalize_maintainer(maintainer)
 
-        if trimmed == "" do
+        if normalized == "" do
           {:cont, {:ok, acc}}
         else
-          {:cont, {:ok, [trimmed | acc]}}
+          {:cont, {:ok, [normalized | acc]}}
         end
 
       maintainer, _acc ->
         {:halt, {:error, {:invalid_maintainer, maintainer}}}
     end)
     |> case do
-      {:ok, maintainers} -> {:ok, Enum.reverse(maintainers)}
+      {:ok, maintainers} -> {:ok, maintainers |> Enum.reverse() |> Enum.uniq()}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp normalize_maintainer(maintainer) do
+    maintainer
+    |> String.trim()
+    |> String.replace(~r/\A@+/, "")
+    |> String.downcase()
   end
 
   defp normalize_setup(%{} = setup) do

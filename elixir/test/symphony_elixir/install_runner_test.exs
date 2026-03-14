@@ -230,6 +230,63 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert payload["enforce_admins"] == true
   end
 
+  defmodule ExistingConfigNormalizationClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["ignored"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, _branch, payload) do
+      send(self(), {:normalized_maintainer_payload, payload})
+      :ok
+    end
+  end
+
+  test "run/1 normalizes existing config maintainers before syncing branch protection" do
+    repo_root = tmp_dir!("siaan-install-config-normalization")
+    config_path = Path.join([repo_root, ".github", "siaan-security.yml"])
+    File.mkdir_p!(Path.dirname(config_path))
+
+    File.write!(
+      config_path,
+      SecurityFile.render(%{
+        maintainers: ["@Alice", "Bob"],
+        setup: %{
+          labels: true,
+          issue_restriction: "collaborators_only",
+          branch_protection: true
+        }
+      })
+    )
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: ExistingConfigNormalizationClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.maintainers == ["alice", "bob"]
+    assert_received {:normalized_maintainer_payload, payload}
+    assert payload["restrictions"]["users"] == ["alice", "bob"]
+  end
+
   defmodule DriftedProtectionClient do
     def build_repo_context(owner, repo, token) do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
@@ -974,13 +1031,13 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert_received {:mix_shell, :prompt, [_message]}
   end
 
-  test "run/1 uses the default prompt and parses edited maintainers" do
+  test "run/1 uses the default prompt and normalizes edited maintainers" do
     original_shell = Mix.shell()
     Mix.shell(Mix.Shell.Process)
     on_exit(fn -> Mix.shell(original_shell) end)
 
     repo_root = tmp_dir!("siaan-install-prompt-edited")
-    send(self(), {:mix_shell_input, :prompt, "alice, bob, alice"})
+    send(self(), {:mix_shell_input, :prompt, "@Alice, bob, @alice"})
 
     assert {:ok, result} =
              Runner.run(

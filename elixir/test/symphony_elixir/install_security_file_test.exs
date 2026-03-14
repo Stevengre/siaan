@@ -3,15 +3,16 @@ defmodule SymphonyElixir.Install.SecurityFileTest do
 
   alias SymphonyElixir.Install.SecurityFile
 
-  test "read/1 coerces quoted booleans and trims maintainers" do
+  test "read/1 coerces quoted booleans and normalizes maintainer usernames" do
     config_path = Path.join(tmp_dir!("install-security-file"), "siaan-security.yml")
 
     File.write!(
       config_path,
       """
       maintainers:
-        - " alice "
+        - " @Alice "
         - bob
+        - BOB
       setup:
         labels: "false"
         issue_restriction: collaborators_only

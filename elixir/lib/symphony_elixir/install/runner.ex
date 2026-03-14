@@ -191,6 +191,7 @@ defmodule SymphonyElixir.Install.Runner do
       else
         prompt.("Confirm or edit maintainer list", default_maintainers)
       end
+      |> normalize_maintainers()
 
     info.("   ✓ Selected maintainers — #{Enum.join(maintainers, ", ")}")
     info.("")
@@ -552,11 +553,26 @@ defmodule SymphonyElixir.Install.Runner do
       raw ->
         raw
         |> String.split(",")
-        |> Enum.map(&String.trim/1)
-        |> Enum.reject(&(&1 == ""))
-        |> Enum.uniq()
+        |> normalize_maintainers()
     end
   end
+
+  defp normalize_maintainers(maintainers) do
+    maintainers
+    |> List.wrap()
+    |> Enum.map(&normalize_maintainer/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp normalize_maintainer(maintainer) when is_binary(maintainer) do
+    maintainer
+    |> String.trim()
+    |> String.replace(~r/\A@+/, "")
+    |> String.downcase()
+  end
+
+  defp normalize_maintainer(_maintainer), do: ""
 
   defp relative(repo_root, path) do
     Path.relative_to(path, repo_root)

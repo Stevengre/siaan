@@ -24,7 +24,7 @@ end.parse!
 
 def normalize_list(value)
   Array(value)
-    .map { |entry| entry.to_s.strip }
+    .map { |entry| entry.to_s.strip.sub(/\A@+/, "").downcase }
     .reject(&:empty?)
     .uniq
     .sort
