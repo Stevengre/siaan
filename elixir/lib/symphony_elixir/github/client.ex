@@ -453,18 +453,14 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_headers do
-    case Config.settings!().tracker.api_key do
-      token when is_binary(token) and token != "" ->
-        {:ok,
-         [
-           {"Authorization", "Bearer #{token}"},
-           {"Accept", "application/vnd.github+json"},
-           {"X-GitHub-Api-Version", "2022-11-28"},
-           {"Content-Type", "application/json"}
-         ]}
-
-      _ ->
-        {:error, :missing_github_api_token}
+    with {:ok, token} <- ensure_present_string(Config.settings!().tracker.api_key, :missing_github_api_token) do
+      {:ok,
+       [
+         {"Authorization", "Bearer #{token}"},
+         {"Accept", "application/vnd.github+json"},
+         {"X-GitHub-Api-Version", "2022-11-28"},
+         {"Content-Type", "application/json"}
+       ]}
     end
   end
 

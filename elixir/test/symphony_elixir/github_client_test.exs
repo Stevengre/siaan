@@ -272,7 +272,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_project_slug: "acme/repo",
       tracker_repo_owner: "acme",
       tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      tracker_api_token: "  gh-token  "
     )
 
     request_fun = fn method, url, opts ->
