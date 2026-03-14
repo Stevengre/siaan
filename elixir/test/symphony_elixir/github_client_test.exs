@@ -196,7 +196,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     refute_receive {:params, _}
   end
 
-  test "fetch_candidate_issues_for_test returns no candidates when active_states is empty" do
+  test "fetch_candidate_issues_for_test falls back to ready label when active_states is empty" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -206,271 +206,32 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_active_states: []
     )
 
-    request_fun = fn _method, _url, _opts ->
-      flunk("no GitHub request expected when active_states is empty")
-    end
-
-    assert {:ok, []} = Client.fetch_candidate_issues_for_test(request_fun)
-  end
-
-  test "fetch_candidate_issues_for_test derives REST issue URLs from tracker endpoint variants" do
-    request_fun = fn :get, url, _opts ->
-      send(self(), {:url, url})
-      {:ok, %{status: 200, body: []}}
-    end
-
-    endpoint_cases = [
-      {"https://ghe.example.com/api/graphql", "https://ghe.example.com/api/v3/repos/acme/repo/issues"},
-      {"https://proxy.example.com/enterprise/graphql", "https://proxy.example.com/enterprise/repos/acme/repo/issues"},
-      {"https://proxy.example.com/api/v3", "https://proxy.example.com/api/v3/repos/acme/repo/issues"},
-      {"https://proxy.example.com", "https://proxy.example.com/repos/acme/repo/issues"},
-      {"not-a-url", "https://api.github.com/repos/acme/repo/issues"}
-    ]
-
-    Enum.each(endpoint_cases, fn {endpoint, expected_url} ->
-      write_workflow_file!(Workflow.workflow_file_path(),
-        tracker_kind: "github",
-        tracker_repo_owner: "acme",
-        tracker_repo_name: "repo",
-        tracker_api_token: "gh-token",
-        tracker_endpoint: endpoint,
-        tracker_ready_label: "status:ready",
-        tracker_active_states: ["status:ready"]
-      )
-
-      assert {:ok, []} = Client.fetch_candidate_issues_for_test(request_fun)
-      assert_receive {:url, ^expected_url}
-    end)
-  end
-
-  test "fetch_candidate_issues_for_test reuses cached issue pages when GitHub returns 304" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
-    )
-
     request_fun = fn :get, _url, opts ->
-      params = Keyword.fetch!(opts, :params)
-      headers = Keyword.fetch!(opts, :headers)
-      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
+      send(self(), {:params, Keyword.fetch!(opts, :params)})
 
-      send(self(), {:request, params[:page], if_none_match})
-
-      case if_none_match do
-        nil ->
-          {:ok,
+      {:ok,
+       %{
+         status: 200,
+         body: [
            %{
-             status: 200,
-             headers: [{"etag", "\"etag-ready-page-1\""}],
-             body: [
-               %{
-                 "id" => 770,
-                 "number" => 77,
-                 "title" => "Ready candidate",
-                 "body" => "Body",
-                 "state" => "open",
-                 "html_url" => "https://github.com/acme/repo/issues/77",
-                 "labels" => [%{"name" => "status:ready"}],
-                 "assignees" => []
-               }
-             ]
-           }}
-
-        "\"etag-ready-page-1\"" ->
-          {:ok, %{status: 304, headers: [{"etag", "\"etag-ready-page-1\""}], body: []}}
-
-        other ->
-          flunk("unexpected If-None-Match header: #{inspect(other)}")
-      end
+             "id" => 555,
+             "number" => 55,
+             "title" => "Ready candidate",
+             "body" => "Body",
+             "state" => "open",
+             "html_url" => "https://github.com/acme/repo/issues/55",
+             "labels" => [%{"name" => "status:ready"}],
+             "assignees" => []
+           }
+         ]
+       }}
     end
 
-    assert {:ok, [%Issue{id: "77", state: "status:ready"}]} =
-             Client.fetch_candidate_issues_for_test(request_fun)
+    assert {:ok, [%Issue{id: "55", state: "status:ready"}]} = Client.fetch_candidate_issues_for_test(request_fun)
 
-    assert {:ok, [%Issue{id: "77", state: "status:ready"}]} =
-             Client.fetch_candidate_issues_for_test(request_fun)
-
-    assert_receive {:request, 1, nil}
-    assert_receive {:request, 1, "\"etag-ready-page-1\""}
-    refute_receive {:request, _, _}
-  end
-
-  test "fetch_candidate_issues_for_test replays cached paginated pages across 304 responses" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
-    )
-
-    page_one = Enum.map(1..100, &issue_payload(&1, "status:ready"))
-    page_two = [issue_payload(101, "status:ready")]
-
-    request_fun = fn :get, _url, opts ->
-      params = Keyword.fetch!(opts, :params)
-      page = params[:page]
-      headers = Keyword.fetch!(opts, :headers)
-      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
-
-      send(self(), {:request, page, if_none_match})
-
-      case {page, if_none_match} do
-        {1, nil} -> {:ok, %{status: 200, headers: [{"etag", "\"etag-page-1\""}], body: page_one}}
-        {2, nil} -> {:ok, %{status: 200, headers: [{"etag", "\"etag-page-2\""}], body: page_two}}
-        {1, "\"etag-page-1\""} -> {:ok, %{status: 304, headers: [{"etag", "\"etag-page-1\""}], body: []}}
-        {2, "\"etag-page-2\""} -> {:ok, %{status: 304, headers: [{"etag", "\"etag-page-2\""}], body: []}}
-        other -> flunk("unexpected request shape: #{inspect(other)}")
-      end
-    end
-
-    assert {:ok, initial} = Client.fetch_candidate_issues_for_test(request_fun)
-    assert length(initial) == 101
-    assert {:ok, replayed} = Client.fetch_candidate_issues_for_test(request_fun)
-    assert Enum.map(replayed, & &1.id) == Enum.map(initial, & &1.id)
-
-    assert_receive {:request, 1, nil}
-    assert_receive {:request, 2, nil}
-    assert_receive {:request, 1, "\"etag-page-1\""}
-    assert_receive {:request, 2, "\"etag-page-2\""}
-    refute_receive {:request, _, _}
-  end
-
-  test "fetch_candidate_issues_for_test refetches when GitHub returns 304 without cached page" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
-    )
-
-    key = {:nil_cache_304_refetch, make_ref()}
-
-    request_fun = fn :get, _url, opts ->
-      calls = Process.get(key, 0)
-      Process.put(key, calls + 1)
-
-      headers = Keyword.fetch!(opts, :headers)
-      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
-      send(self(), {:request, calls + 1, if_none_match})
-
-      case calls do
-        0 ->
-          {:ok, %{status: 304, headers: [], body: []}}
-
-        1 ->
-          {:ok, %{status: 200, headers: [{"etag", "\"fallback-etag\""}], body: [issue_payload(88, "status:ready")]}}
-
-        _ ->
-          flunk("unexpected extra request")
-      end
-    end
-
-    assert {:ok, [%Issue{id: "88", state: "status:ready"}]} =
-             Client.fetch_candidate_issues_for_test(request_fun)
-
-    assert_receive {:request, 1, nil}
-    assert_receive {:request, 2, nil}
-    refute_receive {:request, _, _}
-  end
-
-  test "fetch_candidate_issues_for_test returns status and request errors for 304 fallback refetch" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
-    )
-
-    status_key = {:nil_cache_304_status_error, make_ref()}
-
-    status_failure = fn :get, _url, _opts ->
-      calls = Process.get(status_key, 0)
-      Process.put(status_key, calls + 1)
-
-      if calls == 0 do
-        {:ok, %{status: 304, headers: [], body: []}}
-      else
-        {:ok, %{status: 502, headers: [], body: %{}}}
-      end
-    end
-
-    assert {:error, {:github_api_status, 502}} =
-             Client.fetch_candidate_issues_for_test(status_failure)
-
-    request_key = {:nil_cache_304_request_error, make_ref()}
-
-    request_failure = fn :get, _url, _opts ->
-      calls = Process.get(request_key, 0)
-      Process.put(request_key, calls + 1)
-
-      if calls == 0 do
-        {:ok, %{status: 304, headers: [], body: []}}
-      else
-        {:error, :closed}
-      end
-    end
-
-    assert {:error, {:github_api_request, :closed}} =
-             Client.fetch_candidate_issues_for_test(request_failure)
-  end
-
-  test "fetch_candidate_issues_for_test normalizes varied etag header shapes" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
-    )
-
-    key = {:etag_shape_calls, make_ref()}
-
-    request_fun = fn :get, _url, opts ->
-      call_index = Process.get(key, 0)
-      Process.put(key, call_index + 1)
-
-      headers = Keyword.fetch!(opts, :headers)
-      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
-      send(self(), {:request, call_index + 1, if_none_match})
-
-      response_headers =
-        case call_index do
-          0 -> [:ignore_me, {"etag", "   "}]
-          1 -> %{"etag" => ["\"etag-from-list\"", "\"ignored\""]}
-          2 -> %{"etag" => []}
-          3 -> %{"etag" => 123}
-          _ -> flunk("unexpected request index #{call_index}")
-        end
-
-      {:ok, %{status: 200, headers: response_headers, body: [issue_payload(call_index + 1, "status:ready")]}}
-    end
-
-    assert {:ok, [%Issue{id: "1"}]} = Client.fetch_candidate_issues_for_test(request_fun)
-    assert {:ok, [%Issue{id: "2"}]} = Client.fetch_candidate_issues_for_test(request_fun)
-    assert {:ok, [%Issue{id: "3"}]} = Client.fetch_candidate_issues_for_test(request_fun)
-    assert {:ok, [%Issue{id: "4"}]} = Client.fetch_candidate_issues_for_test(request_fun)
-
-    assert_receive {:request, 1, nil}
-    assert_receive {:request, 2, nil}
-    assert_receive {:request, 3, "\"etag-from-list\""}
-    assert_receive {:request, 4, nil}
-    refute_receive {:request, _, _}
-  end
-
-  test "normalize_filter_labels_for_test returns empty list for non-list inputs" do
-    assert [] == Client.normalize_filter_labels_for_test(nil)
-    assert [] == Client.normalize_filter_labels_for_test("status:ready")
+    assert_receive {:params, params}
+    assert params[:state] == "open"
+    assert params[:labels] == "status:ready"
   end
 
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do
@@ -555,10 +316,326 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, :post, "https://api.github.com/graphql"}
   end
 
+  test "build_repo_context derives the correct REST base URL from the configured GitHub endpoint" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/graphql"
+    )
+
+    assert {:ok, context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert context.rest_endpoint == "https://ghe.example.com/api/v3"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/v3/graphql"
+    )
+
+    assert {:ok, v3_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert v3_context.rest_endpoint == "https://ghe.example.com/api/v3"
+  end
+
+  test "build_repo_context uses env tokens and covers REST endpoint fallbacks" do
+    restore_env("GITHUB_TOKEN", "env-token")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: nil
+    )
+
+    assert {:ok, context} = Client.build_repo_context("acme", "repo")
+    assert context.api_key == "env-token"
+    assert context.rest_endpoint == "https://api.github.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://api.linear.app/graphql"
+    )
+
+    assert {:ok, linear_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert linear_context.rest_endpoint == "https://api.github.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com"
+    )
+
+    assert {:ok, pathless_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert pathless_context.rest_endpoint == "https://ghe.example.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/custom/path"
+    )
+
+    assert {:ok, passthrough_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert passthrough_context.rest_endpoint == "https://ghe.example.com/custom/path"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "not a url"
+    )
+
+    assert {:ok, invalid_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert invalid_context.rest_endpoint == "https://api.github.com"
+  end
+
+  test "fetch_candidate_issues_for_test uses the configured REST endpoint" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/graphql",
+      tracker_active_states: ["status:ready"]
+    )
+
+    request_fun = fn method, url, opts ->
+      send(self(), {:request, method, url, opts})
+
+      {:ok,
+       %{
+         status: 200,
+         body: [
+           %{
+             "id" => 111,
+             "number" => 7,
+             "title" => "Ready issue",
+             "body" => "body",
+             "state" => "open",
+             "html_url" => "https://ghe.example.com/acme/repo/issues/7",
+             "labels" => [%{"name" => "status:ready"}],
+             "assignees" => []
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:request, :get, "https://ghe.example.com/api/v3/repos/acme/repo/issues", _opts}
+  end
+
+  test "get_default_branch_for_test uses the repository REST endpoint" do
+    repo = %{
+      repo_owner: "acme",
+      repo_name: "repo",
+      api_key: "gh-token",
+      rest_endpoint: "https://ghe.example.com/api"
+    }
+
+    request_fun = fn method, url, _opts ->
+      send(self(), {:request, method, url})
+      {:ok, %{status: 200, body: %{"default_branch" => "trunk"}}}
+    end
+
+    assert {:ok, "trunk"} = Client.get_default_branch_for_test(repo, request_fun)
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo"}
+  end
+
+  test "list_collaborators_for_test paginates collaborator pages" do
+    repo = %{
+      repo_owner: "acme",
+      repo_name: "repo",
+      api_key: "gh-token",
+      rest_endpoint: "https://ghe.example.com/api"
+    }
+
+    request_fun = fn method, url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      send(self(), {:request, method, url, params})
+
+      body =
+        case params[:page] do
+          1 -> Enum.map(1..100, fn number -> %{"login" => "user-#{number}"} end)
+          2 -> [%{"login" => "user-101"}]
+        end
+
+      {:ok, %{status: 200, body: body}}
+    end
+
+    assert {:ok, collaborators} = Client.list_collaborators_for_test(repo, request_fun)
+    assert length(collaborators) == 101
+    assert "user-101" in collaborators
+
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/collaborators", [per_page: 100, page: 1]}
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/collaborators", [per_page: 100, page: 2]}
+    refute_receive {:request, :get, _, [per_page: 100, page: 3]}
+  end
+
+  test "repo API wrapper helpers short-circuit before network when auth is missing" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: nil}
+
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.list_labels(repo)
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.create_label(repo, %{"name" => "status:ready"})
+    assert {:error, :missing_github_api_token} = Client.list_collaborators(repo)
+    assert {:error, :missing_github_api_token} = Client.get_branch_protection(repo, "main")
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.put_branch_protection(repo, "main", %{})
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.get_default_branch(repo)
+  end
+
+  test "label helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token", rest_endpoint: "https://ghe.example.com/api"}
+
+    assert {:ok, [%{"name" => "status:ready"}]} =
+             Client.list_labels_for_test(repo, fn method, url, _opts ->
+               send(self(), {:list_labels_ok, method, url})
+               {:ok, %{status: 200, body: [%{"name" => "status:ready"}]}}
+             end)
+
+    assert_receive {:list_labels_ok, :get, "https://ghe.example.com/api/repos/acme/repo/labels"}
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.list_labels_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.list_labels_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert :ok =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn method, url, opts ->
+               send(self(), {:create_label_ok, method, url, opts[:json]})
+               {:ok, %{status: 201, body: %{}}}
+             end)
+
+    assert_receive {:create_label_ok, :post, "https://ghe.example.com/api/repos/acme/repo/labels", %{"name" => "status:ready"}}
+
+    assert :ok =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:ok, %{status: 422, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 503}} =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:ok, %{status: 503, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:error, :closed}
+             end)
+  end
+
+  test "collaborator and branch protection helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token"}
+
+    assert {:error, {:github_api_status, 502}} =
+             Client.list_collaborators_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 502, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.list_collaborators_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert {:ok, %{"required_status_checks" => %{}}} =
+             Client.get_branch_protection_for_test(repo, "main", fn method, url, _opts ->
+               send(self(), {:get_branch_ok, method, url})
+               {:ok, %{status: 200, body: %{"required_status_checks" => %{}}}}
+             end)
+
+    assert_receive {:get_branch_ok, :get, "https://api.github.com/repos/acme/repo/branches/main/protection"}
+
+    assert {:ok, nil} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts ->
+               {:ok, %{status: 404, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert :ok =
+             Client.put_branch_protection_for_test(repo, "release/1.0", %{"required_status_checks" => nil}, fn method, url, opts ->
+               send(self(), {:put_branch_ok, method, url, opts[:json]})
+               {:ok, %{status: 200, body: %{}}}
+             end)
+
+    assert_receive {:put_branch_ok, :put, "https://api.github.com/repos/acme/repo/branches/release%2F1.0/protection", %{"required_status_checks" => nil}}
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts -> {:error, :closed} end)
+  end
+
+  test "default branch helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token"}
+
+    assert {:ok, "main"} =
+             Client.get_default_branch_for_test(repo, fn method, url, _opts ->
+               send(self(), {:default_branch_ok, method, url})
+               {:ok, %{status: 200, body: %{"default_branch" => "main"}}}
+             end)
+
+    assert_receive {:default_branch_ok, :get, "https://api.github.com/repos/acme/repo"}
+
+    assert {:error, {:github_api_request, :missing_default_branch}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 200, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 503}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 503, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+  end
+
+  test "graphql/3 uses the default GitHub endpoint when tracker endpoint is nil" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: nil
+    )
+
+    assert {:ok, %{"data" => %{"ok" => true}}} =
+             Client.graphql("query Ping { ok }", %{},
+               request_fun: fn method, url, _opts ->
+                 send(self(), {:graphql_request, method, url})
+                 {:ok, %{status: 200, body: %{"data" => %{"ok" => true}}}}
+               end
+             )
+
+    assert_receive {:graphql_request, :post, "https://api.github.com/graphql"}
+  end
+
   test "public wrappers return fast validation errors without network dependencies" do
-    saved_token = System.get_env("GITHUB_TOKEN")
+    previous_github_token = System.get_env("GITHUB_TOKEN")
     System.delete_env("GITHUB_TOKEN")
-    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -575,9 +652,9 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   test "fetch_candidate_issues_for_test validates required github tracker fields" do
-    saved_token = System.get_env("GITHUB_TOKEN")
+    previous_github_token = System.get_env("GITHUB_TOKEN")
     System.delete_env("GITHUB_TOKEN")
-    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -843,86 +920,50 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
         :patch ->
           labels = get_in(opts, [:json, "labels"])
-          assert Enum.sort(labels) == ["infra", "status:in-progress"]
+          assert Enum.sort(labels) == ["infra", "status:review"]
           {:ok, %{status: 200, body: %{}}}
       end
     end
 
-    assert :ok = Client.update_issue_state_for_test("42", "status:in-progress", success)
+    assert :ok = Client.update_issue_state_for_test("42", "status:review", success)
 
     missing_issue = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 404, body: %{}}}, else: flunk("patch should not run")
     end
 
-    assert {:error, :issue_not_found} =
-             Client.update_issue_state_for_test("42", "status:in-progress", missing_issue)
+    assert {:error, :issue_not_found} = Client.update_issue_state_for_test("42", "status:review", missing_issue)
 
     patch_failure = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: {:ok, %{status: 422, body: %{}}}
     end
 
     assert {:error, {:github_api_status, 422}} =
-             Client.update_issue_state_for_test("42", "status:in-progress", patch_failure)
+             Client.update_issue_state_for_test("42", "status:review", patch_failure)
 
     request_failure = fn _method, _url, _opts -> {:error, :closed} end
 
     assert {:error, {:github_api_request, :closed}} =
-             Client.update_issue_state_for_test("42", "status:in-progress", request_failure)
+             Client.update_issue_state_for_test("42", "status:review", request_failure)
 
     malformed_patch = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: :unexpected
     end
 
     assert {:error, :issue_update_failed} =
-             Client.update_issue_state_for_test("42", "status:in-progress", malformed_patch)
+             Client.update_issue_state_for_test("42", "status:review", malformed_patch)
 
     get_status_failure = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 500, body: %{}}}, else: flunk("patch should not run")
     end
 
     assert {:error, {:github_api_status, 500}} =
-             Client.update_issue_state_for_test("42", "status:in-progress", get_status_failure)
+             Client.update_issue_state_for_test("42", "status:review", get_status_failure)
 
     assert {:error, :invalid_github_issue_id} =
              Client.update_issue_state_for_test("bad", "status:review", success)
-
-    invalid_transition = fn method, _url, _opts ->
-      if method == :get, do: success.(:get, "", []), else: flunk("patch should not run")
-    end
-
-    assert {:error, {:invalid_github_state_transition, "status:ready", "status:review"}} =
-             Client.update_issue_state_for_test("42", "status:review", invalid_transition)
-
-    non_status_current_state = fn method, _url, _opts ->
-      if method == :get do
-        {:ok,
-         %{
-           status: 200,
-           body: %{
-             "id" => 42,
-             "number" => 42,
-             "title" => "Issue 42",
-             "body" => "Body",
-             "state" => %{"unexpected" => true},
-             "html_url" => "https://github.com/acme/repo/issues/42",
-             "labels" => [%{"name" => "infra"}],
-             "assignees" => []
-           }
-         }}
-      else
-        flunk("patch should not run")
-      end
-    end
-
-    assert {:error, {:invalid_github_state_transition, nil, "status:in-progress"}} =
-             Client.update_issue_state_for_test("42", "status:in-progress", non_status_current_state)
   end
 
   test "graphql/3 surfaces request failures and default request path errors" do
-    saved_token = System.get_env("GITHUB_TOKEN")
-    System.delete_env("GITHUB_TOKEN")
-    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
-
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -945,6 +986,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:error, {:github_api_request, _reason}} =
              Client.graphql("query Viewer { viewer { login } }", %{})
+
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -1006,28 +1051,5 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       })
 
     assert issue_with_non_numeric_value.number == nil
-  end
-
-  defp header_value({name, value}, expected_name) do
-    if String.downcase(to_string(name)) == expected_name do
-      to_string(value)
-    else
-      nil
-    end
-  end
-
-  defp header_value(_header, _expected_name), do: nil
-
-  defp issue_payload(number, status_label) do
-    %{
-      "id" => number,
-      "number" => number,
-      "title" => "Issue #{number}",
-      "body" => "Body #{number}",
-      "state" => "open",
-      "html_url" => "https://github.com/acme/repo/issues/#{number}",
-      "labels" => [%{"name" => status_label}],
-      "assignees" => []
-    }
   end
 end

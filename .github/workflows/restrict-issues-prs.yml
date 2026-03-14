@@ -1,0 +1,98 @@
+name: Restrict Issues and PRs
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-author:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load maintainer allowlist
+        id: allowlist
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Parse siaan security config
+        id: config
+        shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          ruby <<'RUBY'
+          require "yaml"
+
+          path = ".github/siaan-security.yml"
+          maintainers =
+            if File.exist?(path)
+              raw = YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
+
+              Array(raw["maintainers"])
+              .map { |value| value.to_s.strip }
+              .reject(&:empty?)
+            else
+              []
+            end
+
+          maintainers = (maintainers + [ENV.fetch("REPO_OWNER")]).uniq
+
+          File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
+            file.puts("maintainers=#{maintainers.join(",")}")
+          end
+          RUBY
+
+      - name: Close if author is outside the maintainer allowlist
+        uses: actions/github-script@v7
+        env:
+          MAINTAINERS: ${{ steps.config.outputs.maintainers }}
+        with:
+          script: |
+            const allowlist = (process.env.MAINTAINERS || '')
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean);
+            const isIssue = !!context.payload.issue;
+            const record = isIssue ? context.payload.issue : context.payload.pull_request;
+            const author = record.user.login;
+            const number = record.number;
+            const type = isIssue ? 'issue' : 'pull request';
+
+            if (allowlist.includes(author)) {
+              console.log(`Author ${author} is in the maintainer allowlist. Allowing.`);
+              return;
+            }
+
+            // Add a comment explaining why it's closed
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body: [
+                `Hi @${author}, thank you for your interest!`,
+                '',
+                `This repository only accepts issues and pull requests from the configured maintainer allowlist: ${allowlist.map((login) => `@${login}`).join(', ')}.`,
+                'The allowlist is stored in `.github/siaan-security.yml` and maintained by `mix siaan.install`.',
+                `Please use [GitHub Discussions](https://github.com/${context.repo.owner}/${context.repo.repo}/discussions) for questions, suggestions, and community conversations.`,
+                '',
+                `Closing this ${type} automatically.`
+              ].join('\n')
+            });
+
+            // Close the issue or PR
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              state: 'closed'
+            });
+
+            console.log(`Closed ${type} #${number} by ${author}`);

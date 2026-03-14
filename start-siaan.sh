@@ -16,38 +16,6 @@ Environment:
 EOF
 }
 
-resolve_absolute_path() {
-  local path="$1"
-  local path_dir
-  local path_file
-
-  if [[ "$path" != /* ]]; then
-    path="$PWD/$path"
-  fi
-
-  path_dir="$(cd "$(dirname "$path")" && pwd)"
-  path_file="$(basename "$path")"
-
-  printf '%s/%s\n' "$path_dir" "$path_file"
-}
-
-extract_tracker_kind() {
-  local workflow_file="$1"
-
-  awk '
-    /^[[:space:]]*#/ { next }
-    /^tracker:[[:space:]]*$/ { in_tracker = 1; next }
-    in_tracker && /^[^[:space:]]/ { in_tracker = 0 }
-    in_tracker && /^[[:space:]]+kind:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]+kind:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*/, "", line)
-      print line
-      exit
-    }
-  ' "$workflow_file"
-}
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 elixir_dir="$script_dir/elixir"
 
@@ -96,24 +64,14 @@ if ! command -v mise >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -f "$workflow" ]]; then
-  echo "error: workflow file not found: $workflow" >&2
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "error: GITHUB_TOKEN is not set." >&2
+  echo "run: export GITHUB_TOKEN=..." >&2
   exit 1
 fi
 
-workflow="$(resolve_absolute_path "$workflow")"
-
-tracker_kind="$(
-  extract_tracker_kind "$workflow" \
-    | tr -d '"' \
-    | tr -d "'" \
-    | xargs
-)"
-tracker_kind="$(printf '%s' "$tracker_kind" | tr '[:upper:]' '[:lower:]')"
-
-if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "error: GITHUB_TOKEN is not set." >&2
-  echo "run: export GITHUB_TOKEN=..." >&2
+if [[ ! -f "$workflow" ]]; then
+  echo "error: workflow file not found: $workflow" >&2
   exit 1
 fi
 
