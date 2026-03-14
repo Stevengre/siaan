@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.RepoGuardrailsTest do
   use SymphonyElixir.TestSupport
 
-  test "restrict issues policy skips enforcement outside collaborators_only" do
+  test "restrict issues policy skips enforcement only when restriction is disabled" do
     repo_root = Path.expand("../../..", __DIR__)
     script = Path.join(repo_root, ".github/scripts/restrict_issues_prs_policy.js")
 
@@ -16,6 +16,24 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
              "authorAllowed" => false,
              "issueRestriction" => "disabled",
              "shouldEnforceRestriction" => false
+           }
+  end
+
+  test "restrict issues policy enforces on unknown issue restriction values" do
+    repo_root = Path.expand("../../..", __DIR__)
+    script = Path.join(repo_root, ".github/scripts/restrict_issues_prs_policy.js")
+
+    {output, 0} =
+      System.cmd("node", [script, "collaborator_only", "OutsideUser", "@Alice, Bob"], stderr_to_stdout: true)
+
+    result = Jason.decode!(output)
+
+    assert result == %{
+             "allowlist" => ["alice", "bob"],
+             "author" => "outsideuser",
+             "authorAllowed" => false,
+             "issueRestriction" => "collaborator_only",
+             "shouldEnforceRestriction" => true
            }
   end
 

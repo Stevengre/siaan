@@ -616,14 +616,18 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_rest_endpoint do
-    tracker = Config.settings!().tracker
+    case Config.settings() do
+      {:ok, settings} ->
+        endpoint =
+          if settings.tracker.endpoint == "https://api.linear.app/graphql",
+            do: @graphql_endpoint,
+            else: settings.tracker.endpoint
 
-    endpoint =
-      if tracker.endpoint == "https://api.linear.app/graphql",
-        do: @graphql_endpoint,
-        else: tracker.endpoint
+        rest_endpoint_from_graphql(endpoint)
 
-    rest_endpoint_from_graphql(endpoint)
+      {:error, _reason} ->
+        @rest_endpoint
+    end
   end
 
   defp rest_endpoint_from_graphql(endpoint) when is_binary(endpoint) do

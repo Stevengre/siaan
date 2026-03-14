@@ -16,7 +16,7 @@ function normalizeIssueRestriction(value) {
 }
 
 function shouldEnforceRestriction(value) {
-  return normalizeIssueRestriction(value) === "collaborators_only";
+  return normalizeIssueRestriction(value) !== "disabled";
 }
 
 module.exports = {
