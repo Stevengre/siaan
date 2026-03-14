@@ -12,6 +12,12 @@ defmodule SymphonyElixir.GitHub.Client do
   @graphql_endpoint "https://api.github.com/graphql"
   @issue_page_size 100
   @max_error_body_log_bytes 1_000
+  @issue_page_cache_process_key {__MODULE__, :issue_page_cache}
+  @github_status_transitions %{
+    "status:ready" => MapSet.new(["status:ready", "status:in-progress"]),
+    "status:in-progress" => MapSet.new(["status:in-progress", "status:review"]),
+    "status:review" => MapSet.new(["status:review", "status:in-progress"])
+  }
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -110,6 +116,7 @@ defmodule SymphonyElixir.GitHub.Client do
          {:ok, number} <- parse_issue_number(issue_id),
          {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, request_fun),
          %Issue{} = existing_issue <- existing_issue,
+         :ok <- validate_status_transition(existing_issue.state, state_name),
          {:ok, headers} <- github_headers(),
          labels <- retarget_status_labels(existing_issue.labels, state_name),
          {:ok, %{status: status}} when status in [200, 201] <-
@@ -261,21 +268,124 @@ defmodule SymphonyElixir.GitHub.Client do
       [state: state, per_page: @issue_page_size, page: page]
       |> maybe_put_labels_param(labels)
 
+    cache_key = issue_page_cache_key(tracker, state, labels, page)
+    cached_page = get_cached_issue_page(cache_key)
+    conditional_headers = maybe_put_if_none_match_header(headers, cached_page)
+
+    case request_fun.(:get, issues_url(tracker), headers: conditional_headers, params: params) do
+      {:ok, %{status: 200, body: body} = response} when is_list(body) ->
+        persist_and_merge_issue_page(
+          cache_key,
+          response,
+          body,
+          tracker,
+          labels,
+          state,
+          request_fun,
+          headers,
+          page,
+          acc
+        )
+
+      {:ok, %{status: 304}} ->
+        replay_cached_or_refetch_issue_page(
+          cached_page,
+          tracker,
+          labels,
+          state,
+          request_fun,
+          headers,
+          params,
+          cache_key,
+          page,
+          acc
+        )
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp persist_and_merge_issue_page(
+         cache_key,
+         response,
+         body,
+         tracker,
+         labels,
+         state,
+         request_fun,
+         headers,
+         page,
+         acc
+       ) do
+    normalized =
+      body
+      |> Enum.reject(&pull_request?/1)
+      |> Enum.map(&normalize_issue/1)
+      |> Enum.reject(&is_nil/1)
+
+    has_next_page = length(body) >= @issue_page_size
+    put_cached_issue_page(cache_key, %{etag: response_etag(response), issues: normalized, has_next_page: has_next_page})
+
+    next_acc = acc ++ normalized
+
+    if has_next_page do
+      do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
+    else
+      {:ok, next_acc}
+    end
+  end
+
+  defp replay_cached_or_refetch_issue_page(
+         %{issues: issues, has_next_page: has_next_page},
+         tracker,
+         labels,
+         state,
+         request_fun,
+         headers,
+         _params,
+         _cache_key,
+         page,
+         acc
+       ) do
+    next_acc = acc ++ issues
+
+    if has_next_page do
+      do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
+    else
+      {:ok, next_acc}
+    end
+  end
+
+  defp replay_cached_or_refetch_issue_page(
+         nil,
+         tracker,
+         labels,
+         state,
+         request_fun,
+         headers,
+         params,
+         cache_key,
+         page,
+         acc
+       ) do
     case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
-      {:ok, %{status: 200, body: body}} when is_list(body) ->
-        normalized =
-          body
-          |> Enum.reject(&pull_request?/1)
-          |> Enum.map(&normalize_issue/1)
-          |> Enum.reject(&is_nil/1)
-
-        next_acc = acc ++ normalized
-
-        if length(body) >= @issue_page_size do
-          do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
-        else
-          {:ok, next_acc}
-        end
+      {:ok, %{status: 200, body: body} = response} when is_list(body) ->
+        persist_and_merge_issue_page(
+          cache_key,
+          response,
+          body,
+          tracker,
+          labels,
+          state,
+          request_fun,
+          headers,
+          page,
+          acc
+        )
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
@@ -480,17 +590,120 @@ defmodule SymphonyElixir.GitHub.Client do
   defp issue_comments_url(tracker, number), do: "#{issue_url(tracker, number)}/comments"
 
   defp maybe_put_labels_param(params, labels) when is_list(labels) do
-    cleaned_labels =
-      labels
-      |> Enum.map(&to_string/1)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
+    cleaned_labels = normalize_filter_labels(labels)
 
     case cleaned_labels do
       [] -> params
       _ -> Keyword.put(params, :labels, Enum.join(cleaned_labels, ","))
     end
   end
+
+  defp maybe_put_if_none_match_header(headers, %{etag: etag})
+       when is_list(headers) and is_binary(etag) and etag != "" do
+    [{"If-None-Match", etag} | headers]
+  end
+
+  defp maybe_put_if_none_match_header(headers, _cached_page), do: headers
+
+  defp issue_page_cache_key(tracker, state, labels, page) do
+    normalized_state =
+      state
+      |> to_string()
+      |> String.trim()
+      |> String.downcase()
+
+    normalized_labels = normalize_filter_labels(labels)
+    {tracker.repo_owner, tracker.repo_name, normalized_state, normalized_labels, page}
+  end
+
+  defp get_cached_issue_page(cache_key) do
+    @issue_page_cache_process_key
+    |> Process.get(%{})
+    |> Map.get(cache_key)
+  end
+
+  defp put_cached_issue_page(cache_key, cache_entry) when is_map(cache_entry) do
+    existing = Process.get(@issue_page_cache_process_key, %{})
+    Process.put(@issue_page_cache_process_key, Map.put(existing, cache_key, cache_entry))
+    :ok
+  end
+
+  defp response_etag(%{headers: headers}) when is_list(headers) do
+    headers
+    |> Enum.find_value(fn
+      {name, value} ->
+        if String.downcase(to_string(name)) == "etag" do
+          normalize_header_value(value)
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp response_etag(%{headers: headers}) when is_map(headers) do
+    headers
+    |> Map.get("etag", Map.get(headers, "ETag", Map.get(headers, :etag)))
+    |> normalize_header_value()
+  end
+
+  defp response_etag(_response), do: nil
+
+  defp normalize_header_value([value | _rest]), do: normalize_header_value(value)
+
+  defp normalize_header_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_header_value(value) when is_list(value) do
+    value
+    |> IO.iodata_to_binary()
+    |> normalize_header_value()
+  end
+
+  defp normalize_header_value(_value), do: nil
+
+  defp normalize_filter_labels(labels) when is_list(labels) do
+    labels
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.sort()
+  end
+
+  defp normalize_filter_labels(_labels), do: []
+
+  defp validate_status_transition(current_state, target_state) do
+    normalized_current = normalize_status_label(current_state)
+    normalized_target = normalize_status_label(target_state)
+
+    with current when is_binary(current) <- normalized_current,
+         target when is_binary(target) <- normalized_target,
+         allowed when is_struct(allowed, MapSet) <- Map.get(@github_status_transitions, current),
+         true <- MapSet.member?(allowed, target) do
+      :ok
+    else
+      _ ->
+        {:error, {:invalid_github_state_transition, normalized_current, normalized_target}}
+    end
+  end
+
+  defp normalize_status_label(value) when is_binary(value) do
+    normalized = normalize_label(value)
+
+    if String.starts_with?(normalized, "status:") do
+      normalized
+    else
+      nil
+    end
+  end
+
+  defp normalize_status_label(_value), do: nil
 
   defp normalize_label(value) when is_binary(value) do
     value

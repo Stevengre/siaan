@@ -234,6 +234,62 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert params[:labels] == "status:ready"
   end
 
+  test "fetch_candidate_issues_for_test reuses cached issue pages when GitHub returns 304" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    request_fun = fn :get, _url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      headers = Keyword.fetch!(opts, :headers)
+      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
+
+      send(self(), {:request, params[:page], if_none_match})
+
+      case if_none_match do
+        nil ->
+          {:ok,
+           %{
+             status: 200,
+             headers: [{"etag", "\"etag-ready-page-1\""}],
+             body: [
+               %{
+                 "id" => 770,
+                 "number" => 77,
+                 "title" => "Ready candidate",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/77",
+                 "labels" => [%{"name" => "status:ready"}],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        "\"etag-ready-page-1\"" ->
+          {:ok, %{status: 304, headers: [{"etag", "\"etag-ready-page-1\""}], body: []}}
+
+        other ->
+          flunk("unexpected If-None-Match header: #{inspect(other)}")
+      end
+    end
+
+    assert {:ok, [%Issue{id: "77", state: "status:ready"}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert {:ok, [%Issue{id: "77", state: "status:ready"}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:request, 1, nil}
+    assert_receive {:request, 1, "\"etag-ready-page-1\""}
+    refute_receive {:request, _, _}
+  end
+
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -596,47 +652,55 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
         :patch ->
           labels = get_in(opts, [:json, "labels"])
-          assert Enum.sort(labels) == ["infra", "status:review"]
+          assert Enum.sort(labels) == ["infra", "status:in-progress"]
           {:ok, %{status: 200, body: %{}}}
       end
     end
 
-    assert :ok = Client.update_issue_state_for_test("42", "status:review", success)
+    assert :ok = Client.update_issue_state_for_test("42", "status:in-progress", success)
 
     missing_issue = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 404, body: %{}}}, else: flunk("patch should not run")
     end
 
-    assert {:error, :issue_not_found} = Client.update_issue_state_for_test("42", "status:review", missing_issue)
+    assert {:error, :issue_not_found} =
+             Client.update_issue_state_for_test("42", "status:in-progress", missing_issue)
 
     patch_failure = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: {:ok, %{status: 422, body: %{}}}
     end
 
     assert {:error, {:github_api_status, 422}} =
-             Client.update_issue_state_for_test("42", "status:review", patch_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", patch_failure)
 
     request_failure = fn _method, _url, _opts -> {:error, :closed} end
 
     assert {:error, {:github_api_request, :closed}} =
-             Client.update_issue_state_for_test("42", "status:review", request_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", request_failure)
 
     malformed_patch = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: :unexpected
     end
 
     assert {:error, :issue_update_failed} =
-             Client.update_issue_state_for_test("42", "status:review", malformed_patch)
+             Client.update_issue_state_for_test("42", "status:in-progress", malformed_patch)
 
     get_status_failure = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 500, body: %{}}}, else: flunk("patch should not run")
     end
 
     assert {:error, {:github_api_status, 500}} =
-             Client.update_issue_state_for_test("42", "status:review", get_status_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", get_status_failure)
 
     assert {:error, :invalid_github_issue_id} =
              Client.update_issue_state_for_test("bad", "status:review", success)
+
+    invalid_transition = fn method, _url, _opts ->
+      if method == :get, do: success.(:get, "", []), else: flunk("patch should not run")
+    end
+
+    assert {:error, {:invalid_github_state_transition, "status:ready", "status:review"}} =
+             Client.update_issue_state_for_test("42", "status:review", invalid_transition)
   end
 
   test "graphql/3 surfaces request failures and default request path errors" do
@@ -724,4 +788,14 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert issue_with_non_numeric_value.number == nil
   end
+
+  defp header_value({name, value}, expected_name) do
+    if String.downcase(to_string(name)) == expected_name do
+      to_string(value)
+    else
+      nil
+    end
+  end
+
+  defp header_value(_header, _expected_name), do: nil
 end
