@@ -28,39 +28,39 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
+    supported_tools = supported_tool_names(opts)
+
     case tool do
       @linear_graphql_tool ->
-        linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
-        execute_graphql(arguments, linear_client, @linear_graphql_tool)
+        if @linear_graphql_tool in supported_tools do
+          linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
+          execute_graphql(arguments, linear_client, @linear_graphql_tool)
+        else
+          unsupported_tool_response(tool, supported_tools)
+        end
 
       @github_graphql_tool ->
-        github_client = Keyword.get(opts, :github_client, &GitHubClient.graphql/3)
-        execute_graphql(arguments, github_client, @github_graphql_tool)
+        if @github_graphql_tool in supported_tools do
+          github_client = Keyword.get(opts, :github_client, &GitHubClient.graphql/3)
+          execute_graphql(arguments, github_client, @github_graphql_tool)
+        else
+          unsupported_tool_response(tool, supported_tools)
+        end
 
       other ->
-        failure_response(%{
-          "error" => %{
-            "message" => "Unsupported dynamic tool: #{inspect(other)}.",
-            "supportedTools" => supported_tool_names()
-          }
-        })
+        unsupported_tool_response(other, supported_tools)
     end
   end
 
-  @spec tool_specs() :: [map()]
-  def tool_specs do
-    [
-      %{
-        "name" => @linear_graphql_tool,
-        "description" => "Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.",
-        "inputSchema" => @graphql_input_schema
-      },
-      %{
-        "name" => @github_graphql_tool,
-        "description" => "Execute a raw GraphQL query or mutation against GitHub using Symphony's configured auth.",
-        "inputSchema" => @graphql_input_schema
-      }
-    ]
+  @spec tool_specs(keyword()) :: [map()]
+  def tool_specs(opts \\ []) do
+    case tracker_kind(opts) do
+      "linear" -> [linear_tool_spec()]
+      "github" -> [github_tool_spec()]
+      "memory" -> []
+      nil -> [linear_tool_spec(), github_tool_spec()]
+      _ -> []
+    end
   end
 
   defp execute_graphql(arguments, client_fun, tool_name) when is_function(client_fun, 3) do
@@ -243,7 +243,48 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   end
 
-  defp supported_tool_names do
-    Enum.map(tool_specs(), & &1["name"])
+  defp linear_tool_spec do
+    %{
+      "name" => @linear_graphql_tool,
+      "description" => "Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.",
+      "inputSchema" => @graphql_input_schema
+    }
+  end
+
+  defp github_tool_spec do
+    %{
+      "name" => @github_graphql_tool,
+      "description" => "Execute a raw GraphQL query or mutation against GitHub using Symphony's configured auth.",
+      "inputSchema" => @graphql_input_schema
+    }
+  end
+
+  defp supported_tool_names(opts) do
+    Enum.map(tool_specs(opts), & &1["name"])
+  end
+
+  defp tracker_kind(opts) when is_list(opts) do
+    case Keyword.get(opts, :tracker_kind) do
+      kind when is_binary(kind) ->
+        normalize_tracker_kind(kind)
+
+      kind when is_atom(kind) and not is_nil(kind) ->
+        kind |> Atom.to_string() |> normalize_tracker_kind()
+
+      _ ->
+        nil
+    end
+  end
+
+  defp normalize_tracker_kind(kind) when is_binary(kind), do: kind |> String.trim() |> String.downcase()
+  defp normalize_tracker_kind(_kind), do: nil
+
+  defp unsupported_tool_response(tool_name, supported_tools) do
+    failure_response(%{
+      "error" => %{
+        "message" => "Unsupported dynamic tool: #{inspect(tool_name)}.",
+        "supportedTools" => supported_tools
+      }
+    })
   end
 end

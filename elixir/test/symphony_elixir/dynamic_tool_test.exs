@@ -3,10 +3,15 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
   alias SymphonyElixir.Codex.DynamicTool
 
-  test "tool_specs advertises linear_graphql and github_graphql input contracts" do
-    specs = DynamicTool.tool_specs()
+  test "tool_specs advertises tracker-specific GraphQL input contracts" do
+    linear_specs = DynamicTool.tool_specs(tracker_kind: "linear")
+    github_specs = DynamicTool.tool_specs(tracker_kind: "github")
+    memory_specs = DynamicTool.tool_specs(tracker_kind: "memory")
+    specs = linear_specs ++ github_specs
 
-    assert Enum.map(specs, & &1["name"]) == ["linear_graphql", "github_graphql"]
+    assert Enum.map(linear_specs, & &1["name"]) == ["linear_graphql"]
+    assert Enum.map(github_specs, & &1["name"]) == ["github_graphql"]
+    assert memory_specs == []
 
     assert Enum.all?(specs, fn spec ->
              get_in(spec, ["inputSchema", "type"]) == "object" and
@@ -19,14 +24,14 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
-    response = DynamicTool.execute("not_a_real_tool", %{})
+    response = DynamicTool.execute("not_a_real_tool", %{}, tracker_kind: "github")
 
     assert response["success"] == false
 
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_graphql", "github_graphql"]
+               "supportedTools" => ["github_graphql"]
              }
            }
 
@@ -314,6 +319,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
           "query" => "query Viewer { viewer { login } }",
           "variables" => %{"enterprise" => false}
         },
+        tracker_kind: "github",
         github_client: fn query, variables, opts ->
           send(test_pid, {:github_client_called, query, variables, opts})
           {:ok, %{"data" => %{"viewer" => %{"login" => "octocat"}}}}
@@ -330,6 +336,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
+        tracker_kind: "github",
         github_client: fn _query, _variables, _opts -> {:error, :missing_github_api_token} end
       )
 
@@ -343,6 +350,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
+        tracker_kind: "github",
         github_client: fn _query, _variables, _opts -> {:error, {:github_api_status, 502}} end
       )
 
@@ -357,6 +365,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
+        tracker_kind: "github",
         github_client: fn _query, _variables, _opts -> {:error, {:github_api_request, :timeout}} end
       )
 
@@ -364,6 +373,27 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
              "error" => %{
                "message" => "GitHub GraphQL request failed before receiving a successful response.",
                "reason" => ":timeout"
+             }
+           }
+  end
+
+  test "github_graphql is rejected when tracker kind is linear" do
+    response =
+      DynamicTool.execute(
+        "github_graphql",
+        %{"query" => "query Viewer { viewer { login } }"},
+        tracker_kind: "linear",
+        github_client: fn _query, _variables, _opts ->
+          flunk("github client should not be called when github_graphql is unsupported for the tracker")
+        end
+      )
+
+    assert response["success"] == false
+
+    assert Jason.decode!(response["output"]) == %{
+             "error" => %{
+               "message" => ~s(Unsupported dynamic tool: "github_graphql".),
+               "supportedTools" => ["linear_graphql"]
              }
            }
   end

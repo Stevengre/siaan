@@ -54,7 +54,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:ready_label, :string, default: "status:ready")
       field(:assignee, :string)
       field(:active_states, {:array, :string})
-      field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
+      field(:terminal_states, {:array, :string})
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -400,6 +400,7 @@ defmodule SymphonyElixir.Config.Schema do
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
         ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
         active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
+        terminal_states: resolve_terminal_states(settings.tracker.kind, settings.tracker.terminal_states),
         assignee: resolve_secret_setting(settings.tracker.assignee, assignee_fallback)
     }
 
@@ -451,6 +452,10 @@ defmodule SymphonyElixir.Config.Schema do
   defp resolve_active_states("github", nil), do: ["status:ready", "status:in-progress"]
   defp resolve_active_states(_kind, nil), do: ["Todo", "In Progress"]
   defp resolve_active_states(_kind, active_states), do: active_states
+
+  defp resolve_terminal_states("github", nil), do: ["closed"]
+  defp resolve_terminal_states(_kind, nil), do: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
+  defp resolve_terminal_states(_kind, terminal_states), do: terminal_states
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

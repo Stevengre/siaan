@@ -433,14 +433,9 @@ defmodule SymphonyElixir.AppServerTest do
                          "description" => linear_description,
                          "inputSchema" => %{"required" => ["query"]},
                          "name" => "linear_graphql"
-                       },
-                       %{
-                         "description" => github_description,
-                         "inputSchema" => %{"required" => ["query"]},
-                         "name" => "github_graphql"
                        }
                      ] ->
-                       linear_description =~ "Linear" and github_description =~ "GitHub"
+                       linear_description =~ "Linear"
 
                      _ ->
                        false

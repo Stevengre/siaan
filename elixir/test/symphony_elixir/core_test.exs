@@ -97,7 +97,8 @@ defmodule SymphonyElixir.CoreTest do
       tracker_project_slug: nil,
       tracker_repo_owner: nil,
       tracker_repo_name: nil,
-      tracker_active_states: nil
+      tracker_active_states: nil,
+      tracker_terminal_states: nil
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
@@ -105,6 +106,7 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.settings!().tracker.endpoint == "https://api.github.com/graphql"
     assert Config.settings!().tracker.ready_label == "status:ready"
     assert Config.settings!().tracker.active_states == ["status:ready", "status:in-progress"]
+    assert Config.settings!().tracker.terminal_states == ["closed"]
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -112,7 +114,8 @@ defmodule SymphonyElixir.CoreTest do
       tracker_project_slug: "acme/repo",
       tracker_repo_owner: nil,
       tracker_repo_name: nil,
-      tracker_active_states: nil
+      tracker_active_states: nil,
+      tracker_terminal_states: nil
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
