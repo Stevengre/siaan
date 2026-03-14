@@ -27,6 +27,8 @@ codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never
   thread_sandbox: danger-full-access
+  turn_sandbox_policy:
+    type: dangerFullAccess
   read_timeout_ms: 30000
   stall_timeout_ms: 3600000
 ---
