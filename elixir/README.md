@@ -65,6 +65,46 @@ mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
 
+## GitHub Tracker Manual Run
+
+Use this mode to validate the current GitHub issue-to-PR flow.
+
+1. Copy `WORKFLOW.github.example.md` and set:
+   - `tracker.repo_owner`
+   - `tracker.repo_name`
+   - optional `hooks.after_create` repo URL
+2. Export a token with issue/PR write access:
+
+```bash
+export GITHUB_TOKEN=...
+```
+
+3. Ensure lifecycle labels exist in your repository:
+
+```bash
+gh label create "status:ready" --color d73a4a --force
+gh label create "status:in-progress" --color fbca04 --force
+gh label create "status:review" --color 0e8a16 --force
+```
+
+4. Start Symphony with the GitHub workflow and required acknowledgement switch:
+
+```bash
+mise exec -- ./bin/symphony \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  ./WORKFLOW.github.example.md
+```
+
+5. Create an issue labeled `status:ready`, then monitor state + PR creation.
+
+Current behavior boundary:
+
+- Supported now: `status:ready -> agent execution -> PR opened/updated -> status:review`.
+- Not orchestrator-managed yet:
+  - `status:review -> status:in-progress` automatic rework based on CI or review comments.
+  - approval-driven auto-merge.
+- For additional rework cycles, manually retarget the issue back to `status:ready`.
+
 ## Configuration
 
 Pass a custom workflow file path to `./bin/symphony` when starting the service:
@@ -128,6 +168,9 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- For `tracker.kind: github`, `tracker.api_key` reads from `GITHUB_TOKEN` when unset or when value
+  is `$GITHUB_TOKEN`.
+- For `tracker.kind: github`, `tracker.repo_owner` and `tracker.repo_name` are required.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
