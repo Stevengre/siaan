@@ -9,6 +9,7 @@ from typing import Any
 
 POLL_SECONDS = 10
 CHECKS_APPEAR_TIMEOUT_SECONDS = 120
+REQUIRED_APPROVAL_LABEL = "status:approval"
 CODEX_BOTS = {
     "chatgpt-codex-connector[bot]",
     "github-actions[bot]",
@@ -26,6 +27,7 @@ class PrInfo:
     head_sha: str
     mergeable: str | None
     merge_state: str | None
+    linked_issue_numbers: list[int]
 
 
 class RateLimitError(RuntimeError):
@@ -67,7 +69,7 @@ async def get_pr_info() -> PrInfo:
         "pr",
         "view",
         "--json",
-        "number,url,headRefOid,mergeable,mergeStateStatus",
+        "number,url,headRefOid,mergeable,mergeStateStatus,closingIssuesReferences",
     )
     parsed = json.loads(data)
     return PrInfo(
@@ -76,7 +78,26 @@ async def get_pr_info() -> PrInfo:
         head_sha=parsed["headRefOid"],
         mergeable=parsed.get("mergeable"),
         merge_state=parsed.get("mergeStateStatus"),
+        linked_issue_numbers=extract_linked_issue_numbers(parsed),
     )
+
+
+def extract_linked_issue_numbers(pr_payload: dict[str, Any]) -> list[int]:
+    refs = pr_payload.get("closingIssuesReferences")
+    if not isinstance(refs, list):
+        return []
+    issue_numbers: list[int] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        number = ref.get("number")
+        if isinstance(number, int):
+            issue_numbers.append(number)
+    return sorted(set(issue_numbers))
+
+
+def normalize_label(value: str) -> str:
+    return value.strip().lower()
 
 
 async def get_paginated_list(endpoint: str) -> list[dict[str, Any]]:
@@ -159,6 +180,53 @@ async def get_check_runs(head_sha: str) -> list[dict[str, Any]]:
             break
         page += 1
     return check_runs
+
+
+async def get_issue_labels(issue_number: int) -> list[str]:
+    data = await run_gh(
+        "issue",
+        "view",
+        str(issue_number),
+        "--json",
+        "labels",
+    )
+    parsed = json.loads(data)
+    labels = parsed.get("labels")
+    if not isinstance(labels, list):
+        return []
+    normalized: list[str] = []
+    for label in labels:
+        if not isinstance(label, dict):
+            continue
+        name = label.get("name")
+        if not isinstance(name, str):
+            continue
+        normalized.append(normalize_label(name))
+    return normalized
+
+
+async def enforce_approval_gate(pr: PrInfo) -> None:
+    if not pr.linked_issue_numbers:
+        print(
+            "status:approval gate blocked: PR has no linked issues. Link an issue "
+            "and set status:approval before merge.",
+        )
+        raise SystemExit(6)
+
+    missing: list[tuple[int, list[str]]] = []
+    for issue_number in pr.linked_issue_numbers:
+        labels = await get_issue_labels(issue_number)
+        if REQUIRED_APPROVAL_LABEL not in labels:
+            missing.append((issue_number, labels))
+
+    if missing:
+        print("status:approval gate blocked: linked issue(s) missing approval label.")
+        for issue_number, labels in missing:
+            if labels:
+                print(f"- #{issue_number}: labels={','.join(labels)}")
+            else:
+                print(f"- #{issue_number}: labels=<none>")
+        raise SystemExit(6)
 
 
 def parse_time(value: str) -> datetime:
@@ -580,6 +648,7 @@ async def watch_pr() -> None:
             "running land_watch again.",
         )
         raise SystemExit(5)
+    await enforce_approval_gate(pr)
     head_sha = pr.head_sha
     checks_done = asyncio.Event()
     codex_task = asyncio.create_task(wait_for_codex(pr.number, checks_done))

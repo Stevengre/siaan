@@ -12,6 +12,7 @@ description:
 
 - Ensure the PR is conflict-free with main.
 - Keep CI green and fix failures when they occur.
+- Require human approval via linked issue label `status:approval`.
 - Squash-merge the PR once checks pass.
 - Do not yield to the user until the PR is merged; keep the watcher loop running
   unless blocked.
@@ -32,27 +33,28 @@ description:
 4. Check mergeability and conflicts against main.
 5. If conflicts exist, use the `pull` skill to fetch/merge `origin/main` and
    resolve conflicts, then use the `push` skill to publish the updated branch.
-6. Ensure Codex review comments (if present) are acknowledged and any required
+6. Ensure linked issue(s) for the PR have `status:approval` before merge.
+7. Ensure Codex review comments (if present) are acknowledged and any required
    fixes are handled before merging.
-7. Watch checks until complete.
-8. If checks fail, pull logs, fix the issue, commit with the `commit` skill,
+8. Watch checks until complete.
+9. If checks fail, pull logs, fix the issue, commit with the `commit` skill,
    push with the `push` skill, and re-run checks.
-9. When all checks are green and review feedback is addressed, squash-merge and
+10. When all checks are green and review feedback is addressed, squash-merge and
    delete the branch using the PR title/body for the merge subject/body.
-10. **Context guard:** Before implementing review feedback, confirm it does not
+11. **Context guard:** Before implementing review feedback, confirm it does not
     conflict with the user’s stated intent or task context. If it conflicts,
     respond inline with a justification and ask the user before changing code.
-11. **Pushback template:** When disagreeing, reply inline with: acknowledge +
+12. **Pushback template:** When disagreeing, reply inline with: acknowledge +
     rationale + offer alternative.
-12. **Ambiguity gate:** When ambiguity blocks progress, use the clarification
+13. **Ambiguity gate:** When ambiguity blocks progress, use the clarification
     flow (assign PR to current GH user, mention them, wait for response). Do not
     implement until ambiguity is resolved.
     - If you are confident you know better than the reviewer, you may proceed
       without asking the user, but reply inline with your rationale.
-13. **Per-comment mode:** For each review comment, choose one of: accept,
+14. **Per-comment mode:** For each review comment, choose one of: accept,
     clarify, or push back. Reply inline (or in the issue thread for Codex
     reviews) stating the mode before changing code.
-14. **Reply before change:** Always respond with intended action before pushing
+15. **Reply before change:** Always respond with intended action before pushing
     code changes (inline for review comments, issue thread for Codex reviews).
 
 ## Commands
@@ -63,6 +65,20 @@ branch=$(git branch --show-current)
 pr_number=$(gh pr view --json number -q .number)
 pr_title=$(gh pr view --json title -q .title)
 pr_body=$(gh pr view --json body -q .body)
+linked_issues=$(gh pr view --json closingIssuesReferences -q '.closingIssuesReferences[].number')
+
+# Human approval gate: every linked issue must carry status:approval
+if [ -z "$linked_issues" ]; then
+  echo "No linked issue found; merge blocked until status:approval can be verified."
+  exit 1
+fi
+for issue_number in $linked_issues; do
+  has_approval=$(gh issue view "$issue_number" --json labels -q '.labels[].name' | rg -ix 'status:approval' -N || true)
+  if [ -z "$has_approval" ]; then
+    echo "Issue #$issue_number is missing status:approval; merge blocked."
+    exit 1
+  fi
+done
 
 # Check mergeability and conflicts
 mergeable=$(gh pr view --json mergeable -q .mergeable)
@@ -112,6 +128,7 @@ Exit codes:
 - 2: Review comments detected (address feedback)
 - 3: CI checks failed
 - 4: PR head updated (autofix commit detected)
+- 6: Missing `status:approval` on linked issue(s)
 
 ## Failure Handling
 
