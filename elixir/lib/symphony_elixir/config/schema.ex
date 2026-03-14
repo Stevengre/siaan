@@ -96,8 +96,6 @@ defmodule SymphonyElixir.Config.Schema do
         _ -> false
       end)
     end
-
-    defp valid_state_list?(_value), do: false
   end
 
   defmodule Polling do
