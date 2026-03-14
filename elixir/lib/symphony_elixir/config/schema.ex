@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Config.Schema do
   alias SymphonyElixir.PathSafety
 
   @primary_key false
+  @default_workspace_root Path.join(System.tmp_dir!(), "symphony_workspaces")
 
   @type t :: %__MODULE__{}
 
@@ -123,7 +124,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     embedded_schema do
-      field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:root, :string)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -425,7 +426,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(settings.workspace.root, default_workspace_root_for_tracker(tracker))
     }
 
     codex = %{
@@ -523,6 +524,21 @@ defmodule SymphonyElixir.Config.Schema do
       path ->
         path
     end
+  end
+
+  defp resolve_path_value(nil, default), do: default
+
+  defp default_workspace_root_for_tracker(%{kind: "github", repo_owner: owner, repo_name: repo})
+       when is_binary(owner) and owner != "" and is_binary(repo) and repo != "" do
+    Path.join(@default_workspace_root, "#{workspace_root_component(owner)}-#{workspace_root_component(repo)}")
+  end
+
+  defp default_workspace_root_for_tracker(_tracker), do: @default_workspace_root
+
+  defp workspace_root_component(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.replace(~r|[\\/]+|, "-")
   end
 
   defp resolve_env_value(value, fallback) when is_binary(value) do

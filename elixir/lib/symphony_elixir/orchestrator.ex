@@ -40,6 +40,8 @@ defmodule SymphonyElixir.Orchestrator do
       codex_totals: nil,
       codex_rate_limits: nil
     ]
+
+    @type t :: %__MODULE__{}
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -338,6 +340,14 @@ defmodule SymphonyElixir.Orchestrator do
   def retry_delay_for_test(attempt, metadata)
       when is_integer(attempt) and attempt > 0 and is_map(metadata) do
     retry_delay(attempt, metadata)
+  end
+
+  @doc false
+  @spec handle_retry_issue_for_test(State.t(), String.t(), non_neg_integer(), map()) ::
+          {:noreply, State.t()}
+  def handle_retry_issue_for_test(%State{} = state, issue_id, attempt, metadata)
+      when is_binary(issue_id) and is_integer(attempt) and attempt >= 0 and is_map(metadata) do
+    handle_retry_issue(state, issue_id, attempt, metadata)
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
@@ -839,14 +849,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
-    case Tracker.fetch_candidate_issues() do
+    case Tracker.fetch_issue_states_by_ids([issue_id]) do
       {:ok, issues} ->
         issues
         |> find_issue_by_id(issue_id)
         |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
 
       {:error, reason} ->
-        Logger.warning("Retry poll failed for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+        Logger.warning("Retry refresh failed for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
 
         {:noreply,
          schedule_issue_retry(

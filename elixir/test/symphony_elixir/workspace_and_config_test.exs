@@ -922,6 +922,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.settings!().codex.command == "codex app-server"
   end
 
+  test "config namespaces default workspace root by github repository when workspace.root is omitted" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      workspace_root: nil
+    )
+
+    assert Config.settings!().workspace.root ==
+             Path.join(Path.join(System.tmp_dir!(), "symphony_workspaces"), "acme-repo")
+  end
+
   test "config resolves $VAR references for env-backed secret and path values" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
     api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"

@@ -1,6 +1,37 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
+  defmodule RetryLookupGitHubClient do
+    alias SymphonyElixir.GitHub.Issue
+
+    def fetch_candidate_issues do
+      notify(:fetch_candidate_issues_called)
+      {:ok, []}
+    end
+
+    def fetch_issues_by_states(_states), do: {:ok, []}
+
+    def fetch_issue_states_by_ids(issue_ids) do
+      notify({:fetch_issue_states_by_ids_called, issue_ids})
+
+      case Application.get_env(:symphony_elixir, :retry_lookup_issue) do
+        %Issue{} = issue -> {:ok, [issue]}
+        _ -> {:ok, []}
+      end
+    end
+
+    def create_comment(_issue_id, _body), do: :ok
+    def update_issue_state(_issue_id, _state_name), do: :ok
+    def graphql(_query, _variables \\ %{}, _opts \\ []), do: {:ok, %{}}
+
+    defp notify(message) do
+      case Application.get_env(:symphony_elixir, :retry_lookup_recipient) do
+        pid when is_pid(pid) -> send(pid, message)
+        _ -> :ok
+      end
+    end
+  end
+
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -760,6 +791,72 @@ defmodule SymphonyElixir.CoreTest do
              identifier: "MT-561",
              error: "agent exited: :boom"
            } = :sys.get_state(pid).retry_attempts[issue_id]
+  end
+
+  test "retry revalidation fetches issue by id and cleans terminal workspaces" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-retry-id-#{System.unique_integer([:positive])}")
+    workspace_root = Path.join(test_root, "workspaces")
+    workspace = Path.join(workspace_root, "GH-42")
+    File.mkdir_p!(workspace)
+
+    previous_client = Application.get_env(:symphony_elixir, :github_client_module)
+    previous_issue = Application.get_env(:symphony_elixir, :retry_lookup_issue)
+    previous_recipient = Application.get_env(:symphony_elixir, :retry_lookup_recipient)
+
+    on_exit(fn ->
+      if previous_client, do: Application.put_env(:symphony_elixir, :github_client_module, previous_client)
+      if is_nil(previous_client), do: Application.delete_env(:symphony_elixir, :github_client_module)
+
+      if previous_issue do
+        Application.put_env(:symphony_elixir, :retry_lookup_issue, previous_issue)
+      else
+        Application.delete_env(:symphony_elixir, :retry_lookup_issue)
+      end
+
+      if previous_recipient do
+        Application.put_env(:symphony_elixir, :retry_lookup_recipient, previous_recipient)
+      else
+        Application.delete_env(:symphony_elixir, :retry_lookup_recipient)
+      end
+
+      File.rm_rf(test_root)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_terminal_states: ["closed"],
+      workspace_root: workspace_root
+    )
+
+    Application.put_env(:symphony_elixir, :github_client_module, RetryLookupGitHubClient)
+    Application.put_env(:symphony_elixir, :retry_lookup_recipient, self())
+
+    Application.put_env(:symphony_elixir, :retry_lookup_issue, %SymphonyElixir.GitHub.Issue{
+      id: "42",
+      number: 42,
+      title: "Closed issue",
+      state: "closed",
+      labels: [],
+      assignees: []
+    })
+
+    state = %Orchestrator.State{
+      claimed: MapSet.new(["42"]),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{},
+      running: %{}
+    }
+
+    assert {:noreply, next_state} =
+             Orchestrator.handle_retry_issue_for_test(state, "42", 1, %{identifier: "GH-42"})
+
+    assert_receive {:fetch_issue_states_by_ids_called, ["42"]}
+
+    refute MapSet.member?(next_state.claimed, "42")
+    refute File.exists?(workspace)
   end
 
   test "manual refresh coalesces repeated requests and ignores superseded ticks" do

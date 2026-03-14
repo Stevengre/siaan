@@ -234,6 +234,36 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert params[:labels] == "status:ready"
   end
 
+  test "fetch_candidate_issues_for_test derives REST issue URLs from tracker endpoint variants" do
+    request_fun = fn :get, url, _opts ->
+      send(self(), {:url, url})
+      {:ok, %{status: 200, body: []}}
+    end
+
+    endpoint_cases = [
+      {"https://ghe.example.com/api/graphql", "https://ghe.example.com/api/v3/repos/acme/repo/issues"},
+      {"https://proxy.example.com/enterprise/graphql", "https://proxy.example.com/enterprise/repos/acme/repo/issues"},
+      {"https://proxy.example.com/api/v3", "https://proxy.example.com/api/v3/repos/acme/repo/issues"},
+      {"https://proxy.example.com", "https://proxy.example.com/repos/acme/repo/issues"},
+      {"not-a-url", "https://api.github.com/repos/acme/repo/issues"}
+    ]
+
+    Enum.each(endpoint_cases, fn {endpoint, expected_url} ->
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "github",
+        tracker_repo_owner: "acme",
+        tracker_repo_name: "repo",
+        tracker_api_token: "gh-token",
+        tracker_endpoint: endpoint,
+        tracker_ready_label: "status:ready",
+        tracker_active_states: ["status:ready"]
+      )
+
+      assert {:ok, []} = Client.fetch_candidate_issues_for_test(request_fun)
+      assert_receive {:url, ^expected_url}
+    end)
+  end
+
   test "fetch_candidate_issues_for_test reuses cached issue pages when GitHub returns 304" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -288,6 +318,180 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, 1, nil}
     assert_receive {:request, 1, "\"etag-ready-page-1\""}
     refute_receive {:request, _, _}
+  end
+
+  test "fetch_candidate_issues_for_test replays cached paginated pages across 304 responses" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    page_one = Enum.map(1..100, &issue_payload(&1, "status:ready"))
+    page_two = [issue_payload(101, "status:ready")]
+
+    request_fun = fn :get, _url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      page = params[:page]
+      headers = Keyword.fetch!(opts, :headers)
+      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
+
+      send(self(), {:request, page, if_none_match})
+
+      case {page, if_none_match} do
+        {1, nil} -> {:ok, %{status: 200, headers: [{"etag", "\"etag-page-1\""}], body: page_one}}
+        {2, nil} -> {:ok, %{status: 200, headers: [{"etag", "\"etag-page-2\""}], body: page_two}}
+        {1, "\"etag-page-1\""} -> {:ok, %{status: 304, headers: [{"etag", "\"etag-page-1\""}], body: []}}
+        {2, "\"etag-page-2\""} -> {:ok, %{status: 304, headers: [{"etag", "\"etag-page-2\""}], body: []}}
+        other -> flunk("unexpected request shape: #{inspect(other)}")
+      end
+    end
+
+    assert {:ok, initial} = Client.fetch_candidate_issues_for_test(request_fun)
+    assert length(initial) == 101
+    assert {:ok, replayed} = Client.fetch_candidate_issues_for_test(request_fun)
+    assert Enum.map(replayed, & &1.id) == Enum.map(initial, & &1.id)
+
+    assert_receive {:request, 1, nil}
+    assert_receive {:request, 2, nil}
+    assert_receive {:request, 1, "\"etag-page-1\""}
+    assert_receive {:request, 2, "\"etag-page-2\""}
+    refute_receive {:request, _, _}
+  end
+
+  test "fetch_candidate_issues_for_test refetches when GitHub returns 304 without cached page" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    key = {:nil_cache_304_refetch, make_ref()}
+
+    request_fun = fn :get, _url, opts ->
+      calls = Process.get(key, 0)
+      Process.put(key, calls + 1)
+
+      headers = Keyword.fetch!(opts, :headers)
+      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
+      send(self(), {:request, calls + 1, if_none_match})
+
+      case calls do
+        0 ->
+          {:ok, %{status: 304, headers: [], body: []}}
+
+        1 ->
+          {:ok, %{status: 200, headers: [{"etag", "\"fallback-etag\""}], body: [issue_payload(88, "status:ready")]}}
+
+        _ ->
+          flunk("unexpected extra request")
+      end
+    end
+
+    assert {:ok, [%Issue{id: "88", state: "status:ready"}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:request, 1, nil}
+    assert_receive {:request, 2, nil}
+    refute_receive {:request, _, _}
+  end
+
+  test "fetch_candidate_issues_for_test returns status and request errors for 304 fallback refetch" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    status_key = {:nil_cache_304_status_error, make_ref()}
+
+    status_failure = fn :get, _url, _opts ->
+      calls = Process.get(status_key, 0)
+      Process.put(status_key, calls + 1)
+
+      if calls == 0 do
+        {:ok, %{status: 304, headers: [], body: []}}
+      else
+        {:ok, %{status: 502, headers: [], body: %{}}}
+      end
+    end
+
+    assert {:error, {:github_api_status, 502}} =
+             Client.fetch_candidate_issues_for_test(status_failure)
+
+    request_key = {:nil_cache_304_request_error, make_ref()}
+
+    request_failure = fn :get, _url, _opts ->
+      calls = Process.get(request_key, 0)
+      Process.put(request_key, calls + 1)
+
+      if calls == 0 do
+        {:ok, %{status: 304, headers: [], body: []}}
+      else
+        {:error, :closed}
+      end
+    end
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.fetch_candidate_issues_for_test(request_failure)
+  end
+
+  test "fetch_candidate_issues_for_test normalizes varied etag header shapes" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    key = {:etag_shape_calls, make_ref()}
+
+    request_fun = fn :get, _url, opts ->
+      call_index = Process.get(key, 0)
+      Process.put(key, call_index + 1)
+
+      headers = Keyword.fetch!(opts, :headers)
+      if_none_match = Enum.find_value(headers, &header_value(&1, "if-none-match"))
+      send(self(), {:request, call_index + 1, if_none_match})
+
+      response_headers =
+        case call_index do
+          0 -> [:ignore_me, {"etag", "   "}]
+          1 -> %{"etag" => ["\"etag-from-list\"", "\"ignored\""]}
+          2 -> %{"etag" => []}
+          3 -> %{"etag" => 123}
+          _ -> flunk("unexpected request index #{call_index}")
+        end
+
+      {:ok, %{status: 200, headers: response_headers, body: [issue_payload(call_index + 1, "status:ready")]}}
+    end
+
+    assert {:ok, [%Issue{id: "1"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+    assert {:ok, [%Issue{id: "2"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+    assert {:ok, [%Issue{id: "3"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+    assert {:ok, [%Issue{id: "4"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:request, 1, nil}
+    assert_receive {:request, 2, nil}
+    assert_receive {:request, 3, "\"etag-from-list\""}
+    assert_receive {:request, 4, nil}
+    refute_receive {:request, _, _}
+  end
+
+  test "normalize_filter_labels_for_test returns empty list for non-list inputs" do
+    assert [] == Client.normalize_filter_labels_for_test(nil)
+    assert [] == Client.normalize_filter_labels_for_test("status:ready")
   end
 
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do
@@ -701,6 +905,30 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:error, {:invalid_github_state_transition, "status:ready", "status:review"}} =
              Client.update_issue_state_for_test("42", "status:review", invalid_transition)
+
+    non_status_current_state = fn method, _url, _opts ->
+      if method == :get do
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "id" => 42,
+             "number" => 42,
+             "title" => "Issue 42",
+             "body" => "Body",
+             "state" => %{"unexpected" => true},
+             "html_url" => "https://github.com/acme/repo/issues/42",
+             "labels" => [%{"name" => "infra"}],
+             "assignees" => []
+           }
+         }}
+      else
+        flunk("patch should not run")
+      end
+    end
+
+    assert {:error, {:invalid_github_state_transition, nil, "status:in-progress"}} =
+             Client.update_issue_state_for_test("42", "status:in-progress", non_status_current_state)
   end
 
   test "graphql/3 surfaces request failures and default request path errors" do
@@ -798,4 +1026,17 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   defp header_value(_header, _expected_name), do: nil
+
+  defp issue_payload(number, status_label) do
+    %{
+      "id" => number,
+      "number" => number,
+      "title" => "Issue #{number}",
+      "body" => "Body #{number}",
+      "state" => "open",
+      "html_url" => "https://github.com/acme/repo/issues/#{number}",
+      "labels" => [%{"name" => status_label}],
+      "assignees" => []
+    }
+  end
 end

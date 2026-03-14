@@ -162,6 +162,12 @@ defmodule SymphonyElixir.GitHub.Client do
     normalize_issue(raw_issue)
   end
 
+  @doc false
+  @spec normalize_filter_labels_for_test(term()) :: [String.t()]
+  def normalize_filter_labels_for_test(labels) do
+    normalize_filter_labels(labels)
+  end
+
   defp fetch_candidate_issues(request_fun) when is_function(request_fun, 3) do
     with {:ok, tracker} <- github_tracker_config() do
       tracker.active_states
@@ -519,6 +525,7 @@ defmodule SymphonyElixir.GitHub.Client do
        %{
          repo_owner: normalized_owner,
          repo_name: normalized_repo,
+         endpoint: tracker.endpoint,
          ready_label: ready_label,
          active_states: active_states
        }}
@@ -547,7 +554,46 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp issues_url(%{repo_owner: owner, repo_name: repo}), do: "#{@rest_endpoint}/repos/#{owner}/#{repo}/issues"
+  defp github_rest_endpoint(tracker) do
+    tracker
+    |> Map.get(:endpoint, "")
+    |> to_string()
+    |> String.trim()
+    |> rest_endpoint_from_tracker_endpoint()
+  end
+
+  defp rest_endpoint_from_tracker_endpoint(endpoint) when is_binary(endpoint) do
+    case URI.parse(endpoint) do
+      %URI{scheme: scheme, host: host} = uri when is_binary(scheme) and is_binary(host) ->
+        uri
+        |> Map.merge(%{query: nil, fragment: nil, path: rest_path_from_tracker_endpoint(uri.path)})
+        |> URI.to_string()
+        |> String.trim_trailing("/")
+
+      _ ->
+        @rest_endpoint
+    end
+  end
+
+  defp rest_path_from_tracker_endpoint(nil), do: nil
+
+  defp rest_path_from_tracker_endpoint(path) when is_binary(path) do
+    trimmed = path |> String.trim() |> String.trim_trailing("/")
+
+    normalized =
+      cond do
+        trimmed in ["", "/"] -> ""
+        trimmed == "/graphql" -> ""
+        trimmed == "/api/graphql" -> "/api/v3"
+        String.ends_with?(trimmed, "/graphql") -> String.trim_trailing(trimmed, "/graphql")
+        true -> trimmed
+      end
+
+    if normalized in ["", "/"], do: nil, else: normalized
+  end
+
+  defp issues_url(%{repo_owner: owner, repo_name: repo} = tracker),
+    do: "#{github_rest_endpoint(tracker)}/repos/#{owner}/#{repo}/issues"
 
   defp issue_url(tracker, number), do: "#{issues_url(tracker)}/#{number}"
   defp issue_comments_url(tracker, number), do: "#{issue_url(tracker, number)}/comments"
