@@ -85,7 +85,7 @@ if [[ "$bootstrap" == "true" ]]; then
 fi
 
 cmd=(
-  mise exec -- ./bin/symphony
+  mise exec -- ./bin/siaan
   --i-understand-that-this-will-be-running-without-the-usual-guardrails
 )
 
@@ -97,4 +97,3 @@ cmd+=("$workflow")
 
 echo "Starting siaan with workflow: $workflow"
 exec "${cmd[@]}"
-

@@ -62,7 +62,7 @@ mise trust
 mise install
 mise exec -- mix setup
 mise exec -- mix build
-mise exec -- ./bin/symphony ./WORKFLOW.md
+mise exec -- ./bin/siaan ./WORKFLOW.md
 ```
 
 ## GitHub Tracker Manual Run
@@ -87,10 +87,10 @@ gh label create "status:in-progress" --color fbca04 --force
 gh label create "status:review" --color 0e8a16 --force
 ```
 
-4. Start Symphony with the GitHub workflow and required acknowledgement switch:
+4. Start siaan with the GitHub workflow and required acknowledgement switch:
 
 ```bash
-mise exec -- ./bin/symphony \
+mise exec -- ./bin/siaan \
   --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   ./WORKFLOW.github.example.md
 ```
@@ -107,10 +107,10 @@ Current behavior boundary:
 
 ## Configuration
 
-Pass a custom workflow file path to `./bin/symphony` when starting the service:
+Pass a custom workflow file path to `./bin/siaan` when starting the service:
 
 ```bash
-./bin/symphony /path/to/custom/WORKFLOW.md
+./bin/siaan /path/to/custom/WORKFLOW.md
 ```
 
 If no path is passed, Symphony defaults to `./WORKFLOW.md`.
