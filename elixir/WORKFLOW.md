@@ -261,21 +261,6 @@ Use this only when completion is blocked by missing required tools or missing au
 - Required PR metadata is present (`symphony` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 
-## Blocked-by dependency enforcement
-
-Issues may declare blockers via `Blocked by #N` in the issue body. The orchestrator
-extracts these references and **will not dispatch** an issue whose blockers are in
-non-terminal states.
-
-When working on an issue that has blockers:
-
-1. **Do not start execution** if any blocker issue is still open (non-terminal).
-   The orchestrator enforces this automatically; agents should not override it.
-2. **Base branch follows the dependency chain**: if the blocker has an open PR,
-   branch from that PR's head branch (not `main`) and set `--base <blocker-pr-branch>`
-   when creating the PR. This ensures the dependent work stacks on top of
-   prerequisite changes.
-
 ## Guardrails
 
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
