@@ -11,6 +11,7 @@ defmodule SymphonyElixir.GitHub.Client do
   @rest_endpoint "https://api.github.com"
   @graphql_endpoint "https://api.github.com/graphql"
   @issue_page_size 100
+  @repo_page_size 100
   @max_error_body_log_bytes 1_000
 
   @type request_fun :: (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
@@ -364,7 +365,7 @@ defmodule SymphonyElixir.GitHub.Client do
   defp list_labels(repo, request_fun) do
     with {:ok, headers} <- repo_headers(repo),
          {:ok, %{status: 200, body: body}} when is_list(body) <-
-           request_fun.(:get, labels_url(repo), headers: headers, params: [per_page: 100]) do
+           request_fun.(:get, labels_url(repo), headers: headers, params: [per_page: @repo_page_size]) do
       {:ok, body}
     else
       {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
@@ -385,20 +386,38 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp list_collaborators(repo, request_fun) do
-    with {:ok, headers} <- repo_headers(repo),
-         {:ok, %{status: 200, body: body}} when is_list(body) <-
-           request_fun.(:get, collaborators_url(repo), headers: headers, params: [per_page: 100]) do
-      {:ok,
-       body
-       |> Enum.map(&Map.get(&1, "login"))
-       |> Enum.filter(&is_binary/1)
-       |> Enum.map(&String.trim/1)
-       |> Enum.reject(&(&1 == ""))
-       |> Enum.sort()}
-    else
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, {:github_api_request, reason}}
+    with {:ok, headers} <- repo_headers(repo) do
+      do_list_collaborators(repo, request_fun, headers, 1, [])
     end
+  end
+
+  defp do_list_collaborators(repo, request_fun, headers, page, acc) do
+    params = [per_page: @repo_page_size, page: page]
+
+    case request_fun.(:get, collaborators_url(repo), headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        next_acc = acc ++ normalize_collaborators(body)
+
+        if length(body) >= @repo_page_size do
+          do_list_collaborators(repo, request_fun, headers, page + 1, next_acc)
+        else
+          {:ok, next_acc |> Enum.uniq() |> Enum.sort()}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp normalize_collaborators(body) do
+    body
+    |> Enum.map(&Map.get(&1, "login"))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   defp get_branch_protection(repo, branch, request_fun) do
@@ -432,9 +451,6 @@ defmodule SymphonyElixir.GitHub.Client do
            request_fun.(:get, repo_url(repo), headers: headers),
          {:ok, branch} <- extract_default_branch(body) do
       {:ok, branch}
-    else
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, {:github_api_request, reason}}
     end
   end
 
@@ -593,21 +609,20 @@ defmodule SymphonyElixir.GitHub.Client do
   defp github_graphql_endpoint do
     tracker = Config.settings!().tracker
 
-    case tracker.endpoint do
-      nil -> @graphql_endpoint
-      "https://api.linear.app/graphql" -> @graphql_endpoint
-      endpoint -> endpoint
-    end
+    if tracker.endpoint == "https://api.linear.app/graphql",
+      do: @graphql_endpoint,
+      else: tracker.endpoint
   end
 
   defp github_rest_endpoint do
     tracker = Config.settings!().tracker
 
-    case tracker.endpoint do
-      nil -> @rest_endpoint
-      "https://api.linear.app/graphql" -> @rest_endpoint
-      endpoint -> rest_endpoint_from_graphql(endpoint)
-    end
+    endpoint =
+      if tracker.endpoint == "https://api.linear.app/graphql",
+        do: @graphql_endpoint,
+        else: tracker.endpoint
+
+    rest_endpoint_from_graphql(endpoint)
   end
 
   defp rest_endpoint_from_graphql(endpoint) when is_binary(endpoint) do
@@ -633,8 +648,6 @@ defmodule SymphonyElixir.GitHub.Client do
         @rest_endpoint
     end
   end
-
-  defp rest_endpoint_from_graphql(_endpoint), do: @rest_endpoint
 
   defp repo_url(%{repo_owner: owner, repo_name: repo} = context),
     do: "#{rest_endpoint(context)}/repos/#{owner}/#{repo}"

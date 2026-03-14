@@ -38,8 +38,8 @@ defmodule SymphonyElixir.Install.Runner do
 
     with {:ok, %{owner: owner, repo: repo_name}} <- Repository.github_repo(repo_root, opts),
          {:ok, repo_ctx} <- client.build_repo_context(owner, repo_name, Keyword.get(opts, :api_key)),
-         {:ok, collaborators} <- client.list_collaborators(repo_ctx),
-         {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)) do
+         {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)),
+         {:ok, collaborators} <- client.list_collaborators(repo_ctx) do
       branch = resolve_default_branch(client, repo_ctx, opts)
 
       info.("")
@@ -47,38 +47,108 @@ defmodule SymphonyElixir.Install.Runner do
       info.("Current collaborators: #{Enum.map_join(collaborators, ", ", &"@#{&1}")}")
       info.("")
 
-      info.("1. Labels")
-      ensure_labels(client, repo_ctx, dry_run, info)
-      info.("")
+      install_context = %{
+        repo_root: repo_root,
+        owner: owner,
+        repo_name: repo_name,
+        branch: branch,
+        security_config: security_config,
+        collaborators: collaborators,
+        prompt: prompt,
+        client: client,
+        repo_ctx: repo_ctx,
+        dry_run: dry_run,
+        info: info
+      }
 
-      info.("2. Maintainer allowlist")
+      finish_install(install_context, yes)
+    end
+  end
 
-      default_maintainers =
-        case security_config.maintainers do
-          [] -> collaborators
-          maintainers -> maintainers
-        end
+  @spec desired_labels() :: [map()]
+  def desired_labels, do: @desired_labels
 
-      maintainers =
-        if yes do
-          default_maintainers
-        else
-          prompt.("Confirm or edit maintainer list", default_maintainers)
-        end
+  defp ensure_labels(client, repo_ctx, dry_run, info) do
+    case render_label_status(client, repo_ctx, dry_run) do
+      {:ok, lines} ->
+        Enum.each(lines, info)
+        :ok
 
-      info.("   ✓ Selected maintainers — #{Enum.join(maintainers, ", ")}")
-      info.("")
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
+  defp render_label_status(client, repo_ctx, dry_run) do
+    case client.list_labels(repo_ctx) do
+      {:ok, existing} ->
+        existing
+        |> Enum.map(&(Map.get(&1, "name") || Map.get(&1, :name)))
+        |> MapSet.new()
+        |> sync_missing_labels(client, repo_ctx, dry_run)
+
+      {:error, reason} ->
+        {:error, {:label_sync_failed, {:list_labels_failed, reason}}}
+    end
+  end
+
+  defp sync_missing_labels(existing_names, client, repo_ctx, dry_run) do
+    Enum.reduce_while(@desired_labels, {:ok, []}, fn label, {:ok, lines} ->
+      sync_label_status(label, existing_names, client, repo_ctx, dry_run, lines)
+    end)
+  end
+
+  defp sync_label_status(label, existing_names, client, repo_ctx, dry_run, lines) do
+    if MapSet.member?(existing_names, label.name) do
+      {:cont, {:ok, lines ++ ["   ✓ #{label.name} — already exists"]}}
+    else
+      create_missing_label_status(label, client, repo_ctx, dry_run, lines)
+    end
+  end
+
+  defp ensure_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info) do
+    case normalize_branch_name(branch) do
+      {:ok, branch_name} ->
+        ensure_branch_protection_for_branch(client, repo_ctx, branch_name, maintainers, dry_run, info)
+
+      {:error, reason} ->
+        info.("   ~ Branch protection — skipped (could not determine default branch: #{inspect(reason)})")
+    end
+  end
+
+  defp ensure_branch_protection_for_branch(client, repo_ctx, branch, maintainers, dry_run, info) do
+    case client.get_branch_protection(repo_ctx, branch) do
+      {:ok, current} when is_map(current) ->
+        update_branch_protection(client, repo_ctx, branch, maintainers, current, dry_run, info)
+
+      {:ok, nil} ->
+        create_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info)
+
+      {:error, {:github_api_status, 403}} ->
+        info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
+
+      {:error, reason} ->
+        info.("   ~ Branch protection on #{branch} — skipped (#{inspect(reason)})")
+    end
+  end
+
+  defp finish_install(context, yes) do
+    %{client: client, repo_ctx: repo_ctx, dry_run: dry_run, info: info} = context
+
+    info.("1. Labels")
+
+    with :ok <- ensure_labels(client, repo_ctx, dry_run, info),
+         {:ok, maintainers} <- select_maintainers(context, yes) do
       info.("3. Repository security")
       info.("   ✓ Issue/PR restriction — enforced by repository guardrails")
-      ensure_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info)
+      ensure_branch_protection(client, repo_ctx, context.branch, maintainers, dry_run, info)
       info.("")
 
-      config_path = Repository.security_config_path(repo_root)
-      desired_config = %{security_config | maintainers: maintainers}
+      config_path = Repository.security_config_path(context.repo_root)
+      desired_config = %{context.security_config | maintainers: maintainers}
 
       info.("4. Configuration")
-      write_security_file(repo_root, config_path, desired_config, dry_run, info)
+      write_security_file(context.repo_root, config_path, desired_config, dry_run, info)
       info.("")
 
       info.("5. Version")
@@ -88,75 +158,75 @@ defmodule SymphonyElixir.Install.Runner do
 
       {:ok,
        %{
-         repo_root: repo_root,
-         repo_owner: owner,
-         repo_name: repo_name,
+         repo_root: context.repo_root,
+         repo_owner: context.owner,
+         repo_name: context.repo_name,
          maintainers: maintainers,
          config_path: config_path
        }}
     end
   end
 
-  @spec desired_labels() :: [map()]
-  def desired_labels, do: @desired_labels
+  defp select_maintainers(context, yes) do
+    %{security_config: security_config, collaborators: collaborators, prompt: prompt, info: info} =
+      context
 
-  defp ensure_labels(client, repo_ctx, dry_run, info) do
-    {:ok, existing} = client.list_labels(repo_ctx)
+    info.("")
+    info.("2. Maintainer allowlist")
 
-    existing_names =
-      existing
-      |> Enum.map(&(Map.get(&1, "name") || Map.get(&1, :name)))
-      |> MapSet.new()
-
-    Enum.each(@desired_labels, fn label ->
-      if MapSet.member?(existing_names, label.name) do
-        info.("   ✓ #{label.name} — already exists")
-      else
-        info.("   + #{label.name} — creating")
-
-        unless dry_run do
-          :ok = client.create_label(repo_ctx, label)
-        end
+    default_maintainers =
+      case security_config.maintainers do
+        [] -> collaborators
+        maintainers -> maintainers
       end
-    end)
+
+    maintainers =
+      if yes do
+        default_maintainers
+      else
+        prompt.("Confirm or edit maintainer list", default_maintainers)
+      end
+
+    info.("   ✓ Selected maintainers — #{Enum.join(maintainers, ", ")}")
+    info.("")
+
+    {:ok, maintainers}
   end
 
-  defp ensure_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info) do
-    with {:ok, branch_name} <- normalize_branch_name(branch) do
-      ensure_branch_protection_for_branch(client, repo_ctx, branch_name, maintainers, dry_run, info)
+  defp create_missing_label_status(label, _client, _repo_ctx, true, lines) do
+    {:cont, {:ok, lines ++ ["   + #{label.name} — creating"]}}
+  end
+
+  defp create_missing_label_status(label, client, repo_ctx, false, lines) do
+    next_lines = lines ++ ["   + #{label.name} — creating"]
+
+    case client.create_label(repo_ctx, label) do
+      :ok -> {:cont, {:ok, next_lines}}
+      {:error, reason} -> {:halt, {:error, {:label_sync_failed, {:create_label_failed, label.name, reason}}}}
+    end
+  end
+
+  defp update_branch_protection(client, repo_ctx, branch, maintainers, current, dry_run, info) do
+    desired = branch_protection_payload(maintainers, current)
+
+    if branch_protection_matches?(current, desired) do
+      info.("   ✓ Branch protection on #{branch} — already configured")
     else
-      {:error, reason} ->
-        info.("   ~ Branch protection — skipped (could not determine default branch: #{inspect(reason)})")
+      info.("   ~ Branch protection on #{branch} — updating to match install policy")
+      maybe_apply_branch_protection(client, repo_ctx, branch, desired, "update", dry_run, info)
     end
   end
 
-  defp ensure_branch_protection_for_branch(client, repo_ctx, branch, maintainers, dry_run, info) do
-    case client.get_branch_protection(repo_ctx, branch) do
-      {:ok, current} when is_map(current) ->
-        desired = branch_protection_payload(maintainers, current)
+  defp create_branch_protection(client, repo_ctx, branch, maintainers, dry_run, info) do
+    desired = branch_protection_payload(maintainers)
+    info.("   + Branch protection on #{branch} — creating")
+    maybe_apply_branch_protection(client, repo_ctx, branch, desired, "create", dry_run, info)
+  end
 
-        if branch_protection_matches?(current, desired) do
-          info.("   ✓ Branch protection on #{branch} — already configured")
-        else
-          info.("   ~ Branch protection on #{branch} — updating to match install policy")
+  defp maybe_apply_branch_protection(_client, _repo_ctx, _branch, _desired, _action, true, _info), do: :ok
 
-          unless dry_run,
-            do: apply_branch_protection(client, repo_ctx, branch, desired, "update", info)
-        end
-
-      {:ok, nil} ->
-        desired = branch_protection_payload(maintainers)
-        info.("   + Branch protection on #{branch} — creating")
-
-        unless dry_run,
-          do: apply_branch_protection(client, repo_ctx, branch, desired, "create", info)
-
-      {:error, {:github_api_status, 403}} ->
-        info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
-
-      {:error, reason} ->
-        info.("   ~ Branch protection on #{branch} — skipped (#{inspect(reason)})")
-    end
+  defp maybe_apply_branch_protection(client, repo_ctx, branch, desired, action, false, info) do
+    apply_branch_protection(client, repo_ctx, branch, desired, action, info)
   end
 
   defp branch_protection_payload(maintainers, current \\ nil) do
@@ -451,9 +521,6 @@ defmodule SymphonyElixir.Install.Runner do
   end
 
   defp relative(repo_root, path) do
-    case Path.relative_to(path, repo_root) do
-      "." -> Path.basename(path)
-      other -> other
-    end
+    Path.relative_to(path, repo_root)
   end
 end

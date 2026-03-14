@@ -65,10 +65,31 @@ defmodule SymphonyElixir.Install.Repository do
     end
   end
 
-  defp parse_remote_url("git@github.com:" <> repo), do: parse_repo_string(repo)
-  defp parse_remote_url("https://github.com/" <> repo), do: parse_repo_string(repo)
-  defp parse_remote_url("http://github.com/" <> repo), do: parse_repo_string(repo)
-  defp parse_remote_url(_url), do: {:error, :unsupported_remote}
+  defp parse_remote_url(url) when is_binary(url) do
+    case parse_scp_style_remote(url) do
+      {:ok, repo} ->
+        parse_repo_string(repo)
+
+      :error ->
+        case URI.parse(url) do
+          %URI{scheme: scheme, host: host, path: path}
+          when scheme in ["http", "https", "ssh"] and is_binary(host) and is_binary(path) ->
+            path
+            |> String.trim_leading("/")
+            |> parse_repo_string()
+
+          _ ->
+            {:error, :unsupported_remote}
+        end
+    end
+  end
+
+  defp parse_scp_style_remote(url) do
+    case Regex.run(~r/\A[^@]+@[^:]+:(.+)\z/, url, capture: :all_but_first) do
+      [repo] -> {:ok, repo}
+      _ -> :error
+    end
+  end
 
   defp parse_repo_string(raw) when is_binary(raw) do
     trimmed = raw |> String.trim() |> String.trim_trailing(".git")
