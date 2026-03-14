@@ -556,6 +556,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   test "public wrappers return fast validation errors without network dependencies" do
+    saved_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: nil,
@@ -571,6 +575,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   test "fetch_candidate_issues_for_test validates required github tracker fields" do
+    saved_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -911,6 +919,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   test "graphql/3 surfaces request failures and default request path errors" do
+    saved_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", saved_token) end)
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
