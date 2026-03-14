@@ -76,7 +76,28 @@ defmodule SymphonyElixir.Config.Schema do
         ],
         empty_values: []
       )
+      |> validate_state_list(:active_states)
+      |> validate_state_list(:terminal_states)
     end
+
+    defp validate_state_list(changeset, field) do
+      validate_change(changeset, field, fn ^field, value ->
+        if valid_state_list?(value) do
+          []
+        else
+          [{field, "must be a list of non-empty strings"}]
+        end
+      end)
+    end
+
+    defp valid_state_list?(value) when is_list(value) do
+      Enum.all?(value, fn
+        state_name when is_binary(state_name) -> String.trim(state_name) != ""
+        _ -> false
+      end)
+    end
+
+    defp valid_state_list?(_value), do: false
   end
 
   defmodule Polling do

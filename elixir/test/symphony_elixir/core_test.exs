@@ -137,6 +137,33 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "   ",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo"
+    )
+
+    assert {:error, :missing_github_api_token} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "   ",
+      tracker_repo_name: "repo"
+    )
+
+    assert {:error, :missing_github_repo_owner} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: "gh-token",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "   "
+    )
+
+    assert {:error, :missing_github_repo_name} = Config.validate!()
   end
 
   test "current WORKFLOW.md file is valid and complete" do

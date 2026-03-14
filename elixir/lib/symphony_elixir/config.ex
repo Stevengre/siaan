@@ -143,12 +143,15 @@ defmodule SymphonyElixir.Config do
 
   defp validate_github_tracker(tracker) do
     cond do
-      not is_binary(tracker.api_key) -> {:error, :missing_github_api_token}
-      not is_binary(tracker.repo_owner) -> {:error, :missing_github_repo_owner}
-      not is_binary(tracker.repo_name) -> {:error, :missing_github_repo_name}
+      not present_binary?(tracker.api_key) -> {:error, :missing_github_api_token}
+      not present_binary?(tracker.repo_owner) -> {:error, :missing_github_repo_owner}
+      not present_binary?(tracker.repo_name) -> {:error, :missing_github_repo_name}
       true -> :ok
     end
   end
+
+  defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present_binary?(_value), do: false
 
   defp format_config_error(reason) do
     case reason do

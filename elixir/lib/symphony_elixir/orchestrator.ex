@@ -652,6 +652,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp terminal_state_set do
     Config.settings!().tracker.terminal_states
+    |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
@@ -659,6 +660,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp active_state_set do
     Config.settings!().tracker.active_states
+    |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
