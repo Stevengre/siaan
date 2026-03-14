@@ -19,6 +19,64 @@ EOF
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 elixir_dir="$script_dir/elixir"
 
+resolve_absolute_path() {
+  local path="$1"
+  local dir
+  local base
+  local absolute_dir
+
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+
+  if absolute_dir="$(cd "$dir" 2>/dev/null && /bin/pwd -P)"; then
+    printf '%s/%s\n' "$absolute_dir" "$base"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+extract_tracker_kind() {
+  local workflow_path="$1"
+
+  awk '
+    BEGIN {
+      in_tracker = 0
+      tracker_indent = -1
+    }
+
+    {
+      if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
+        next
+      }
+
+      match($0, /[^[:space:]]/)
+      indent = RSTART ? RSTART - 1 : 0
+    }
+
+    /^[[:space:]]*tracker:[[:space:]]*$/ {
+      in_tracker = 1
+      tracker_indent = indent
+      next
+    }
+
+    in_tracker {
+      if (indent <= tracker_indent) {
+        exit
+      }
+
+      if ($0 ~ /^[[:space:]]*kind:[[:space:]]*/) {
+        line = $0
+        sub(/^[[:space:]]*kind:[[:space:]]*/, "", line)
+        sub(/[[:space:]]*(#.*)?$/, "", line)
+        gsub(/^["'"'"']/, "", line)
+        gsub(/["'"'"']$/, "", line)
+        print tolower(line)
+        exit
+      }
+    }
+  ' "$workflow_path"
+}
+
 bootstrap="false"
 port=""
 workflow="$elixir_dir/WORKFLOW.md"
@@ -59,19 +117,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+workflow="$(resolve_absolute_path "$workflow")"
+
 if ! command -v mise >/dev/null 2>&1; then
   echo "error: 'mise' is required. Install from https://mise.jdx.dev/getting-started.html" >&2
   exit 1
 fi
 
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "error: GITHUB_TOKEN is not set." >&2
-  echo "run: export GITHUB_TOKEN=..." >&2
+if [[ ! -f "$workflow" ]]; then
+  echo "error: workflow file not found: $workflow" >&2
   exit 1
 fi
 
-if [[ ! -f "$workflow" ]]; then
-  echo "error: workflow file not found: $workflow" >&2
+tracker_kind="$(extract_tracker_kind "$workflow")"
+
+if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "error: GITHUB_TOKEN is not set." >&2
+  echo "run: export GITHUB_TOKEN=..." >&2
   exit 1
 fi
 

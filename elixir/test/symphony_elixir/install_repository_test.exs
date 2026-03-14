@@ -45,6 +45,17 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
   end
 
+  test "github_repo prefers origin remote over ambient GITHUB_REPOSITORY" do
+    repo_root = git_repo_with_origin!("install-repository-prefer-origin", "https://ghe.example.com/acme/repo.git")
+    System.put_env("GITHUB_REPOSITORY", "Stevengre/siaan")
+
+    try do
+      assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    after
+      System.delete_env("GITHUB_REPOSITORY")
+    end
+  end
+
   test "github_repo falls back through env and reports remote lookup failures" do
     repo_root = git_repo_with_origin!("install-repository-invalid-remote", "file:///tmp/not-github")
 

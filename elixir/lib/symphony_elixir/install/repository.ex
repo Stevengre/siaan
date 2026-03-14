@@ -21,8 +21,8 @@ defmodule SymphonyElixir.Install.Repository do
   @spec github_repo(Path.t(), keyword()) :: {:ok, %{owner: String.t(), repo: String.t()}} | {:error, term()}
   def github_repo(repo_root, opts \\ []) do
     with {:error, _reason} <- from_opts(opts),
-         {:error, _reason} <- from_env(),
-         {:error, _reason} <- from_git_remote(repo_root) do
+         {:error, _reason} <- from_git_remote(repo_root),
+         {:error, _reason} <- from_env() do
       {:error, :missing_github_repository}
     else
       {:ok, repo} -> {:ok, repo}
