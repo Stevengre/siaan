@@ -38,8 +38,9 @@ jobs:
             const fs = require("fs");
             const path = require("path");
 
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
+            const headRepo = context.payload.pull_request.head.repo;
+            const owner = headRepo?.owner?.login || context.repo.owner;
+            const repo = headRepo?.name || context.repo.repo;
             const ref = context.payload.pull_request.head.sha;
             const targetDir = process.env.TARGET_DIR;
             const files = [".github/siaan-security.yml", "WORKFLOW.md", "elixir/WORKFLOW.md"];
