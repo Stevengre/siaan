@@ -9,7 +9,7 @@ tracker:
   terminal_states:
     - closed
 polling:
-  interval_ms: 5000
+  interval_ms: 30000
 workspace:
   root: ~/code/symphony-workspaces/siaan
 hooks:
@@ -21,8 +21,8 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
-  max_concurrent_agents: 10
-  max_turns: 20
+  max_concurrent_agents: 5
+  max_turns: 7
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never
