@@ -275,8 +275,6 @@ When working on an issue that has blockers:
    branch from that PR's head branch (not `main`) and set `--base <blocker-pr-branch>`
    when creating the PR. This ensures the dependent work stacks on top of
    prerequisite changes.
-3. If the blocker has no PR yet, fall back to `origin/main` and record the
-   dependency gap in the workpad.
 
 ## Guardrails
 
