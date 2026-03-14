@@ -633,11 +633,21 @@ defmodule SymphonyElixir.GitHub.Client do
 
     case {uri.scheme, uri.host} do
       {scheme, host} when is_binary(scheme) and is_binary(host) ->
+        normalized_path = String.trim_trailing(uri.path || "", "/")
+
         path =
-          case uri.path || "" do
-            "" -> ""
-            "/graphql" -> ""
-            path -> String.trim_trailing(path, "/graphql")
+          cond do
+            normalized_path == "" ->
+              ""
+
+            String.ends_with?(normalized_path, "/api/graphql") ->
+              String.replace_suffix(normalized_path, "/api/graphql", "/api/v3")
+
+            String.ends_with?(normalized_path, "/graphql") ->
+              String.replace_suffix(normalized_path, "/graphql", "")
+
+            true ->
+              normalized_path
           end
 
         uri
