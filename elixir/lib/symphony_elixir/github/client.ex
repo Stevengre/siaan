@@ -268,38 +268,25 @@ defmodule SymphonyElixir.GitHub.Client do
       [state: state, per_page: @issue_page_size, page: page]
       |> maybe_put_labels_param(labels)
 
+    request_context = %{
+      tracker: tracker,
+      labels: labels,
+      state: state,
+      request_fun: request_fun,
+      headers: headers,
+      page: page
+    }
+
     cache_key = issue_page_cache_key(tracker, state, labels, page)
     cached_page = get_cached_issue_page(cache_key)
     conditional_headers = maybe_put_if_none_match_header(headers, cached_page)
 
     case request_fun.(:get, issues_url(tracker), headers: conditional_headers, params: params) do
       {:ok, %{status: 200, body: body} = response} when is_list(body) ->
-        persist_and_merge_issue_page(
-          cache_key,
-          response,
-          body,
-          tracker,
-          labels,
-          state,
-          request_fun,
-          headers,
-          page,
-          acc
-        )
+        persist_and_merge_issue_page(cache_key, response, body, request_context, acc)
 
       {:ok, %{status: 304}} ->
-        replay_cached_or_refetch_issue_page(
-          cached_page,
-          tracker,
-          labels,
-          state,
-          request_fun,
-          headers,
-          params,
-          cache_key,
-          page,
-          acc
-        )
+        replay_cached_or_refetch_issue_page(cached_page, request_context, params, cache_key, acc)
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
@@ -309,18 +296,16 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp persist_and_merge_issue_page(
-         cache_key,
-         response,
-         body,
-         tracker,
-         labels,
-         state,
-         request_fun,
-         headers,
-         page,
-         acc
-       ) do
+  defp persist_and_merge_issue_page(cache_key, response, body, request_context, acc) do
+    %{
+      tracker: tracker,
+      labels: labels,
+      state: state,
+      request_fun: request_fun,
+      headers: headers,
+      page: page
+    } = request_context
+
     normalized =
       body
       |> Enum.reject(&pull_request?/1)
@@ -339,59 +324,37 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp replay_cached_or_refetch_issue_page(
-         %{issues: issues, has_next_page: has_next_page},
-         tracker,
-         labels,
-         state,
-         request_fun,
-         headers,
-         _params,
-         _cache_key,
-         page,
-         acc
-       ) do
-    next_acc = acc ++ issues
+  defp replay_cached_or_refetch_issue_page(cached_page, request_context, params, cache_key, acc) do
+    %{
+      tracker: tracker,
+      labels: labels,
+      state: state,
+      request_fun: request_fun,
+      headers: headers,
+      page: page
+    } = request_context
 
-    if has_next_page do
-      do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
-    else
-      {:ok, next_acc}
-    end
-  end
+    case cached_page do
+      %{issues: issues, has_next_page: has_next_page} ->
+        next_acc = acc ++ issues
 
-  defp replay_cached_or_refetch_issue_page(
-         nil,
-         tracker,
-         labels,
-         state,
-         request_fun,
-         headers,
-         params,
-         cache_key,
-         page,
-         acc
-       ) do
-    case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
-      {:ok, %{status: 200, body: body} = response} when is_list(body) ->
-        persist_and_merge_issue_page(
-          cache_key,
-          response,
-          body,
-          tracker,
-          labels,
-          state,
-          request_fun,
-          headers,
-          page,
-          acc
-        )
+        if has_next_page do
+          do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
+        else
+          {:ok, next_acc}
+        end
 
-      {:ok, %{status: status}} ->
-        {:error, {:github_api_status, status}}
+      nil ->
+        case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
+          {:ok, %{status: 200, body: body} = response} when is_list(body) ->
+            persist_and_merge_issue_page(cache_key, response, body, request_context, acc)
 
-      {:error, reason} ->
-        {:error, {:github_api_request, reason}}
+          {:ok, %{status: status}} ->
+            {:error, {:github_api_status, status}}
+
+          {:error, reason} ->
+            {:error, {:github_api_request, reason}}
+        end
     end
   end
 
