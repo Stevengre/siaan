@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.GitHub.Client do
   @moduledoc """
-  Thin GitHub REST/GraphQL client for polling candidate issues.
+  Thin GitHub REST/GraphQL client for issue polling and repository installation tasks.
   """
 
   require Logger
@@ -11,22 +11,23 @@ defmodule SymphonyElixir.GitHub.Client do
   @rest_endpoint "https://api.github.com"
   @graphql_endpoint "https://api.github.com/graphql"
   @issue_page_size 100
+  @repo_page_size 100
   @max_error_body_log_bytes 1_000
-  @issue_page_cache_process_key {__MODULE__, :issue_page_cache}
-  @github_status_transitions %{
-    "status:ready" => MapSet.new(["status:ready", "status:in-progress"]),
-    "status:in-progress" => MapSet.new(["status:in-progress", "status:review"]),
-    "status:review" => MapSet.new(["status:review", "status:in-progress"])
-  }
+
+  @type request_fun :: (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
+  @type repo_context :: %{
+          repo_owner: String.t(),
+          repo_name: String.t(),
+          api_key: String.t(),
+          rest_endpoint: String.t()
+        }
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     fetch_candidate_issues(&request/3)
   end
 
-  @doc false
-  @spec fetch_candidate_issues_for_test((atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})) ::
-          {:ok, [Issue.t()]} | {:error, term()}
+  @spec fetch_candidate_issues_for_test(request_fun()) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues_for_test(request_fun) when is_function(request_fun, 3) do
     fetch_candidate_issues(request_fun)
   end
@@ -36,11 +37,7 @@ defmodule SymphonyElixir.GitHub.Client do
     fetch_issues_by_states(state_names, &request/3)
   end
 
-  @doc false
-  @spec fetch_issues_by_states_for_test(
-          [String.t()],
-          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
-        ) ::
+  @spec fetch_issues_by_states_for_test([String.t()], request_fun()) ::
           {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_states_for_test(state_names, request_fun)
       when is_list(state_names) and is_function(request_fun, 3) do
@@ -52,11 +49,8 @@ defmodule SymphonyElixir.GitHub.Client do
     fetch_issue_states_by_ids(issue_ids, &request/3)
   end
 
-  @doc false
-  @spec fetch_issue_states_by_ids_for_test(
-          [String.t()],
-          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
-        ) :: {:ok, [Issue.t()]} | {:error, term()}
+  @spec fetch_issue_states_by_ids_for_test([String.t()], request_fun()) ::
+          {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids_for_test(issue_ids, request_fun)
       when is_list(issue_ids) and is_function(request_fun, 3) do
     fetch_issue_states_by_ids(issue_ids, request_fun)
@@ -67,30 +61,10 @@ defmodule SymphonyElixir.GitHub.Client do
     create_comment(issue_id, body, &request/3)
   end
 
-  @doc false
-  @spec create_comment_for_test(
-          String.t(),
-          String.t(),
-          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
-        ) ::
-          :ok | {:error, term()}
+  @spec create_comment_for_test(String.t(), String.t(), request_fun()) :: :ok | {:error, term()}
   def create_comment_for_test(issue_id, body, request_fun)
       when is_binary(issue_id) and is_binary(body) and is_function(request_fun, 3) do
     create_comment(issue_id, body, request_fun)
-  end
-
-  defp create_comment(issue_id, body, request_fun) when is_function(request_fun, 3) do
-    with {:ok, tracker} <- github_tracker_config(),
-         {:ok, number} <- parse_issue_number(issue_id),
-         {:ok, headers} <- github_headers(),
-         {:ok, %{status: status}} when status in [200, 201] <-
-           request_fun.(:post, issue_comments_url(tracker, number), headers: headers, json: %{"body" => body}) do
-      :ok
-    else
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :comment_create_failed}
-    end
   end
 
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
@@ -99,35 +73,10 @@ defmodule SymphonyElixir.GitHub.Client do
     update_issue_state(issue_id, state_name, &request/3)
   end
 
-  @doc false
-  @spec update_issue_state_for_test(
-          String.t(),
-          String.t(),
-          (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
-        ) ::
-          :ok | {:error, term()}
+  @spec update_issue_state_for_test(String.t(), String.t(), request_fun()) :: :ok | {:error, term()}
   def update_issue_state_for_test(issue_id, state_name, request_fun)
       when is_binary(issue_id) and is_binary(state_name) and is_function(request_fun, 3) do
     update_issue_state(issue_id, state_name, request_fun)
-  end
-
-  defp update_issue_state(issue_id, state_name, request_fun) when is_function(request_fun, 3) do
-    with {:ok, tracker} <- github_tracker_config(),
-         {:ok, number} <- parse_issue_number(issue_id),
-         {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, request_fun),
-         %Issue{} = existing_issue <- existing_issue,
-         :ok <- validate_status_transition(existing_issue.state, state_name),
-         {:ok, headers} <- github_headers(),
-         labels <- retarget_status_labels(existing_issue.labels, state_name),
-         {:ok, %{status: status}} when status in [200, 201] <-
-           request_fun.(:patch, issue_url(tracker, number), headers: headers, json: %{"labels" => labels}) do
-      :ok
-    else
-      nil -> {:error, :issue_not_found}
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :issue_update_failed}
-    end
   end
 
   @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -136,14 +85,10 @@ defmodule SymphonyElixir.GitHub.Client do
     request_fun = Keyword.get(opts, :request_fun, &request/3)
     endpoint = github_graphql_endpoint()
 
-    payload = %{
-      "query" => query,
-      "variables" => variables
-    }
+    payload = %{"query" => query, "variables" => variables}
 
     with {:ok, headers} <- github_headers(),
-         {:ok, %{status: 200, body: body}} <-
-           request_fun.(:post, endpoint, headers: headers, json: payload) do
+         {:ok, %{status: 200, body: body}} <- request_fun.(:post, endpoint, headers: headers, json: payload) do
       {:ok, body}
     else
       {:ok, %{status: status, body: body}} ->
@@ -156,16 +101,92 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  @doc false
   @spec normalize_issue_for_test(map()) :: Issue.t() | nil
   def normalize_issue_for_test(raw_issue) when is_map(raw_issue) do
     normalize_issue(raw_issue)
   end
 
-  @doc false
-  @spec normalize_filter_labels_for_test(term()) :: [String.t()]
-  def normalize_filter_labels_for_test(labels) do
-    normalize_filter_labels(labels)
+  @spec build_repo_context(String.t(), String.t(), String.t() | nil) :: {:ok, repo_context()} | {:error, term()}
+  def build_repo_context(repo_owner, repo_name, api_key \\ nil) do
+    with {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
+         {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name),
+         {:ok, normalized_token} <- ensure_present_string(api_key || System.get_env("GITHUB_TOKEN"), :missing_github_api_token) do
+      {:ok,
+       %{
+         repo_owner: normalized_owner,
+         repo_name: normalized_repo,
+         api_key: normalized_token,
+         rest_endpoint: github_rest_endpoint()
+       }}
+    end
+  end
+
+  @spec list_labels(repo_context()) :: {:ok, [map()]} | {:error, term()}
+  def list_labels(repo) when is_map(repo) do
+    list_labels(repo, &request/3)
+  end
+
+  @spec list_labels_for_test(repo_context(), request_fun()) :: {:ok, [map()]} | {:error, term()}
+  def list_labels_for_test(repo, request_fun) when is_map(repo) and is_function(request_fun, 3) do
+    list_labels(repo, request_fun)
+  end
+
+  @spec create_label(repo_context(), map()) :: :ok | {:error, term()}
+  def create_label(repo, attrs) when is_map(repo) and is_map(attrs) do
+    create_label(repo, attrs, &request/3)
+  end
+
+  @spec create_label_for_test(repo_context(), map(), request_fun()) :: :ok | {:error, term()}
+  def create_label_for_test(repo, attrs, request_fun)
+      when is_map(repo) and is_map(attrs) and is_function(request_fun, 3) do
+    create_label(repo, attrs, request_fun)
+  end
+
+  @spec list_collaborators(repo_context()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_collaborators(repo) when is_map(repo) do
+    list_collaborators(repo, &request/3)
+  end
+
+  @spec list_collaborators_for_test(repo_context(), request_fun()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_collaborators_for_test(repo, request_fun)
+      when is_map(repo) and is_function(request_fun, 3) do
+    list_collaborators(repo, request_fun)
+  end
+
+  @spec get_branch_protection(repo_context(), String.t()) :: {:ok, map() | nil} | {:error, term()}
+  def get_branch_protection(repo, branch) when is_map(repo) and is_binary(branch) do
+    get_branch_protection(repo, branch, &request/3)
+  end
+
+  @spec get_branch_protection_for_test(repo_context(), String.t(), request_fun()) ::
+          {:ok, map() | nil} | {:error, term()}
+  def get_branch_protection_for_test(repo, branch, request_fun)
+      when is_map(repo) and is_binary(branch) and is_function(request_fun, 3) do
+    get_branch_protection(repo, branch, request_fun)
+  end
+
+  @spec put_branch_protection(repo_context(), String.t(), map()) :: :ok | {:error, term()}
+  def put_branch_protection(repo, branch, payload)
+      when is_map(repo) and is_binary(branch) and is_map(payload) do
+    put_branch_protection(repo, branch, payload, &request/3)
+  end
+
+  @spec put_branch_protection_for_test(repo_context(), String.t(), map(), request_fun()) ::
+          :ok | {:error, term()}
+  def put_branch_protection_for_test(repo, branch, payload, request_fun)
+      when is_map(repo) and is_binary(branch) and is_map(payload) and is_function(request_fun, 3) do
+    put_branch_protection(repo, branch, payload, request_fun)
+  end
+
+  @spec get_default_branch(repo_context()) :: {:ok, String.t()} | {:error, term()}
+  def get_default_branch(repo) when is_map(repo) do
+    get_default_branch(repo, &request/3)
+  end
+
+  @spec get_default_branch_for_test(repo_context(), request_fun()) :: {:ok, String.t()} | {:error, term()}
+  def get_default_branch_for_test(repo, request_fun)
+      when is_map(repo) and is_function(request_fun, 3) do
+    get_default_branch(repo, request_fun)
   end
 
   defp fetch_candidate_issues(request_fun) when is_function(request_fun, 3) do
@@ -176,7 +197,9 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp do_fetch_candidate_issues_by_states([], _tracker, _request_fun), do: {:ok, []}
+  defp do_fetch_candidate_issues_by_states([], tracker, request_fun) do
+    list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun)
+  end
 
   defp do_fetch_candidate_issues_by_states(state_names, tracker, request_fun) do
     Enum.reduce_while(state_names, {:ok, {[], MapSet.new()}}, fn state_name, {:ok, {acc, seen}} ->
@@ -261,6 +284,38 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
+  defp create_comment(issue_id, body, request_fun) when is_function(request_fun, 3) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, number} <- parse_issue_number(issue_id),
+         {:ok, headers} <- github_headers(),
+         {:ok, %{status: status}} when status in [200, 201] <-
+           request_fun.(:post, issue_comments_url(tracker, number), headers: headers, json: %{"body" => body}) do
+      :ok
+    else
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :comment_create_failed}
+    end
+  end
+
+  defp update_issue_state(issue_id, state_name, request_fun) when is_function(request_fun, 3) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, number} <- parse_issue_number(issue_id),
+         {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, request_fun),
+         %Issue{} = existing_issue <- existing_issue,
+         {:ok, headers} <- github_headers(),
+         labels <- retarget_status_labels(existing_issue.labels, state_name),
+         {:ok, %{status: status}} when status in [200, 201] <-
+           request_fun.(:patch, issue_url(tracker, number), headers: headers, json: %{"labels" => labels}) do
+      :ok
+    else
+      nil -> {:error, :issue_not_found}
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :issue_update_failed}
+    end
+  end
+
   defp list_issues_by_labels(tracker, labels, state, request_fun) do
     with {:ok, headers} <- github_headers() do
       do_list_issues_by_labels(tracker, labels, state, request_fun, headers, 1, [])
@@ -272,25 +327,21 @@ defmodule SymphonyElixir.GitHub.Client do
       [state: state, per_page: @issue_page_size, page: page]
       |> maybe_put_labels_param(labels)
 
-    request_context = %{
-      tracker: tracker,
-      labels: labels,
-      state: state,
-      request_fun: request_fun,
-      headers: headers,
-      page: page
-    }
+    case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        normalized =
+          body
+          |> Enum.reject(&pull_request?/1)
+          |> Enum.map(&normalize_issue/1)
+          |> Enum.reject(&is_nil/1)
 
-    cache_key = issue_page_cache_key(tracker, state, labels, page)
-    cached_page = get_cached_issue_page(cache_key)
-    conditional_headers = maybe_put_if_none_match_header(headers, cached_page)
+        next_acc = acc ++ normalized
 
-    case request_fun.(:get, issues_url(tracker), headers: conditional_headers, params: params) do
-      {:ok, %{status: 200, body: body} = response} when is_list(body) ->
-        persist_and_merge_issue_page(cache_key, response, body, request_context, acc)
-
-      {:ok, %{status: 304}} ->
-        replay_cached_or_refetch_issue_page(cached_page, request_context, params, cache_key, acc)
+        if length(body) >= @issue_page_size do
+          do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
+        else
+          {:ok, next_acc}
+        end
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
@@ -300,83 +351,110 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp persist_and_merge_issue_page(cache_key, response, body, request_context, acc) do
-    %{
-      tracker: tracker,
-      labels: labels,
-      state: state,
-      request_fun: request_fun,
-      headers: headers,
-      page: page
-    } = request_context
-
-    normalized =
-      body
-      |> Enum.reject(&pull_request?/1)
-      |> Enum.map(&normalize_issue/1)
-      |> Enum.reject(&is_nil/1)
-
-    has_next_page = length(body) >= @issue_page_size
-    put_cached_issue_page(cache_key, %{etag: response_etag(response), issues: normalized, has_next_page: has_next_page})
-
-    next_acc = acc ++ normalized
-
-    if has_next_page do
-      do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
-    else
-      {:ok, next_acc}
-    end
-  end
-
-  defp replay_cached_or_refetch_issue_page(cached_page, request_context, params, cache_key, acc) do
-    %{
-      tracker: tracker,
-      labels: labels,
-      state: state,
-      request_fun: request_fun,
-      headers: headers,
-      page: page
-    } = request_context
-
-    case cached_page do
-      %{issues: issues, has_next_page: has_next_page} ->
-        next_acc = acc ++ issues
-
-        if has_next_page do
-          do_list_issues_by_labels(tracker, labels, state, request_fun, headers, page + 1, next_acc)
-        else
-          {:ok, next_acc}
-        end
-
-      nil ->
-        case request_fun.(:get, issues_url(tracker), headers: headers, params: params) do
-          {:ok, %{status: 200, body: body} = response} when is_list(body) ->
-            persist_and_merge_issue_page(cache_key, response, body, request_context, acc)
-
-          {:ok, %{status: status}} ->
-            {:error, {:github_api_status, status}}
-
-          {:error, reason} ->
-            {:error, {:github_api_request, reason}}
-        end
-    end
-  end
-
   defp fetch_issue_by_number(tracker, number, request_fun) do
     with {:ok, headers} <- github_headers() do
       case request_fun.(:get, issue_url(tracker, number), headers: headers) do
-        {:ok, %{status: 200, body: body}} when is_map(body) ->
-          {:ok, normalize_issue(body)}
-
-        {:ok, %{status: 404}} ->
-          {:ok, nil}
-
-        {:ok, %{status: status}} ->
-          {:error, {:github_api_status, status}}
-
-        {:error, reason} ->
-          {:error, {:github_api_request, reason}}
+        {:ok, %{status: 200, body: body}} when is_map(body) -> {:ok, normalize_issue(body)}
+        {:ok, %{status: 404}} -> {:ok, nil}
+        {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+        {:error, reason} -> {:error, {:github_api_request, reason}}
       end
+    end
+  end
+
+  defp list_labels(repo, request_fun) do
+    with {:ok, headers} <- repo_headers(repo),
+         {:ok, %{status: 200, body: body}} when is_list(body) <-
+           request_fun.(:get, labels_url(repo), headers: headers, params: [per_page: @repo_page_size]) do
+      {:ok, body}
+    else
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp create_label(repo, attrs, request_fun) do
+    with {:ok, headers} <- repo_headers(repo),
+         {:ok, %{status: status}} when status in [200, 201] <-
+           request_fun.(:post, labels_url(repo), headers: headers, json: attrs) do
+      :ok
+    else
+      {:ok, %{status: 422}} -> :ok
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp list_collaborators(repo, request_fun) do
+    with {:ok, headers} <- repo_headers(repo) do
+      do_list_collaborators(repo, request_fun, headers, 1, [])
+    end
+  end
+
+  defp do_list_collaborators(repo, request_fun, headers, page, acc) do
+    params = [per_page: @repo_page_size, page: page]
+
+    case request_fun.(:get, collaborators_url(repo), headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        next_acc = acc ++ normalize_collaborators(body)
+
+        if length(body) >= @repo_page_size do
+          do_list_collaborators(repo, request_fun, headers, page + 1, next_acc)
+        else
+          {:ok, next_acc |> Enum.uniq() |> Enum.sort()}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp normalize_collaborators(body) do
+    body
+    |> Enum.map(&Map.get(&1, "login"))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp get_branch_protection(repo, branch, request_fun) do
+    with {:ok, headers} <- repo_headers(repo) do
+      protection_headers = [{"Accept", "application/vnd.github+json"} | headers]
+
+      case request_fun.(:get, branch_protection_url(repo, branch), headers: protection_headers) do
+        {:ok, %{status: 200, body: body}} when is_map(body) -> {:ok, body}
+        {:ok, %{status: 404}} -> {:ok, nil}
+        {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+        {:error, reason} -> {:error, {:github_api_request, reason}}
+      end
+    end
+  end
+
+  defp put_branch_protection(repo, branch, payload, request_fun) do
+    with {:ok, headers} <- repo_headers(repo),
+         protection_headers <- [{"Accept", "application/vnd.github+json"} | headers],
+         {:ok, %{status: status}} when status in [200, 201] <-
+           request_fun.(:put, branch_protection_url(repo, branch), headers: protection_headers, json: payload) do
+      :ok
+    else
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp get_default_branch(repo, request_fun) do
+    with {:ok, headers} <- repo_headers(repo),
+         {:ok, %{status: 200, body: body}} when is_map(body) <-
+           request_fun.(:get, repo_url(repo), headers: headers),
+         {:ok, branch} <- extract_default_branch(body) do
+      {:ok, branch}
+    end
+  else
+      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
+      {:error, reason} -> {:error, {:github_api_request, reason}}
     end
   end
 
@@ -425,12 +503,7 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp issue_id(_raw_issue, number) when is_integer(number), do: Integer.to_string(number)
-
-  defp issue_id(raw_issue, _number) do
-    raw_issue
-    |> Map.get("id")
-    |> to_string_or_nil()
-  end
+  defp issue_id(raw_issue, _number), do: raw_issue |> Map.get("id") |> to_string_or_nil()
 
   defp parse_number(number) when is_integer(number), do: number
 
@@ -505,33 +578,28 @@ defmodule SymphonyElixir.GitHub.Client do
   defp github_tracker_config do
     tracker = Config.settings!().tracker
 
-    api_key = Map.get(tracker, :api_key)
-    repo_owner = Map.get(tracker, :repo_owner)
-    repo_name = Map.get(tracker, :repo_name)
-
-    with {:ok, _api_key} <- ensure_present_string(api_key, :missing_github_api_token),
-         {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
-         {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name) do
-      ready_label = normalize_label(Map.get(tracker, :ready_label) || "status:ready")
-
-      active_states =
-        tracker
-        |> Map.get(:active_states, [])
-        |> normalize_state_names()
-
+    with {:ok, _api_key} <- ensure_present_string(tracker.api_key, :missing_github_api_token),
+         {:ok, normalized_owner} <- ensure_present_string(tracker.repo_owner, :missing_github_repo_owner),
+         {:ok, normalized_repo} <- ensure_present_string(tracker.repo_name, :missing_github_repo_name) do
       {:ok,
        %{
          repo_owner: normalized_owner,
          repo_name: normalized_repo,
-         endpoint: tracker.endpoint,
-         ready_label: ready_label,
-         active_states: active_states
+         ready_label: normalize_label(tracker.ready_label || "status:ready"),
+         active_states: normalize_state_names(tracker.active_states || []),
+         api_key: tracker.api_key,
+         rest_endpoint: github_rest_endpoint()
        }}
     end
   end
 
   defp github_headers do
-    with {:ok, token} <- ensure_present_string(Config.settings!().tracker.api_key, :missing_github_api_token) do
+    tracker = Config.settings!().tracker
+    repo_headers(%{api_key: tracker.api_key})
+  end
+
+  defp repo_headers(repo) do
+    with {:ok, token} <- ensure_present_string(repo.api_key, :missing_github_api_token) do
       {:ok,
        [
          {"Authorization", "Bearer #{token}"},
@@ -543,28 +611,40 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_graphql_endpoint do
-    case Config.settings!().tracker.endpoint do
-      "https://api.linear.app/graphql" ->
-        @graphql_endpoint
+    tracker = Config.settings!().tracker
 
-      endpoint ->
-        endpoint
-    end
+    if tracker.endpoint == "https://api.linear.app/graphql",
+      do: @graphql_endpoint,
+      else: tracker.endpoint
   end
 
-  defp github_rest_endpoint(tracker) do
-    tracker
-    |> Map.get(:endpoint, "")
-    |> to_string()
-    |> String.trim()
-    |> rest_endpoint_from_tracker_endpoint()
+  defp github_rest_endpoint do
+    tracker = Config.settings!().tracker
+
+    endpoint =
+      if tracker.endpoint == "https://api.linear.app/graphql",
+        do: @graphql_endpoint,
+        else: tracker.endpoint
+
+    rest_endpoint_from_graphql(endpoint)
   end
 
-  defp rest_endpoint_from_tracker_endpoint(endpoint) when is_binary(endpoint) do
-    case URI.parse(endpoint) do
-      %URI{scheme: scheme, host: host} = uri when is_binary(scheme) and is_binary(host) ->
+  defp rest_endpoint_from_graphql(endpoint) when is_binary(endpoint) do
+    uri = URI.parse(endpoint)
+
+    case {uri.scheme, uri.host} do
+      {scheme, host} when is_binary(scheme) and is_binary(host) ->
+        path =
+          case uri.path || "" do
+            "" -> ""
+            "/graphql" -> ""
+            path -> String.trim_trailing(path, "/graphql")
+          end
+
         uri
-        |> Map.merge(%{query: nil, fragment: nil, path: rest_path_from_tracker_endpoint(uri.path)})
+        |> Map.put(:path, path)
+        |> Map.put(:query, nil)
+        |> Map.put(:fragment, nil)
         |> URI.to_string()
         |> String.trim_trailing("/")
 
@@ -573,144 +653,35 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp rest_path_from_tracker_endpoint(nil), do: nil
+  defp repo_url(%{repo_owner: owner, repo_name: repo} = context),
+    do: "#{rest_endpoint(context)}/repos/#{owner}/#{repo}"
 
-  defp rest_path_from_tracker_endpoint(path) when is_binary(path) do
-    trimmed = path |> String.trim() |> String.trim_trailing("/")
-
-    normalized =
-      cond do
-        trimmed in ["", "/"] -> ""
-        trimmed == "/graphql" -> ""
-        trimmed == "/api/graphql" -> "/api/v3"
-        String.ends_with?(trimmed, "/graphql") -> String.trim_trailing(trimmed, "/graphql")
-        true -> trimmed
-      end
-
-    if normalized in ["", "/"], do: nil, else: normalized
-  end
-
-  defp issues_url(%{repo_owner: owner, repo_name: repo} = tracker),
-    do: "#{github_rest_endpoint(tracker)}/repos/#{owner}/#{repo}/issues"
-
+  defp issues_url(context), do: "#{repo_url(context)}/issues"
   defp issue_url(tracker, number), do: "#{issues_url(tracker)}/#{number}"
   defp issue_comments_url(tracker, number), do: "#{issue_url(tracker, number)}/comments"
+  defp labels_url(context), do: "#{repo_url(context)}/labels"
+  defp collaborators_url(context), do: "#{repo_url(context)}/collaborators"
+
+  defp branch_protection_url(%{repo_owner: owner, repo_name: repo} = context, branch) do
+    encoded_branch = URI.encode(branch)
+    "#{rest_endpoint(context)}/repos/#{owner}/#{repo}/branches/#{encoded_branch}/protection"
+  end
+
+  defp rest_endpoint(%{rest_endpoint: endpoint}) when is_binary(endpoint) and endpoint != "", do: endpoint
+  defp rest_endpoint(_context), do: @rest_endpoint
 
   defp maybe_put_labels_param(params, labels) when is_list(labels) do
-    cleaned_labels = normalize_filter_labels(labels)
+    cleaned_labels =
+      labels
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
 
     case cleaned_labels do
       [] -> params
       _ -> Keyword.put(params, :labels, Enum.join(cleaned_labels, ","))
     end
   end
-
-  defp maybe_put_if_none_match_header(headers, %{etag: etag})
-       when is_list(headers) and is_binary(etag) and etag != "" do
-    [{"If-None-Match", etag} | headers]
-  end
-
-  defp maybe_put_if_none_match_header(headers, _cached_page), do: headers
-
-  defp issue_page_cache_key(tracker, state, labels, page) do
-    normalized_state =
-      state
-      |> to_string()
-      |> String.trim()
-      |> String.downcase()
-
-    normalized_labels = normalize_filter_labels(labels)
-    {tracker.repo_owner, tracker.repo_name, normalized_state, normalized_labels, page}
-  end
-
-  defp get_cached_issue_page(cache_key) do
-    @issue_page_cache_process_key
-    |> Process.get(%{})
-    |> Map.get(cache_key)
-  end
-
-  defp put_cached_issue_page(cache_key, cache_entry) when is_map(cache_entry) do
-    existing = Process.get(@issue_page_cache_process_key, %{})
-    Process.put(@issue_page_cache_process_key, Map.put(existing, cache_key, cache_entry))
-    :ok
-  end
-
-  defp response_etag(%{headers: headers}) when is_list(headers) do
-    headers
-    |> Enum.find_value(fn
-      {name, value} ->
-        if String.downcase(to_string(name)) == "etag" do
-          normalize_header_value(value)
-        else
-          nil
-        end
-
-      _ ->
-        nil
-    end)
-  end
-
-  defp response_etag(%{headers: headers}) when is_map(headers) do
-    headers
-    |> Map.get("etag", Map.get(headers, "ETag", Map.get(headers, :etag)))
-    |> normalize_header_value()
-  end
-
-  defp response_etag(_response), do: nil
-
-  defp normalize_header_value([value | _rest]), do: normalize_header_value(value)
-
-  defp normalize_header_value(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      trimmed -> trimmed
-    end
-  end
-
-  defp normalize_header_value(value) when is_list(value) do
-    value
-    |> IO.iodata_to_binary()
-    |> normalize_header_value()
-  end
-
-  defp normalize_header_value(_value), do: nil
-
-  defp normalize_filter_labels(labels) when is_list(labels) do
-    labels
-    |> Enum.map(&to_string/1)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.sort()
-  end
-
-  defp normalize_filter_labels(_labels), do: []
-
-  defp validate_status_transition(current_state, target_state) do
-    normalized_current = normalize_status_label(current_state)
-    normalized_target = normalize_status_label(target_state)
-
-    with current when is_binary(current) <- normalized_current,
-         target when is_binary(target) <- normalized_target,
-         allowed when is_struct(allowed, MapSet) <- Map.get(@github_status_transitions, current),
-         true <- MapSet.member?(allowed, target) do
-      :ok
-    else
-      _ ->
-        {:error, {:invalid_github_state_transition, normalized_current, normalized_target}}
-    end
-  end
-
-  defp normalize_status_label(value) when is_binary(value) do
-    normalized = normalize_label(value)
-
-    if String.starts_with?(normalized, "status:") do
-      normalized
-    else
-      nil
-    end
-  end
-
-  defp normalize_status_label(_value), do: nil
 
   defp normalize_label(value) when is_binary(value) do
     value
@@ -727,6 +698,12 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp ensure_present_string(_value, error), do: {:error, error}
+
+  defp extract_default_branch(%{"default_branch" => branch}) when is_binary(branch) do
+    ensure_present_string(branch, :missing_default_branch)
+  end
+
+  defp extract_default_branch(_body), do: {:error, :missing_default_branch}
 
   defp request(method, url, opts) when is_atom(method) and is_binary(url) and is_list(opts) do
     Req.request(
