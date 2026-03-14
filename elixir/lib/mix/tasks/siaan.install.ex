@@ -18,20 +18,37 @@ defmodule Mix.Tasks.Siaan.Install do
   @impl true
   def run(args) do
     case OptionParser.parse(args, strict: @switches) do
-      {[help: true], [], []} ->
-        Mix.shell().info(usage())
-
       {opts, [], []} ->
-        ensure_runtime_dependencies!(runtime_dependency_starter())
+        run_with_parsed_options(opts)
 
-        case Runner.run(dry_run: opts[:dry_run] || false, yes: opts[:yes] || false) do
-          {:ok, _result} -> :ok
-          {:error, reason} -> Mix.raise("siaan.install failed: #{inspect(reason)}")
-        end
-
-      {_opts, _argv, invalid} ->
-        Mix.raise("Invalid options: #{Enum.map_join(invalid, ", ", fn {key, _value} -> "--#{key}" end)}\n\n#{usage()}")
+      {opts, _argv, invalid} ->
+        run_with_invalid_options(opts, invalid)
     end
+  end
+
+  defp run_with_parsed_options(opts) do
+    if opts[:help] do
+      Mix.shell().info(usage())
+    else
+      ensure_runtime_dependencies!(runtime_dependency_starter())
+
+      case Runner.run(dry_run: opts[:dry_run] || false, yes: opts[:yes] || false) do
+        {:ok, _result} -> :ok
+        {:error, reason} -> Mix.raise("siaan.install failed: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp run_with_invalid_options(opts, invalid) do
+    if opts[:help] do
+      Mix.shell().info(usage())
+    else
+      Mix.raise("Invalid options: #{format_invalid_options(invalid)}\n\n#{usage()}")
+    end
+  end
+
+  defp format_invalid_options(invalid) do
+    Enum.map_join(invalid, ", ", fn {key, _value} -> "--#{key}" end)
   end
 
   defp usage do

@@ -20,6 +20,26 @@ defmodule Mix.Tasks.SiaanInstallTest do
     assert output =~ "mix siaan.install [--dry-run] [--yes]"
   end
 
+  test "prints help text without running the installer when combined with other flags" do
+    output =
+      capture_io(fn ->
+        with_stubbed_runner_return("raise(\"runner should not be called for --help\")", fn ->
+          Install.run(["--help", "--yes"])
+        end)
+      end)
+
+    assert output =~ "mix siaan.install [--dry-run] [--yes]"
+  end
+
+  test "prints help text when invalid options are present alongside --help" do
+    output =
+      capture_io(fn ->
+        Install.run(["--help", "--bogus"])
+      end)
+
+    assert output =~ "mix siaan.install [--dry-run] [--yes]"
+  end
+
   test "raises on invalid options" do
     assert_raise Mix.Error, ~r/Invalid options/, fn ->
       Install.run(["--bogus"])

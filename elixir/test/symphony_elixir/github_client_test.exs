@@ -915,47 +915,184 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
         :patch ->
           labels = get_in(opts, [:json, "labels"])
-          assert Enum.sort(labels) == ["infra", "status:review"]
+          assert Enum.sort(labels) == ["infra", "status:in-progress"]
           {:ok, %{status: 200, body: %{}}}
       end
     end
 
-    assert :ok = Client.update_issue_state_for_test("42", "status:review", success)
+    assert :ok = Client.update_issue_state_for_test("42", "status:in-progress", success)
+
+    invalid_transition = fn method, _url, _opts ->
+      if method == :get, do: success.(:get, "", []), else: flunk("patch should not run")
+    end
+
+    assert {:error, {:invalid_issue_state_transition, "status:ready", "status:review"}} =
+             Client.update_issue_state_for_test("42", "status:review", invalid_transition)
+
+    assert {:error, {:invalid_issue_state_transition, "status:ready", "bogus"}} =
+             Client.update_issue_state_for_test("42", "bogus", invalid_transition)
 
     missing_issue = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 404, body: %{}}}, else: flunk("patch should not run")
     end
 
-    assert {:error, :issue_not_found} = Client.update_issue_state_for_test("42", "status:review", missing_issue)
+    assert {:error, :issue_not_found} = Client.update_issue_state_for_test("42", "status:in-progress", missing_issue)
 
     patch_failure = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: {:ok, %{status: 422, body: %{}}}
     end
 
     assert {:error, {:github_api_status, 422}} =
-             Client.update_issue_state_for_test("42", "status:review", patch_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", patch_failure)
 
     request_failure = fn _method, _url, _opts -> {:error, :closed} end
 
     assert {:error, {:github_api_request, :closed}} =
-             Client.update_issue_state_for_test("42", "status:review", request_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", request_failure)
 
     malformed_patch = fn method, _url, _opts ->
       if method == :get, do: success.(:get, "", []), else: :unexpected
     end
 
     assert {:error, :issue_update_failed} =
-             Client.update_issue_state_for_test("42", "status:review", malformed_patch)
+             Client.update_issue_state_for_test("42", "status:in-progress", malformed_patch)
 
     get_status_failure = fn method, _url, _opts ->
       if method == :get, do: {:ok, %{status: 500, body: %{}}}, else: flunk("patch should not run")
     end
 
     assert {:error, {:github_api_status, 500}} =
-             Client.update_issue_state_for_test("42", "status:review", get_status_failure)
+             Client.update_issue_state_for_test("42", "status:in-progress", get_status_failure)
 
     assert {:error, :invalid_github_issue_id} =
-             Client.update_issue_state_for_test("bad", "status:review", success)
+             Client.update_issue_state_for_test("bad", "status:in-progress", success)
+  end
+
+  test "update_issue_state_for_test allows initializing triage and keeping the same status label" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token"
+    )
+
+    open_to_triage = fn method, _url, opts ->
+      case method do
+        :get ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "id" => 7,
+               "number" => 7,
+               "title" => "Issue 7",
+               "body" => "Body",
+               "state" => "open",
+               "html_url" => "https://github.com/acme/repo/issues/7",
+               "labels" => [%{"name" => "infra"}],
+               "assignees" => []
+             }
+           }}
+
+        :patch ->
+          assert Enum.sort(get_in(opts, [:json, "labels"])) == ["infra", "status:triage"]
+          {:ok, %{status: 200, body: %{}}}
+      end
+    end
+
+    assert :ok = Client.update_issue_state_for_test("7", "status:triage", open_to_triage)
+
+    same_state = fn method, _url, opts ->
+      case method do
+        :get ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "id" => 9,
+               "number" => 9,
+               "title" => "Issue 9",
+               "body" => "Body",
+               "state" => "open",
+               "html_url" => "https://github.com/acme/repo/issues/9",
+               "labels" => [%{"name" => "status:review"}, %{"name" => "infra"}],
+               "assignees" => []
+             }
+           }}
+
+        :patch ->
+          assert Enum.sort(get_in(opts, [:json, "labels"])) == ["infra", "status:review"]
+          {:ok, %{status: 200, body: %{}}}
+      end
+    end
+
+    assert :ok = Client.update_issue_state_for_test("9", "status:review", same_state)
+  end
+
+  test "update_issue_state_for_test rejects malformed issues with missing current state" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token"
+    )
+
+    malformed_issue = fn method, _url, _opts ->
+      if method == :get do
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "id" => 11,
+             "number" => 11,
+             "title" => "Issue 11",
+             "body" => "Body",
+             "state" => nil,
+             "html_url" => "https://github.com/acme/repo/issues/11",
+             "labels" => [%{"name" => "infra"}],
+             "assignees" => []
+           }
+         }}
+      else
+        flunk("patch should not run")
+      end
+    end
+
+    assert {:error, {:invalid_issue_state_transition, nil, "status:review"}} =
+             Client.update_issue_state_for_test("11", "status:review", malformed_issue)
+  end
+
+  test "update_issue_state_for_test normalizes non-binary current states before rejecting them" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token"
+    )
+
+    malformed_issue = fn method, _url, _opts ->
+      if method == :get do
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "id" => 12,
+             "number" => 12,
+             "title" => "Issue 12",
+             "body" => "Body",
+             "state" => 123,
+             "html_url" => "https://github.com/acme/repo/issues/12",
+             "labels" => [%{"name" => "infra"}],
+             "assignees" => []
+           }
+         }}
+      else
+        flunk("patch should not run")
+      end
+    end
+
+    assert {:error, {:invalid_issue_state_transition, "123", "status:review"}} =
+             Client.update_issue_state_for_test("12", "status:review", malformed_issue)
   end
 
   test "graphql/3 surfaces request failures and default request path errors" do

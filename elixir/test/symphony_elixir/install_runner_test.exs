@@ -46,7 +46,16 @@ defmodule SymphonyElixir.Install.RunnerTest do
     def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
 
     def get_branch_protection(_repo, _branch) do
-      {:ok, %{"restrictions" => %{"users" => [%{"login" => "alice"}]}}}
+      {:ok,
+       %{
+         "required_pull_request_reviews" => %{
+           "dismiss_stale_reviews" => true,
+           "require_code_owner_reviews" => false,
+           "required_approving_review_count" => 1,
+           "require_last_push_approval" => false
+         },
+         "restrictions" => %{"users" => [%{"login" => "alice"}]}
+       }}
     end
 
     def put_branch_protection(_repo, _branch, _payload) do
@@ -387,6 +396,58 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert_received {:drifted_branch_protection_payload, payload}
     assert payload["restrictions"]["users"] == ["alice"]
     assert payload["required_conversation_resolution"] == true
+  end
+
+  defmodule MissingReviewSettingsClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+
+    def get_branch_protection(_repo, _branch) do
+      {:ok,
+       %{
+         "required_status_checks" => nil,
+         "required_pull_request_reviews" => nil,
+         "restrictions" => %{"users" => [%{"login" => "alice"}]},
+         "required_conversation_resolution" => %{"enabled" => true}
+       }}
+    end
+
+    def put_branch_protection(_repo, _branch, payload) do
+      send(self(), {:missing_review_settings_payload, payload})
+      :ok
+    end
+  end
+
+  test "run/1 treats missing required pull request review settings as branch-protection drift" do
+    repo_root = tmp_dir!("siaan-install-missing-review-settings")
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: MissingReviewSettingsClient,
+               info: fn _line -> :ok end
+             )
+
+    assert_received {:missing_review_settings_payload, payload}
+    assert payload["required_pull_request_reviews"]["required_approving_review_count"] == 1
+    assert payload["required_pull_request_reviews"]["dismiss_stale_reviews"] == true
   end
 
   defmodule DefaultBranchClient do

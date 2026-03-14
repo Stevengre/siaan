@@ -58,6 +58,8 @@ jobs:
               []
             end
 
+          fallback_only = maintainers.empty?
+
           issue_restriction =
             if raw.is_a?(Hash) && raw["setup"].is_a?(Hash)
               raw["setup"].fetch("issue_restriction", "collaborators_only").to_s.strip.downcase
@@ -73,6 +75,7 @@ jobs:
             file.puts("maintainers=#{maintainers.join(",")}")
             file.puts("issue_restriction=#{issue_restriction}")
             file.puts("config_parse_error=#{config_parse_error}")
+            file.puts("fallback_only=#{fallback_only}")
           end
           RUBY
 
@@ -82,6 +85,7 @@ jobs:
           MAINTAINERS: ${{ steps.config.outputs.maintainers }}
           ISSUE_RESTRICTION: ${{ steps.config.outputs.issue_restriction }}
           CONFIG_PARSE_ERROR: ${{ steps.config.outputs.config_parse_error }}
+          FALLBACK_ONLY: ${{ steps.config.outputs.fallback_only }}
         with:
           script: |
             const policy = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/restrict_issues_prs_policy.js`);
@@ -103,6 +107,13 @@ jobs:
             if (!policy.shouldEnforceRestriction(issueRestriction)) {
               console.log(
                 `Issue/PR restriction is ${policy.normalizeIssueRestriction(issueRestriction) || 'unset'}; leaving ${type} #${number} open.`
+              );
+              return;
+            }
+
+            if (policy.shouldSkipFallbackOnlyEnforcement(allowlist, process.env.FALLBACK_ONLY)) {
+              console.log(
+                `Maintainer allowlist only contains the repo-owner fallback; leaving ${type} #${number} open until .github/siaan-security.yml defines explicit maintainers.`
               );
               return;
             }

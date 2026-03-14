@@ -19,11 +19,23 @@ function shouldEnforceRestriction(value) {
   return normalizeIssueRestriction(value) !== "disabled";
 }
 
+function normalizeBooleanFlag(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase() === "true";
+}
+
+function shouldSkipFallbackOnlyEnforcement(allowlist, fallbackOnly) {
+  return normalizeBooleanFlag(fallbackOnly) && Array.isArray(allowlist) && allowlist.length <= 1;
+}
+
 module.exports = {
+  normalizeBooleanFlag,
   normalizeIssueRestriction,
   normalizeLogin,
   parseAllowlist,
   shouldEnforceRestriction,
+  shouldSkipFallbackOnlyEnforcement,
 };
 
 if (require.main === module) {

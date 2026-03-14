@@ -56,6 +56,28 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
     assert result["shouldEnforceRestriction"] == true
   end
 
+  test "restrict issues policy skips enforcement when the allowlist only contains the repo-owner fallback" do
+    repo_root = Path.expand("../../..", __DIR__)
+    script = Path.join(repo_root, ".github/scripts/restrict_issues_prs_policy.js")
+
+    js = """
+    const policy = require(process.argv[1]);
+    process.stdout.write(JSON.stringify({
+      skipWithFallbackOnly: policy.shouldSkipFallbackOnlyEnforcement(['stevengre'], 'true'),
+      enforceWithConfiguredMaintainers: policy.shouldSkipFallbackOnlyEnforcement(['stevengre', 'alice'], 'true'),
+      enforceWhenFallbackFlagIsFalse: policy.shouldSkipFallbackOnlyEnforcement(['stevengre'], 'false')
+    }));
+    """
+
+    {output, 0} = System.cmd("node", ["-e", js, script], stderr_to_stdout: true)
+
+    assert Jason.decode!(output) == %{
+             "skipWithFallbackOnly" => true,
+             "enforceWithConfiguredMaintainers" => false,
+             "enforceWhenFallbackFlagIsFalse" => false
+           }
+  end
+
   test "siaan_allowlist_drift.rb treats case-only and @-prefixed login differences as equal" do
     repo_root = Path.expand("../../..", __DIR__)
     script = Path.join(repo_root, ".github/scripts/siaan_allowlist_drift.rb")
@@ -130,6 +152,7 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
     assert outputs["maintainers"] == "stevengre"
     assert outputs["issue_restriction"] == "collaborators_only"
     assert outputs["config_parse_error"] == "true"
+    assert outputs["fallback_only"] == "true"
   end
 
   test "restrict issues workflow falls back to the repo owner allowlist when security yaml uses aliases" do
@@ -175,5 +198,6 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
     assert outputs["maintainers"] == "stevengre"
     assert outputs["issue_restriction"] == "collaborators_only"
     assert outputs["config_parse_error"] == "true"
+    assert outputs["fallback_only"] == "true"
   end
 end

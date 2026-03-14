@@ -13,6 +13,13 @@ defmodule SymphonyElixir.GitHub.Client do
   @issue_page_size 100
   @repo_page_size 100
   @max_error_body_log_bytes 1_000
+  @valid_issue_state_transitions %{
+    "status:triage" => ["status:ready"],
+    "status:ready" => ["status:in-progress"],
+    "status:in-progress" => ["status:review"],
+    "status:review" => ["status:in-progress", "status:approval"],
+    "status:approval" => []
+  }
 
   @type request_fun :: (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
   @type repo_context :: %{
@@ -301,8 +308,9 @@ defmodule SymphonyElixir.GitHub.Client do
          {:ok, number} <- parse_issue_number(issue_id),
          {:ok, existing_issue} <- fetch_issue_by_number(tracker, number, request_fun),
          %Issue{} = existing_issue <- existing_issue,
+         {:ok, normalized_state_name} <- validate_issue_state_transition(existing_issue.state, state_name),
          {:ok, headers} <- github_headers(),
-         labels <- retarget_status_labels(existing_issue.labels, state_name),
+         labels <- retarget_status_labels(existing_issue.labels, normalized_state_name),
          {:ok, %{status: status}} when status in [200, 201] <-
            request_fun.(:patch, issue_url(tracker, number), headers: headers, json: %{"labels" => labels}) do
       :ok
@@ -563,6 +571,46 @@ defmodule SymphonyElixir.GitHub.Client do
     |> Enum.reject(&String.starts_with?(&1, "status:"))
     |> Kernel.++([normalized_target])
     |> Enum.uniq()
+  end
+
+  defp validate_issue_state_transition(current_state, target_state) do
+    normalized_current = normalize_issue_transition_state(current_state)
+    normalized_target = normalize_issue_transition_state(target_state)
+
+    cond do
+      normalized_current == normalized_target and valid_issue_state_target?(normalized_target) ->
+        {:ok, normalized_target}
+
+      normalized_current == "open" and normalized_target == "status:triage" ->
+        {:ok, normalized_target}
+
+      normalized_target in Map.get(@valid_issue_state_transitions, normalized_current, []) ->
+        {:ok, normalized_target}
+
+      true ->
+        {:error, {:invalid_issue_state_transition, normalized_current, normalized_target}}
+    end
+  end
+
+  defp valid_issue_state_target?(state_name) do
+    Map.has_key?(@valid_issue_state_transitions, state_name)
+  end
+
+  defp normalize_issue_transition_state(state_name) when is_binary(state_name) do
+    trimmed = String.trim(state_name)
+
+    if String.starts_with?(trimmed, "status:") do
+      normalize_label(trimmed)
+    else
+      String.downcase(trimmed)
+    end
+  end
+
+  defp normalize_issue_transition_state(state_name) do
+    case to_string_or_nil(state_name) do
+      nil -> nil
+      normalized -> normalize_issue_transition_state(normalized)
+    end
   end
 
   defp parse_issue_number(issue_id) when is_binary(issue_id) do

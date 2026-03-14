@@ -269,7 +269,7 @@ defmodule SymphonyElixir.Install.Runner do
   defp branch_protection_payload(maintainers, current \\ nil) do
     normalized = normalize_branch_protection(current)
     review_defaults = normalize_pull_request_review_settings(nil)
-    current_reviews = Map.get(normalized, "required_pull_request_reviews", review_defaults)
+    current_reviews = Map.get(normalized, "required_pull_request_reviews") || review_defaults
 
     %{
       "required_status_checks" => Map.get(normalized, "required_status_checks"),
@@ -365,7 +365,7 @@ defmodule SymphonyElixir.Install.Runner do
       "required_pull_request_reviews" =>
         current
         |> Map.get("required_pull_request_reviews")
-        |> normalize_pull_request_review_settings(),
+        |> normalize_optional_pull_request_review_settings(),
       "restrictions" =>
         current
         |> Map.get("restrictions")
@@ -410,6 +410,14 @@ defmodule SymphonyElixir.Install.Runner do
       normalize_bypass_allowances(current)
     )
   end
+
+  defp normalize_optional_pull_request_review_settings(nil), do: nil
+
+  defp normalize_optional_pull_request_review_settings(current) when is_map(current) do
+    normalize_pull_request_review_settings(current)
+  end
+
+  defp normalize_optional_pull_request_review_settings(_current), do: nil
 
   defp normalize_review_actor_restrictions(current, key) when is_map(current) do
     normalized = normalize_restrictions(Map.get(current, key))
