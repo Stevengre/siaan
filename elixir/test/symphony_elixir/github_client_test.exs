@@ -196,7 +196,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     refute_receive {:params, _}
   end
 
-  test "fetch_candidate_issues_for_test falls back to ready label when active_states is empty" do
+  test "fetch_candidate_issues_for_test returns no candidates when active_states is explicitly empty" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -206,32 +206,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_active_states: []
     )
 
-    request_fun = fn :get, _url, opts ->
-      send(self(), {:params, Keyword.fetch!(opts, :params)})
-
-      {:ok,
-       %{
-         status: 200,
-         body: [
-           %{
-             "id" => 555,
-             "number" => 55,
-             "title" => "Ready candidate",
-             "body" => "Body",
-             "state" => "open",
-             "html_url" => "https://github.com/acme/repo/issues/55",
-             "labels" => [%{"name" => "status:ready"}],
-             "assignees" => []
-           }
-         ]
-       }}
+    request_fun = fn :get, _url, _opts ->
+      flunk("fetch_candidate_issues_for_test should not query GitHub when active_states is explicitly empty")
     end
 
-    assert {:ok, [%Issue{id: "55", state: "status:ready"}]} = Client.fetch_candidate_issues_for_test(request_fun)
-
-    assert_receive {:params, params}
-    assert params[:state] == "open"
-    assert params[:labels] == "status:ready"
+    assert {:ok, []} = Client.fetch_candidate_issues_for_test(request_fun)
   end
 
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do

@@ -342,11 +342,11 @@ defmodule SymphonyElixir.Install.RunnerTest do
     def put_branch_protection(_repo, _branch, _payload), do: {:error, {:github_api_status, 422}}
   end
 
-  test "run/1 warns and continues when branch protection updates fail" do
+  test "run/1 fails when branch protection updates fail for non-403 responses" do
     repo_root = tmp_dir!("siaan-install-branch-protection-failure")
     messages = Agent.start_link(fn -> [] end) |> elem(1)
 
-    assert {:ok, _result} =
+    assert {:error, {:github_api_status, 422}} =
              Runner.run(
                cwd: repo_root,
                repo_owner: "Stevengre",
@@ -358,8 +358,8 @@ defmodule SymphonyElixir.Install.RunnerTest do
              )
 
     log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
-    assert log =~ "Branch protection on main — create skipped ({:github_api_status, 422})"
-    assert log =~ "Done. Run mix siaan.install again anytime."
+    refute log =~ "Branch protection on main — create skipped ({:github_api_status, 422})"
+    refute log =~ "Done. Run mix siaan.install again anytime."
   end
 
   test "run/0 uses the current directory when no opts are passed" do

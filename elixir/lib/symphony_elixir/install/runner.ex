@@ -113,6 +113,7 @@ defmodule SymphonyElixir.Install.Runner do
 
       {:error, reason} ->
         info.("   ~ Branch protection — skipped (could not determine default branch: #{inspect(reason)})")
+        :ok
     end
   end
 
@@ -126,9 +127,11 @@ defmodule SymphonyElixir.Install.Runner do
 
       {:error, {:github_api_status, 403}} ->
         info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
+        :ok
 
       {:error, reason} ->
         info.("   ~ Branch protection on #{branch} — skipped (#{inspect(reason)})")
+        :ok
     end
   end
 
@@ -141,29 +144,31 @@ defmodule SymphonyElixir.Install.Runner do
          {:ok, maintainers} <- select_maintainers(context, yes) do
       info.("3. Repository security")
       info.("   ✓ Issue/PR restriction — enforced by repository guardrails")
-      maybe_ensure_branch_protection(context, maintainers)
-      info.("")
 
-      config_path = Repository.security_config_path(context.repo_root)
-      desired_config = %{context.security_config | maintainers: maintainers}
+      with :ok <- maybe_ensure_branch_protection(context, maintainers) do
+        info.("")
 
-      info.("4. Configuration")
-      write_security_file(context.repo_root, config_path, desired_config, dry_run, info)
-      info.("")
+        config_path = Repository.security_config_path(context.repo_root)
+        desired_config = %{context.security_config | maintainers: maintainers}
 
-      info.("5. Version")
-      info.("   ✓ siaan is up to date (v#{Mix.Project.config()[:version]})")
-      info.("")
-      info.("Done. Run mix siaan.install again anytime.")
+        info.("4. Configuration")
+        write_security_file(context.repo_root, config_path, desired_config, dry_run, info)
+        info.("")
 
-      {:ok,
-       %{
-         repo_root: context.repo_root,
-         repo_owner: context.owner,
-         repo_name: context.repo_name,
-         maintainers: maintainers,
-         config_path: config_path
-       }}
+        info.("5. Version")
+        info.("   ✓ siaan is up to date (v#{Mix.Project.config()[:version]})")
+        info.("")
+        info.("Done. Run mix siaan.install again anytime.")
+
+        {:ok,
+         %{
+           repo_root: context.repo_root,
+           repo_owner: context.owner,
+           repo_name: context.repo_name,
+           maintainers: maintainers,
+           config_path: config_path
+         }}
+      end
     end
   end
 
@@ -207,6 +212,7 @@ defmodule SymphonyElixir.Install.Runner do
          _maintainers
        ) do
     info.("   ✓ Branch protection — disabled in .github/siaan-security.yml")
+    :ok
   end
 
   defp maybe_ensure_branch_protection(
@@ -320,9 +326,11 @@ defmodule SymphonyElixir.Install.Runner do
 
       {:error, {:github_api_status, 403}} ->
         info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
+        :ok
 
       {:error, reason} ->
-        info.("   ~ Branch protection on #{branch} — #{action} skipped (#{inspect(reason)})")
+        info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
+        {:error, reason}
     end
   end
 
