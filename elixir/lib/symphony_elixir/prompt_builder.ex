@@ -9,15 +9,15 @@ defmodule SymphonyElixir.PromptBuilder do
 
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
-    template =
+    {template, allowlist} =
       Workflow.current()
-      |> prompt_template!()
-      |> parse_template!()
+      |> prompt_context!()
 
     template
     |> Solid.render!(
       %{
         "attempt" => Keyword.get(opts, :attempt),
+        "allowlist" => allowlist,
         "issue" => issue |> Map.from_struct() |> to_solid_map()
       },
       @render_opts
@@ -25,20 +25,17 @@ defmodule SymphonyElixir.PromptBuilder do
     |> IO.iodata_to_binary()
   end
 
-  defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
+  defp prompt_context!({:ok, %{config: config, prompt_template: prompt}}) do
+    allowlist_values = allowlist_values(config)
 
-  defp prompt_template!({:error, reason}) do
-    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
+    {
+      parse_template!(default_prompt(prompt)),
+      format_allowlist_values(allowlist_values)
+    }
   end
 
-  defp parse_template!(prompt) when is_binary(prompt) do
-    Solid.parse!(prompt)
-  rescue
-    error ->
-      reraise %RuntimeError{
-                message: "template_parse_error: #{Exception.message(error)} template=#{inspect(prompt)}"
-              },
-              __STACKTRACE__
+  defp prompt_context!({:error, reason}) do
+    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
   end
 
   defp to_solid_map(map) when is_map(map) do
@@ -61,4 +58,25 @@ defmodule SymphonyElixir.PromptBuilder do
       prompt
     end
   end
+
+  defp parse_template!(prompt) when is_binary(prompt) do
+    Solid.parse!(prompt)
+  rescue
+    error ->
+      reraise %RuntimeError{
+                message: "template_parse_error: #{Exception.message(error)} template=#{inspect(prompt)}"
+              },
+              __STACKTRACE__
+  end
+
+  defp allowlist_values(config) when is_map(config) do
+    values = Map.get(config, "allowlist", Map.get(config, :allowlist, []))
+
+    values
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp format_allowlist_values(values) when is_list(values), do: Enum.join(values, ", ")
 end

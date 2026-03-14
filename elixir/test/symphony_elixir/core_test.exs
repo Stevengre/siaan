@@ -68,6 +68,27 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(), max_turns: 5)
     assert Config.settings!().agent.max_turns == 5
 
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: ["Stevengre", "chatgpt-codex-connector[bot]"])
+    assert Config.settings!().allowlist == ["Stevengre", "chatgpt-codex-connector[bot]"]
+
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: [" Stevengre ", " chatgpt-codex-connector[bot] "])
+    assert Config.settings!().allowlist == ["Stevengre", "chatgpt-codex-connector[bot]"]
+
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: nil)
+    assert Config.settings!().allowlist == []
+
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: ["Stevengre", ""])
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "allowlist"
+
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: "Stevengre")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "allowlist"
+
+    write_workflow_file!(Workflow.workflow_file_path(), allowlist: ["Stevengre", 1])
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "allowlist"
+
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: "Todo,  Review,")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "tracker.active_states"
@@ -984,6 +1005,47 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Ticket S-1 Refactor backend request path"
     assert prompt =~ "labels=backend"
     assert prompt =~ "attempt=3"
+  end
+
+  test "prompt builder renders allowlist from workflow config" do
+    workflow_prompt = "Allowlist={{ allowlist }}"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      prompt: workflow_prompt,
+      allowlist: ["Stevengre", "chatgpt-codex-connector[bot]"]
+    )
+
+    issue = %Issue{
+      identifier: "S-2",
+      title: "Review automation",
+      description: "Render allowlist prompt context",
+      state: "Todo",
+      url: "https://example.org/issues/S-2",
+      labels: []
+    }
+
+    assert PromptBuilder.build_prompt(issue) ==
+             "Allowlist=Stevengre, chatgpt-codex-connector[bot]"
+  end
+
+  test "prompt builder renders an empty allowlist when none is configured" do
+    workflow_prompt = "Allowlist={{ allowlist }}"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      prompt: workflow_prompt,
+      allowlist: []
+    )
+
+    issue = %Issue{
+      identifier: "S-3",
+      title: "Review automation without reviewers",
+      description: "Render empty allowlist prompt context",
+      state: "Todo",
+      url: "https://example.org/issues/S-3",
+      labels: []
+    }
+
+    assert PromptBuilder.build_prompt(issue) == "Allowlist="
   end
 
   test "prompt builder renders issue datetime fields without crashing" do
