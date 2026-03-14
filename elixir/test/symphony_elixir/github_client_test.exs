@@ -329,6 +329,55 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert context.rest_endpoint == "https://ghe.example.com/api"
   end
 
+  test "build_repo_context uses env tokens and covers REST endpoint fallbacks" do
+    restore_env("GITHUB_TOKEN", "env-token")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: nil
+    )
+
+    assert {:ok, context} = Client.build_repo_context("acme", "repo")
+    assert context.api_key == "env-token"
+    assert context.rest_endpoint == "https://api.github.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://api.linear.app/graphql"
+    )
+
+    assert {:ok, linear_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert linear_context.rest_endpoint == "https://api.github.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com"
+    )
+
+    assert {:ok, pathless_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert pathless_context.rest_endpoint == "https://ghe.example.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "not a url"
+    )
+
+    assert {:ok, invalid_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert invalid_context.rest_endpoint == "https://api.github.com"
+  end
+
   test "fetch_candidate_issues_for_test uses the configured REST endpoint" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -383,7 +432,189 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo"}
   end
 
+  test "list_collaborators_for_test paginates collaborator pages" do
+    repo = %{
+      repo_owner: "acme",
+      repo_name: "repo",
+      api_key: "gh-token",
+      rest_endpoint: "https://ghe.example.com/api"
+    }
+
+    request_fun = fn method, url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      send(self(), {:request, method, url, params})
+
+      body =
+        case params[:page] do
+          1 -> Enum.map(1..100, fn number -> %{"login" => "user-#{number}"} end)
+          2 -> [%{"login" => "user-101"}]
+        end
+
+      {:ok, %{status: 200, body: body}}
+    end
+
+    assert {:ok, collaborators} = Client.list_collaborators_for_test(repo, request_fun)
+    assert length(collaborators) == 101
+    assert "user-101" in collaborators
+
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/collaborators", [per_page: 100, page: 1]}
+    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/collaborators", [per_page: 100, page: 2]}
+    refute_receive {:request, :get, _, [per_page: 100, page: 3]}
+  end
+
+  test "repo API wrapper helpers short-circuit before network when auth is missing" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: nil}
+
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.list_labels(repo)
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.create_label(repo, %{"name" => "status:ready"})
+    assert {:error, :missing_github_api_token} = Client.list_collaborators(repo)
+    assert {:error, :missing_github_api_token} = Client.get_branch_protection(repo, "main")
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.put_branch_protection(repo, "main", %{})
+    assert {:error, {:github_api_request, :missing_github_api_token}} = Client.get_default_branch(repo)
+  end
+
+  test "label helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token", rest_endpoint: "https://ghe.example.com/api"}
+
+    assert {:ok, [%{"name" => "status:ready"}]} =
+             Client.list_labels_for_test(repo, fn method, url, _opts ->
+               send(self(), {:list_labels_ok, method, url})
+               {:ok, %{status: 200, body: [%{"name" => "status:ready"}]}}
+             end)
+
+    assert_receive {:list_labels_ok, :get, "https://ghe.example.com/api/repos/acme/repo/labels"}
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.list_labels_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.list_labels_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert :ok =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn method, url, opts ->
+               send(self(), {:create_label_ok, method, url, opts[:json]})
+               {:ok, %{status: 201, body: %{}}}
+             end)
+
+    assert_receive {:create_label_ok, :post, "https://ghe.example.com/api/repos/acme/repo/labels", %{"name" => "status:ready"}}
+
+    assert :ok =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:ok, %{status: 422, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 503}} =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:ok, %{status: 503, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.create_label_for_test(repo, %{"name" => "status:ready"}, fn _method, _url, _opts ->
+               {:error, :closed}
+             end)
+  end
+
+  test "collaborator and branch protection helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token"}
+
+    assert {:error, {:github_api_status, 502}} =
+             Client.list_collaborators_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 502, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.list_collaborators_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert {:ok, %{"required_status_checks" => %{}}} =
+             Client.get_branch_protection_for_test(repo, "main", fn method, url, _opts ->
+               send(self(), {:get_branch_ok, method, url})
+               {:ok, %{status: 200, body: %{"required_status_checks" => %{}}}}
+             end)
+
+    assert_receive {:get_branch_ok, :get, "https://api.github.com/repos/acme/repo/branches/main/protection"}
+
+    assert {:ok, nil} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts ->
+               {:ok, %{status: 404, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.get_branch_protection_for_test(repo, "main", fn _method, _url, _opts -> {:error, :closed} end)
+
+    assert :ok =
+             Client.put_branch_protection_for_test(repo, "release/1.0", %{"required_status_checks" => nil}, fn method, url, opts ->
+               send(self(), {:put_branch_ok, method, url, opts[:json]})
+               {:ok, %{status: 200, body: %{}}}
+             end)
+
+    assert_receive {:put_branch_ok, :put, "https://api.github.com/repos/acme/repo/branches/release/1.0/protection", %{"required_status_checks" => nil}}
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts ->
+               {:ok, %{status: 500, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts -> {:error, :closed} end)
+  end
+
+  test "default branch helper wrappers expose success and failure branches" do
+    repo = %{repo_owner: "acme", repo_name: "repo", api_key: "gh-token"}
+
+    assert {:ok, "main"} =
+             Client.get_default_branch_for_test(repo, fn method, url, _opts ->
+               send(self(), {:default_branch_ok, method, url})
+               {:ok, %{status: 200, body: %{"default_branch" => "main"}}}
+             end)
+
+    assert_receive {:default_branch_ok, :get, "https://api.github.com/repos/acme/repo"}
+
+    assert {:error, {:github_api_request, :missing_default_branch}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 200, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_status, 503}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts ->
+               {:ok, %{status: 503, body: %{}}}
+             end)
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.get_default_branch_for_test(repo, fn _method, _url, _opts -> {:error, :closed} end)
+  end
+
+  test "graphql/3 uses the default GitHub endpoint when tracker endpoint is nil" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: nil
+    )
+
+    assert {:ok, %{"data" => %{"ok" => true}}} =
+             Client.graphql("query Ping { ok }", %{},
+               request_fun: fn method, url, _opts ->
+                 send(self(), {:graphql_request, method, url})
+                 {:ok, %{status: 200, body: %{"data" => %{"ok" => true}}}}
+               end
+             )
+
+    assert_receive {:graphql_request, :post, "https://api.github.com/graphql"}
+  end
+
   test "public wrappers return fast validation errors without network dependencies" do
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: nil,
@@ -399,6 +630,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   end
 
   test "fetch_candidate_issues_for_test validates required github tracker fields" do
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -729,6 +964,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:error, {:github_api_request, _reason}} =
              Client.graphql("query Viewer { viewer { login } }", %{})
+
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",

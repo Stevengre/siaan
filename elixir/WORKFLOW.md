@@ -9,7 +9,7 @@ tracker:
   terminal_states:
     - closed
 polling:
-  interval_ms: 5000
+  interval_ms: 30000
 workspace:
   root: ~/code/symphony-workspaces/siaan
 hooks:
@@ -21,8 +21,8 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
-  max_concurrent_agents: 10
-  max_turns: 20
+  max_concurrent_agents: 5
+  max_turns: 7
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never
@@ -265,7 +265,7 @@ Use this only when completion is blocked by missing required tools or missing au
 
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
 - For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
-- If issue state is `status:triage`, do not modify it; wait for human to move to `status:ready`.
+- If issue state is `status:triage`, do not modify it; wait for human to move it to `status:ready`.
 - Do not edit the issue body/description for planning or progress tracking.
 - Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.
 - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
