@@ -13,7 +13,7 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/code/symphony-workspaces/siaan
 hooks:
   after_create: |
     git clone --depth 1 "https://github.com/your-org-or-user/your-repo.git" .
@@ -52,4 +52,3 @@ Execution requirements:
 4. After validation passes and the PR is ready, retarget the issue to `status:review`.
 5. Add one concise issue comment with PR URL and validation evidence.
 6. Keep scope aligned to the issue body; if blocked, report blocker details in the issue.
-

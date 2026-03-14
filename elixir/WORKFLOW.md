@@ -11,7 +11,7 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/code/symphony-workspaces/siaan
 hooks:
   after_create: |
     git clone --depth 1 https://github.com/Stevengre/siaan .
