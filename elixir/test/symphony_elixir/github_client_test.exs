@@ -44,51 +44,76 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert closed_issue.state == "closed"
   end
 
-  test "fetch_candidate_issues_for_test fetches ready-label issues and skips pull requests" do
+  test "fetch_candidate_issues_for_test fetches all active-state labels and skips pull requests" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_project_slug: "acme/repo",
       tracker_repo_owner: "acme",
       tracker_repo_name: "repo",
       tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready"
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"]
     )
 
     request_fun = fn method, url, opts ->
       send(self(), {:request, method, url, opts})
 
+      labels = Keyword.get(opts, :params)[:labels]
+
       {:ok,
        %{
          status: 200,
-         body: [
-           %{
-             "id" => 111,
-             "number" => 7,
-             "title" => "Ready issue",
-             "body" => "body",
-             "state" => "open",
-             "html_url" => "https://github.com/acme/repo/issues/7",
-             "labels" => [%{"name" => "status:ready"}],
-             "assignees" => []
-           },
-           %{
-             "id" => 222,
-             "number" => 8,
-             "title" => "Pull request",
-             "pull_request" => %{"url" => "https://api.github.com/repos/acme/repo/pulls/8"},
-             "labels" => [%{"name" => "status:ready"}],
-             "assignees" => []
-           }
-         ]
+         body:
+           case labels do
+             "status:ready" ->
+               [
+                 %{
+                   "id" => 111,
+                   "number" => 7,
+                   "title" => "Ready issue",
+                   "body" => "body",
+                   "state" => "open",
+                   "html_url" => "https://github.com/acme/repo/issues/7",
+                   "labels" => [%{"name" => "status:ready"}],
+                   "assignees" => []
+                 },
+                 %{
+                   "id" => 222,
+                   "number" => 8,
+                   "title" => "Pull request",
+                   "pull_request" => %{"url" => "https://api.github.com/repos/acme/repo/pulls/8"},
+                   "labels" => [%{"name" => "status:ready"}],
+                   "assignees" => []
+                 }
+               ]
+
+             "status:in-progress" ->
+               [
+                 %{
+                   "id" => 333,
+                   "number" => 9,
+                   "title" => "In progress issue",
+                   "body" => "body",
+                   "state" => "open",
+                   "html_url" => "https://github.com/acme/repo/issues/9",
+                   "labels" => [%{"name" => "status:in-progress"}],
+                   "assignees" => []
+                 }
+               ]
+           end
        }}
     end
 
-    assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}]} =
+    assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}, %Issue{id: "9", number: 9, state: "status:in-progress"}]} =
              Client.fetch_candidate_issues_for_test(request_fun)
 
-    assert_receive {:request, :get, "https://api.github.com/repos/acme/repo/issues", opts}
-    assert Keyword.get(opts, :params)[:labels] == "status:ready"
-    assert Keyword.get(opts, :params)[:state] == "open"
+    assert_receive {:request, :get, "https://api.github.com/repos/acme/repo/issues", ready_opts}
+    assert Keyword.get(ready_opts, :params)[:labels] == "status:ready"
+    assert Keyword.get(ready_opts, :params)[:state] == "open"
+
+    assert_receive {:request, :get, "https://api.github.com/repos/acme/repo/issues", in_progress_opts}
+    assert Keyword.get(in_progress_opts, :params)[:labels] == "status:in-progress"
+    assert Keyword.get(in_progress_opts, :params)[:state] == "open"
   end
 
   test "fetch_candidate_issues_for_test handles pagination, malformed entries, and status failures" do
@@ -97,7 +122,8 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_repo_owner: "acme",
       tracker_repo_name: "repo",
       tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready"
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
     )
 
     paged_request = fn :get, _url, opts ->
@@ -129,6 +155,83 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     status_failure = fn _method, _url, _opts -> {:ok, %{status: 500, body: %{}}} end
     assert {:error, {:github_api_status, 500}} = Client.fetch_candidate_issues_for_test(status_failure)
+  end
+
+  test "fetch_candidate_issues_for_test honors open/closed entries in active states" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_active_states: ["closed", "open"]
+    )
+
+    request_fun = fn :get, _url, opts ->
+      params = Keyword.fetch!(opts, :params)
+      send(self(), {:params, params})
+
+      {:ok,
+       %{
+         status: 200,
+         body: [
+           %{
+             "id" => 444,
+             "number" => 44,
+             "title" => "Open candidate",
+             "body" => "Body",
+             "state" => "open",
+             "html_url" => "https://github.com/acme/repo/issues/44",
+             "labels" => [],
+             "assignees" => []
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, [%Issue{id: "44", state: "open"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:params, params}
+    assert params[:state] == "open"
+    refute Keyword.has_key?(params, :labels)
+    refute_receive {:params, _}
+  end
+
+  test "fetch_candidate_issues_for_test falls back to ready label when active_states is empty" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: []
+    )
+
+    request_fun = fn :get, _url, opts ->
+      send(self(), {:params, Keyword.fetch!(opts, :params)})
+
+      {:ok,
+       %{
+         status: 200,
+         body: [
+           %{
+             "id" => 555,
+             "number" => 55,
+             "title" => "Ready candidate",
+             "body" => "Body",
+             "state" => "open",
+             "html_url" => "https://github.com/acme/repo/issues/55",
+             "labels" => [%{"name" => "status:ready"}],
+             "assignees" => []
+           }
+         ]
+       }}
+    end
+
+    assert {:ok, [%Issue{id: "55", state: "status:ready"}]} = Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:params, params}
+    assert params[:state] == "open"
+    assert params[:labels] == "status:ready"
   end
 
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do

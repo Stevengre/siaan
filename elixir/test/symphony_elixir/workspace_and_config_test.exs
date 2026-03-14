@@ -1035,21 +1035,25 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     missing_workspace_env = "SYMP_MISSING_WORKSPACE_#{System.unique_integer([:positive])}"
     empty_secret_env = "SYMP_EMPTY_SECRET_#{System.unique_integer([:positive])}"
     missing_secret_env = "SYMP_MISSING_SECRET_#{System.unique_integer([:positive])}"
+    empty_endpoint_env = "SYMP_EMPTY_ENDPOINT_#{System.unique_integer([:positive])}"
 
     previous_missing_workspace_env = System.get_env(missing_workspace_env)
     previous_empty_secret_env = System.get_env(empty_secret_env)
     previous_missing_secret_env = System.get_env(missing_secret_env)
+    previous_empty_endpoint_env = System.get_env(empty_endpoint_env)
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     System.delete_env(missing_workspace_env)
     System.put_env(empty_secret_env, "")
     System.delete_env(missing_secret_env)
+    System.put_env(empty_endpoint_env, "")
     System.put_env("LINEAR_API_KEY", "fallback-linear-token")
 
     on_exit(fn ->
       restore_env(missing_workspace_env, previous_missing_workspace_env)
       restore_env(empty_secret_env, previous_empty_secret_env)
       restore_env(missing_secret_env, previous_missing_secret_env)
+      restore_env(empty_endpoint_env, previous_empty_endpoint_env)
       restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
@@ -1089,6 +1093,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              })
 
     assert blank_endpoint_settings.tracker.endpoint == "https://api.linear.app/graphql"
+
+    assert {:ok, env_endpoint_settings} =
+             Schema.parse(%{
+               tracker: %{kind: "github", endpoint: "$#{empty_endpoint_env}"}
+             })
+
+    assert env_endpoint_settings.tracker.endpoint == "https://api.github.com/graphql"
   end
 
   test "schema resolves sandbox policies from explicit and default workspaces" do

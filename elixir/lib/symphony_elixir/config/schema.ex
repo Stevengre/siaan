@@ -441,6 +441,8 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defp normalize_endpoint(nil, default_endpoint), do: default_endpoint
+
   defp normalize_tracker_endpoint_for_kind("github", "https://api.linear.app/graphql"),
     do: "https://api.github.com/graphql"
 

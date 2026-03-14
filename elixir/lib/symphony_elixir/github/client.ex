@@ -157,7 +157,38 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp fetch_candidate_issues(request_fun) when is_function(request_fun, 3) do
     with {:ok, tracker} <- github_tracker_config() do
-      list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun)
+      tracker.active_states
+      |> normalize_state_names()
+      |> do_fetch_candidate_issues_by_states(tracker, request_fun)
+    end
+  end
+
+  defp do_fetch_candidate_issues_by_states([], tracker, request_fun) do
+    list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun)
+  end
+
+  defp do_fetch_candidate_issues_by_states(state_names, tracker, request_fun) do
+    Enum.reduce_while(state_names, {:ok, {[], MapSet.new()}}, fn state_name, {:ok, {acc, seen}} ->
+      case list_candidate_issues_for_state_name(tracker, state_name, request_fun) do
+        {:ok, issues} ->
+          {next_acc, next_seen} = append_new_issues(acc, seen, issues)
+          {:cont, {:ok, {next_acc, next_seen}}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, {issues, _seen}} -> {:ok, issues}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp list_candidate_issues_for_state_name(tracker, state_name, request_fun) do
+    case state_name |> to_string() |> String.trim() |> String.downcase() do
+      "closed" -> {:ok, []}
+      "open" -> list_issues_by_labels(tracker, [], "open", request_fun)
+      _ -> list_issues_by_labels(tracker, [state_name], "open", request_fun)
     end
   end
 
@@ -404,11 +435,19 @@ defmodule SymphonyElixir.GitHub.Client do
     with {:ok, _api_key} <- ensure_present_string(api_key, :missing_github_api_token),
          {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
          {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name) do
+      ready_label = normalize_label(Map.get(tracker, :ready_label) || "status:ready")
+
+      active_states =
+        tracker
+        |> Map.get(:active_states, [])
+        |> normalize_state_names()
+
       {:ok,
        %{
          repo_owner: normalized_owner,
          repo_name: normalized_repo,
-         ready_label: normalize_label(Map.get(tracker, :ready_label) || "status:ready")
+         ready_label: ready_label,
+         active_states: active_states
        }}
     end
   end
