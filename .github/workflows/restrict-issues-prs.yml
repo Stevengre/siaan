@@ -36,9 +36,15 @@ jobs:
           end
 
           path = ".github/siaan-security.yml"
+          config_parse_error = false
           raw =
             if File.exist?(path)
-              YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
+              begin
+                YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
+              rescue Psych::SyntaxError
+                config_parse_error = true
+                {}
+              end
             else
               {}
             end
@@ -66,6 +72,7 @@ jobs:
           File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
             file.puts("maintainers=#{maintainers.join(",")}")
             file.puts("issue_restriction=#{issue_restriction}")
+            file.puts("config_parse_error=#{config_parse_error}")
           end
           RUBY
 
@@ -74,6 +81,7 @@ jobs:
         env:
           MAINTAINERS: ${{ steps.config.outputs.maintainers }}
           ISSUE_RESTRICTION: ${{ steps.config.outputs.issue_restriction }}
+          CONFIG_PARSE_ERROR: ${{ steps.config.outputs.config_parse_error }}
         with:
           script: |
             const policy = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/restrict_issues_prs_policy.js`);
@@ -85,6 +93,12 @@ jobs:
             const author = policy.normalizeLogin(authorLogin);
             const number = record.number;
             const type = isIssue ? 'issue' : 'pull request';
+
+            if (process.env.CONFIG_PARSE_ERROR === 'true') {
+              console.log(
+                'Could not parse .github/siaan-security.yml; falling back to the repo owner allowlist only.'
+              );
+            }
 
             if (!policy.shouldEnforceRestriction(issueRestriction)) {
               console.log(

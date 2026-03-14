@@ -143,7 +143,7 @@ defmodule SymphonyElixir.Install.Runner do
     with :ok <- maybe_ensure_labels(context),
          {:ok, maintainers} <- select_maintainers(context, yes) do
       info.("3. Repository security")
-      info.("   ✓ Issue/PR restriction — enforced by repository guardrails")
+      info.("   #{issue_restriction_status(context.security_config)}")
 
       with :ok <- maybe_ensure_branch_protection(context, maintainers) do
         info.("")
@@ -573,6 +573,19 @@ defmodule SymphonyElixir.Install.Runner do
   end
 
   defp normalize_maintainer(_maintainer), do: ""
+
+  defp issue_restriction_status(%{setup: %{issue_restriction: "collaborators_only"}}) do
+    "✓ Issue/PR restriction — enforced by repository guardrails"
+  end
+
+  defp issue_restriction_status(%{setup: %{issue_restriction: issue_restriction}})
+       when is_binary(issue_restriction) do
+    "✓ Issue/PR restriction — set to #{issue_restriction} in .github/siaan-security.yml"
+  end
+
+  defp issue_restriction_status(_security_config) do
+    "✓ Issue/PR restriction — enforced by repository guardrails"
+  end
 
   defp relative(repo_root, path) do
     Path.relative_to(path, repo_root)

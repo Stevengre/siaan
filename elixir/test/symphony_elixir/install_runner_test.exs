@@ -287,6 +287,57 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert payload["restrictions"]["users"] == ["alice", "bob"]
   end
 
+  defmodule IssueRestrictionStatusClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: raise("branch protection should be skipped when disabled")
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+  end
+
+  test "run/1 reports non-default issue restriction settings from the security file" do
+    repo_root = tmp_dir!("siaan-install-issue-restriction-status")
+    config_path = Path.join([repo_root, ".github", "siaan-security.yml"])
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+    File.mkdir_p!(Path.dirname(config_path))
+
+    File.write!(
+      config_path,
+      SecurityFile.render(%{
+        maintainers: ["alice"],
+        setup: %{
+          labels: true,
+          issue_restriction: "disabled",
+          branch_protection: false
+        }
+      })
+    )
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: IssueRestrictionStatusClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Issue/PR restriction — set to disabled in .github/siaan-security.yml"
+  end
+
   defmodule DriftedProtectionClient do
     def build_repo_context(owner, repo, token) do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
