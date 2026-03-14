@@ -31,19 +31,23 @@ jobs:
           ruby <<'RUBY'
           require "yaml"
 
+          normalize_login = lambda do |value|
+            value.to_s.strip.sub(/\A@+/, "").downcase
+          end
+
           path = ".github/siaan-security.yml"
           maintainers =
             if File.exist?(path)
               raw = YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
 
               Array(raw["maintainers"])
-              .map { |value| value.to_s.strip }
+              .map { |value| normalize_login.call(value) }
               .reject(&:empty?)
             else
               []
             end
 
-          maintainers = (maintainers + [ENV.fetch("REPO_OWNER")]).uniq
+          maintainers = (maintainers + [normalize_login.call(ENV.fetch("REPO_OWNER"))]).uniq
 
           File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
             file.puts("maintainers=#{maintainers.join(",")}")
@@ -56,18 +60,21 @@ jobs:
           MAINTAINERS: ${{ steps.config.outputs.maintainers }}
         with:
           script: |
+            const normalizeLogin = (value) =>
+              value.trim().replace(/^@+/, '').toLowerCase();
             const allowlist = (process.env.MAINTAINERS || '')
               .split(',')
-              .map((value) => value.trim())
+              .map(normalizeLogin)
               .filter(Boolean);
             const isIssue = !!context.payload.issue;
             const record = isIssue ? context.payload.issue : context.payload.pull_request;
-            const author = record.user.login;
+            const authorLogin = record.user.login;
+            const author = normalizeLogin(authorLogin);
             const number = record.number;
             const type = isIssue ? 'issue' : 'pull request';
 
             if (allowlist.includes(author)) {
-              console.log(`Author ${author} is in the maintainer allowlist. Allowing.`);
+              console.log(`Author ${authorLogin} is in the maintainer allowlist. Allowing.`);
               return;
             }
 
@@ -77,7 +84,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: number,
               body: [
-                `Hi @${author}, thank you for your interest!`,
+                `Hi @${authorLogin}, thank you for your interest!`,
                 '',
                 `This repository only accepts issues and pull requests from the configured maintainer allowlist: ${allowlist.map((login) => `@${login}`).join(', ')}.`,
                 'The allowlist is stored in `.github/siaan-security.yml` and maintained by `mix siaan.install`.',
