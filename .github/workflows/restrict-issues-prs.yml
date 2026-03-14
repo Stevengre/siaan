@@ -41,7 +41,7 @@ jobs:
             if File.exist?(path)
               begin
                 YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
-              rescue Psych::SyntaxError
+              rescue Psych::Exception
                 config_parse_error = true
                 {}
               end

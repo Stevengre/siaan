@@ -53,15 +53,16 @@ def load_security_file(path)
   return { exists: false, maintainers: [] } unless File.file?(path)
 
   raw = YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
+  return { exists: true, error: "expected a top-level mapping, got #{raw.class}", maintainers: [] } unless raw.is_a?(Hash)
 
   {
     exists: true,
     maintainers: normalize_list(raw["maintainers"])
   }
-rescue Psych::SyntaxError => error
+rescue Psych::Exception => error
   {
     exists: true,
-    parse_error: error.message,
+    error: error.message,
     maintainers: []
   }
 end
@@ -83,10 +84,10 @@ def load_workflow(path)
     exists: true,
     allowlist: normalize_list(security.is_a?(Hash) ? security["dispatch_allowlist"] : nil)
   }
-rescue Psych::SyntaxError => error
+rescue Psych::Exception => error
   {
     exists: true,
-    parse_error: error.message,
+    error: error.message,
     allowlist: []
   }
 end
@@ -110,22 +111,22 @@ security = load_security_file(security_path)
 workflow = load_workflow(workflow_path)
 
 result =
-  if security[:parse_error]
+  if security[:error]
     {
       "status" => "warn",
-      "summary" => "Could not parse #{relative_path(repo_root, security_path)}.",
+      "summary" => "Could not load #{relative_path(repo_root, security_path)}.",
       "details" => [
-        "#{relative_path(repo_root, security_path)} parse error: #{security[:parse_error]}"
+        "#{relative_path(repo_root, security_path)} load error: #{security[:error]}"
       ],
       "security_path" => relative_path(repo_root, security_path),
       "workflow_path" => relative_path(repo_root, workflow_path)
     }
-  elsif workflow[:parse_error]
+  elsif workflow[:error]
     {
       "status" => "warn",
-      "summary" => "Could not parse #{relative_path(repo_root, workflow_path)}.",
+      "summary" => "Could not load #{relative_path(repo_root, workflow_path)}.",
       "details" => [
-        "#{relative_path(repo_root, workflow_path)} parse error: #{workflow[:parse_error]}"
+        "#{relative_path(repo_root, workflow_path)} load error: #{workflow[:error]}"
       ],
       "security_path" => relative_path(repo_root, security_path),
       "workflow_path" => relative_path(repo_root, workflow_path)

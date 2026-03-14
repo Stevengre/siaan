@@ -113,4 +113,49 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
     assert outputs["issue_restriction"] == "collaborators_only"
     assert outputs["config_parse_error"] == "true"
   end
+
+  test "restrict issues workflow falls back to the repo owner allowlist when security yaml uses aliases" do
+    repo_root = Path.expand("../../..", __DIR__)
+    workflow = File.read!(Path.join(repo_root, ".github/workflows/restrict-issues-prs.yml"))
+
+    [_, ruby_block] = String.split(workflow, "ruby <<'RUBY'\n", parts: 2)
+    [run_block | _] = String.split(ruby_block, "\n          RUBY", parts: 2)
+
+    temp_repo = tmp_dir!("restrict-issues-alias-fallback")
+    output_path = Path.join(temp_repo, "github-output.txt")
+    File.mkdir_p!(Path.join(temp_repo, ".github"))
+
+    File.write!(
+      Path.join([temp_repo, ".github", "siaan-security.yml"]),
+      """
+      maintainers: &owners
+        - alice
+      setup:
+        labels: true
+      copy: *owners
+      """
+    )
+
+    {output, 0} =
+      System.cmd(
+        "bash",
+        ["-lc", "ruby <<'RUBY'\n#{run_block}\nRUBY"],
+        cd: temp_repo,
+        env: [{"REPO_OWNER", "Stevengre"}, {"GITHUB_OUTPUT", output_path}],
+        stderr_to_stdout: true
+      )
+
+    assert output == ""
+
+    outputs =
+      output_path
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.map(&String.split(&1, "=", parts: 2))
+      |> Map.new(fn [key, value] -> {key, value} end)
+
+    assert outputs["maintainers"] == "stevengre"
+    assert outputs["issue_restriction"] == "collaborators_only"
+    assert outputs["config_parse_error"] == "true"
+  end
 end
