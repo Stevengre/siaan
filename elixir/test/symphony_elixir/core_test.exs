@@ -80,6 +80,20 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, :missing_linear_project_slug} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: "   ",
+      tracker_project_slug: "project"
+    )
+
+    assert {:error, :missing_linear_api_token} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: "token",
+      tracker_project_slug: "   "
+    )
+
+    assert {:error, :missing_linear_project_slug} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
       tracker_project_slug: "project",
       codex_command: ""
     )

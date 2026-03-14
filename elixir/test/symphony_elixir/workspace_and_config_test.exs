@@ -486,6 +486,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
 
+  test "linear client trims api token before building authorization headers" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: "  linear-token  ",
+      tracker_project_slug: "project"
+    )
+
+    assert {:ok, %{"data" => %{"viewer" => %{"id" => "viewer-id"}}}} =
+             Client.graphql("query Viewer { viewer { id } }", %{},
+               request_fun: fn _payload, headers ->
+                 assert {"Authorization", "linear-token"} in headers
+                 {:ok, %{status: 200, body: %{"data" => %{"viewer" => %{"id" => "viewer-id"}}}}}
+               end
+             )
+  end
+
   test "orchestrator sorts dispatch by priority then oldest created_at" do
     issue_same_priority_older = %Issue{
       id: "issue-old-high",

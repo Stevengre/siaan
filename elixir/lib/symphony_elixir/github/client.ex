@@ -176,9 +176,7 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp do_fetch_candidate_issues_by_states([], tracker, request_fun) do
-    list_issues_by_labels(tracker, [tracker.ready_label], "open", request_fun)
-  end
+  defp do_fetch_candidate_issues_by_states([], _tracker, _request_fun), do: {:ok, []}
 
   defp do_fetch_candidate_issues_by_states(state_names, tracker, request_fun) do
     Enum.reduce_while(state_names, {:ok, {[], MapSet.new()}}, fn state_name, {:ok, {acc, seen}} ->

@@ -382,15 +382,21 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp graphql_headers do
     case Config.settings!().tracker.api_key do
-      nil ->
+      token when not is_binary(token) ->
         {:error, :missing_linear_api_token}
 
       token ->
-        {:ok,
-         [
-           {"Authorization", token},
-           {"Content-Type", "application/json"}
-         ]}
+        case String.trim(token) do
+          "" ->
+            {:error, :missing_linear_api_token}
+
+          trimmed_token ->
+            {:ok,
+             [
+               {"Authorization", trimmed_token},
+               {"Content-Type", "application/json"}
+             ]}
+        end
     end
   end
 
