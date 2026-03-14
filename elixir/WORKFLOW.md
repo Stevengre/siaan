@@ -31,6 +31,9 @@ codex:
     type: dangerFullAccess
   read_timeout_ms: 30000
   stall_timeout_ms: 3600000
+allowlist:
+  - Stevengre
+  - chatgpt-codex-connector[bot]
 ---
 
 You are working on a GitHub issue `{{ issue.identifier }}`
@@ -160,16 +163,21 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 When a ticket has an attached PR, run this protocol before moving to `status:review`:
 
 1. Identify the PR number from issue links/attachments.
-2. Gather feedback from all channels:
-   - Top-level PR comments (`gh pr view --comments`).
-   - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
-   - Review summaries/states (`gh pr view --json reviews`).
-3. Treat every actionable reviewer comment (human or bot), including inline review comments, as blocking until one of these is true:
-   - code/test/docs updated to address it, or
-   - explicit, justified pushback reply is posted on that thread.
-4. Update the workpad plan/checklist to include each feedback item and its resolution status.
-5. Re-run validation after feedback-driven changes and push updates.
-6. Repeat this sweep until there are no outstanding actionable comments.
+2. If `@codex` review has not yet been requested on the current PR revision, post this exact PR comment:
+   - `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
+   - Replace `{base_branch}` with the actual PR base branch name.
+   - Replace `{issue_url}` with the full issue URL.
+3. Gather **ONLY** feedback from `{{ allowlist }}` across all channels:
+   - Top-level PR comments (`gh pr view <pr> --json comments --jq '.comments[] | select(.author.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
+   - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments --jq '.[] | select(.user.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
+   - Review summaries/states (`gh pr view <pr> --json reviews --jq '.reviews[] | select(.author.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
+4. For any non-actionable comment from `{{ allowlist }}`, reply briefly with the disposition; if it is thread-based, resolve it when appropriate.
+5. Treat every actionable comment from `{{ allowlist }}` as blocking until one of these is true:
+   - code/test/docs updated to address it, with a reply that includes the commit SHA and a brief fix summary, and resolve the thread when that feedback is thread-based, or
+   - explicit, justified pushback reply is posted on that feedback item.
+6. Amend the existing workpad plan/checklist in place to include each feedback item and its resolution status.
+7. Re-run validation after feedback-driven changes and push updates.
+8. Repeat this sweep until there are no outstanding actionable comments from `{{ allowlist }}`.
 
 ## Blocked-access escape hatch (required behavior)
 
@@ -208,6 +216,9 @@ Use this only when completion is blocked by missing required tools or missing au
 8.  Create or update a PR whose body includes `closes #<issue-number>` to auto-link it to the issue.
     - If PR creation is unavailable, record the PR URL in the workpad comment as a fallback.
     - Ensure the GitHub PR has label `siaan` (add it if missing).
+    - Once the branch is ready for review-quality feedback, request `@codex` review with:
+      `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
+    - Add a workpad TODO to review and handle the resulting `@codex` feedback.
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -217,22 +228,23 @@ Use this only when completion is blocked by missing required tools or missing au
     - Do not post any additional completion summary comment.
 11. Before moving to `status:review`, poll PR feedback and checks:
     - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
+    - Confirm the current PR revision has gone through an `@codex` review pass.
     - Run the full PR feedback sweep protocol.
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
-    - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
+    - Repeat this loop until no outstanding actionable comments from `{{ allowlist }}` remain and checks are passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
 12. Only then move issue to `status:review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `status:review` with the blocker brief and explicit unblock actions.
 13. For `status:ready` tickets that already had a PR attached at kickoff:
-    - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
+    - Ensure all existing actionable PR feedback from `{{ allowlist }}`, including inline review comments, was reviewed and resolved.
     - Ensure branch was pushed with any required updates.
     - Then move to `status:review`.
 
 ## Step 3: `status:review` and merge handling
 
 1. When the issue is in `status:review`, do not code or change ticket content.
-2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
+2. Poll for updates as needed. Treat **ONLY** comments from `{{ allowlist }}` as actionable.
 3. If review feedback requires changes, move the issue to `status:in-progress` and follow the execution flow.
 4. If approved, human moves the issue to `status:approval`.
 5. When the issue is in `status:approval`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
@@ -241,7 +253,7 @@ Use this only when completion is blocked by missing required tools or missing au
 ## Step 4: Rework handling (`status:review` -> `status:in-progress`)
 
 1. Treat review-requested rework as a full approach reset, not incremental patching.
-2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
+2. Re-read the full issue body and all actionable comments from `{{ allowlist }}`; explicitly identify what will be done differently this attempt.
 3. Close the existing PR tied to the issue.
 4. Remove the existing `## Agent Workpad` comment from the issue.
 5. Create a fresh branch from `origin/main`.
@@ -255,7 +267,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
-- PR feedback sweep is complete and no actionable comments remain.
+- PR feedback sweep is complete, `@codex` review has run on the current PR revision, and no actionable comments remain from `{{ allowlist }}`.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
 - Required PR metadata is present (`siaan` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.

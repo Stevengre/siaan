@@ -296,6 +296,7 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   embedded_schema do
+    field(:allowlist, {:array, :string}, default: [])
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
@@ -387,7 +388,8 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp changeset(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [])
+    |> cast(attrs, [:allowlist], empty_values: [])
+    |> validate_string_list(:allowlist)
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
@@ -435,7 +437,33 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    %{
+      settings
+      | allowlist: normalize_string_list(settings.allowlist),
+        tracker: tracker,
+        workspace: workspace,
+        codex: codex
+    }
+  end
+
+  defp validate_string_list(changeset, field) do
+    validate_change(changeset, field, fn ^field, value ->
+      if valid_string_list?(value) do
+        []
+      else
+        [{field, "must be a list of non-empty strings"}]
+      end
+    end)
+  end
+
+  defp valid_string_list?(value) when is_list(value) do
+    Enum.all?(value, &(is_binary(&1) and String.trim(&1) != ""))
+  end
+
+  defp normalize_string_list(values) when is_list(values) do
+    values
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   defp resolve_tracker_endpoint(kind, endpoint) when is_binary(kind) and is_binary(endpoint) do
