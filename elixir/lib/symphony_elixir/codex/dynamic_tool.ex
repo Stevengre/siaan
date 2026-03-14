@@ -277,7 +277,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp normalize_tracker_kind(kind) when is_binary(kind), do: kind |> String.trim() |> String.downcase()
-  defp normalize_tracker_kind(_kind), do: nil
 
   defp unsupported_tool_response(tool_name, supported_tools) do
     failure_response(%{
