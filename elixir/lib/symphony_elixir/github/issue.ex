@@ -5,6 +5,8 @@ defmodule SymphonyElixir.GitHub.Issue do
 
   alias SymphonyElixir.Linear.Issue, as: TrackerIssue
 
+  @blocker_pattern ~r/\b[Bb]locked\s+by\s+#(\d+)/
+
   defstruct [
     :id,
     :number,
@@ -45,8 +47,18 @@ defmodule SymphonyElixir.GitHub.Issue do
     |> Enum.find(&String.starts_with?(&1, "status:"))
   end
 
-  @spec to_tracker_issue(t()) :: TrackerIssue.t()
-  def to_tracker_issue(%__MODULE__{} = issue) do
+  @spec extract_blocker_numbers(t()) :: [non_neg_integer()]
+  def extract_blocker_numbers(%__MODULE__{body: body}) when is_binary(body) do
+    @blocker_pattern
+    |> Regex.scan(body)
+    |> Enum.map(fn [_, num] -> String.to_integer(num) end)
+    |> Enum.uniq()
+  end
+
+  def extract_blocker_numbers(%__MODULE__{}), do: []
+
+  @spec to_tracker_issue(t(), [map()]) :: TrackerIssue.t()
+  def to_tracker_issue(%__MODULE__{} = issue, blocked_by \\ []) do
     labels = label_names(issue)
 
     %TrackerIssue{
@@ -59,7 +71,7 @@ defmodule SymphonyElixir.GitHub.Issue do
       branch_name: nil,
       url: issue.url,
       assignee_id: List.first(issue.assignees),
-      blocked_by: [],
+      blocked_by: blocked_by,
       labels: labels,
       assigned_to_worker: true,
       created_at: issue.created_at,

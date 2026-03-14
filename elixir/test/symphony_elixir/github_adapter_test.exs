@@ -48,6 +48,70 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     end
   end
 
+  defmodule BlockerGitHubClient do
+    def fetch_candidate_issues do
+      {:ok,
+       [
+         %GitHubIssue{
+           id: "10",
+           number: 10,
+           title: "Blocked issue",
+           body: "Depends on:\n- Blocked by #3\n- Blocked by #99",
+           state: "status:ready",
+           url: "https://github.com/acme/repo/issues/10",
+           labels: ["status:ready"],
+           assignees: []
+         },
+         %GitHubIssue{
+           id: "3",
+           number: 3,
+           title: "Known blocker",
+           body: "No blockers",
+           state: "closed",
+           url: "https://github.com/acme/repo/issues/3",
+           labels: ["status:review"],
+           assignees: []
+         }
+       ]}
+    end
+
+    def fetch_issue_states_by_ids(["99"]) do
+      {:ok,
+       [
+         %GitHubIssue{
+           id: "99",
+           number: 99,
+           title: "Remote blocker",
+           body: "",
+           state: "status:in-progress",
+           url: "https://github.com/acme/repo/issues/99",
+           labels: ["status:in-progress"],
+           assignees: []
+         }
+       ]}
+    end
+  end
+
+  defmodule BlockerErrorClient do
+    def fetch_candidate_issues do
+      {:ok,
+       [
+         %GitHubIssue{
+           id: "20",
+           number: 20,
+           title: "Blocked by missing",
+           body: "Blocked by #404",
+           state: "status:ready",
+           url: "https://github.com/acme/repo/issues/20",
+           labels: ["status:ready"],
+           assignees: []
+         }
+       ]}
+    end
+
+    def fetch_issue_states_by_ids(_ids), do: {:error, :not_found}
+  end
+
   defmodule RawGitHubClient do
     def fetch_candidate_issues, do: {:ok, [:candidate]}
     def fetch_issues_by_states(_states), do: {:ok, [:state_issue]}
@@ -108,6 +172,30 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     )
 
     assert SymphonyElixir.Tracker.adapter() == SymphonyElixir.GitHub.Adapter
+  end
+
+  test "adapter resolves blocked_by from issue body with known and fetched blockers" do
+    Application.put_env(:symphony_elixir, :github_client_module, BlockerGitHubClient)
+
+    assert {:ok, [blocked_issue, known_issue]} = Adapter.fetch_candidate_issues()
+
+    assert blocked_issue.id == "10"
+    assert length(blocked_issue.blocked_by) == 2
+
+    blocker_3 = Enum.find(blocked_issue.blocked_by, &(&1.identifier == "GH-3"))
+    assert blocker_3.state == "closed"
+
+    blocker_99 = Enum.find(blocked_issue.blocked_by, &(&1.identifier == "GH-99"))
+    assert blocker_99.state == "status:in-progress"
+
+    assert known_issue.blocked_by == []
+  end
+
+  test "adapter falls back to unknown state when blocker fetch fails" do
+    Application.put_env(:symphony_elixir, :github_client_module, BlockerErrorClient)
+
+    assert {:ok, [issue]} = Adapter.fetch_candidate_issues()
+    assert [%{identifier: "GH-404", state: "unknown"}] = issue.blocked_by
   end
 
   test "adapter leaves non-GitHub issue values untouched" do
