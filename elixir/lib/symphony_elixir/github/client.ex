@@ -451,8 +451,7 @@ defmodule SymphonyElixir.GitHub.Client do
            request_fun.(:get, repo_url(repo), headers: headers),
          {:ok, branch} <- extract_default_branch(body) do
       {:ok, branch}
-    end
-  else
+    else
       {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
       {:error, reason} -> {:error, {:github_api_request, reason}}
     end
