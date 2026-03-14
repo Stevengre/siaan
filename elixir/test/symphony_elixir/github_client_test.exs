@@ -316,7 +316,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, :post, "https://api.github.com/graphql"}
   end
 
-  test "build_repo_context derives a REST base URL from the configured GitHub endpoint" do
+  test "build_repo_context derives the correct REST base URL from the configured GitHub endpoint" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
@@ -326,7 +326,18 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     )
 
     assert {:ok, context} = Client.build_repo_context("acme", "repo", "gh-token")
-    assert context.rest_endpoint == "https://ghe.example.com/api"
+    assert context.rest_endpoint == "https://ghe.example.com/api/v3"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/v3/graphql"
+    )
+
+    assert {:ok, v3_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert v3_context.rest_endpoint == "https://ghe.example.com/api/v3"
   end
 
   test "build_repo_context uses env tokens and covers REST endpoint fallbacks" do
@@ -365,6 +376,17 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, pathless_context} = Client.build_repo_context("acme", "repo", "gh-token")
     assert pathless_context.rest_endpoint == "https://ghe.example.com"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/custom/path"
+    )
+
+    assert {:ok, passthrough_context} = Client.build_repo_context("acme", "repo", "gh-token")
+    assert passthrough_context.rest_endpoint == "https://ghe.example.com/custom/path"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",
@@ -412,7 +434,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}]} =
              Client.fetch_candidate_issues_for_test(request_fun)
 
-    assert_receive {:request, :get, "https://ghe.example.com/api/repos/acme/repo/issues", _opts}
+    assert_receive {:request, :get, "https://ghe.example.com/api/v3/repos/acme/repo/issues", _opts}
   end
 
   test "get_default_branch_for_test uses the repository REST endpoint" do
