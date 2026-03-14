@@ -22,9 +22,21 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Workspace
 
       import SymphonyElixir.TestSupport,
-        only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
+        only: [
+          tmp_dir!: 1,
+          write_workflow_file!: 1,
+          write_workflow_file!: 2,
+          restore_env: 2,
+          stop_default_http_server: 0
+        ]
 
       setup do
+        github_token = System.get_env("GITHUB_TOKEN")
+        linear_api_key = System.get_env("LINEAR_API_KEY")
+
+        System.delete_env("GITHUB_TOKEN")
+        System.delete_env("LINEAR_API_KEY")
+
         workflow_root =
           Path.join(
             System.tmp_dir!(),
@@ -39,6 +51,8 @@ defmodule SymphonyElixir.TestSupport do
         stop_default_http_server()
 
         on_exit(fn ->
+          restore_env("GITHUB_TOKEN", github_token)
+          restore_env("LINEAR_API_KEY", linear_api_key)
           Application.delete_env(:symphony_elixir, :workflow_file_path)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
@@ -49,6 +63,13 @@ defmodule SymphonyElixir.TestSupport do
         :ok
       end
     end
+  end
+
+  def tmp_dir!(prefix) do
+    path = Path.join(System.tmp_dir!(), "#{prefix}-#{System.unique_integer([:positive])}")
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    path
   end
 
   def write_workflow_file!(path, overrides \\ []) do
