@@ -132,7 +132,6 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   @reply_prefix "[siaan]"
-  @bot_logins MapSet.new(["github-actions[bot]", "chatgpt-codex-connector[bot]", "codex-gc-app[bot]"])
 
   @type auto_merge_result :: {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
 
@@ -679,7 +678,8 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_tracker_config do
-    tracker = Config.settings!().tracker
+    settings = Config.settings!()
+    tracker = settings.tracker
 
     with {:ok, _api_key} <- ensure_present_string(tracker.api_key, :missing_github_api_token),
          {:ok, normalized_owner} <- ensure_present_string(tracker.repo_owner, :missing_github_repo_owner),
@@ -690,6 +690,7 @@ defmodule SymphonyElixir.GitHub.Client do
          repo_name: normalized_repo,
          ready_label: normalize_label(tracker.ready_label || "status:ready"),
          active_states: normalize_state_names(tracker.active_states || []),
+         allowlist: normalize_state_names(settings.allowlist),
          api_key: tracker.api_key,
          rest_endpoint: github_rest_endpoint()
        }}
@@ -948,17 +949,19 @@ defmodule SymphonyElixir.GitHub.Client do
   defp ci_check_pending?(_check), do: false
 
   defp check_unanswered_comments(tracker, pr_number, headers, request_fun) do
+    allowlist_set = tracker.allowlist |> MapSet.new(&String.downcase/1)
+
     with {:ok, issue_comments} <- fetch_pr_issue_comments(tracker, pr_number, headers, request_fun),
          {:ok, review_comments} <- fetch_pr_review_comments(tracker, pr_number, headers, request_fun) do
       blockers = []
 
       blockers =
-        if has_unanswered_issue_comments?(issue_comments),
+        if has_unanswered_issue_comments?(issue_comments, allowlist_set),
           do: ["unanswered PR comments" | blockers],
           else: blockers
 
       blockers =
-        if has_unanswered_review_comments?(review_comments),
+        if has_unanswered_review_comments?(review_comments, allowlist_set),
           do: ["unanswered review comments" | blockers],
           else: blockers
 
@@ -986,7 +989,7 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp has_unanswered_issue_comments?(comments) do
+  defp has_unanswered_issue_comments?(comments, allowlist_set) do
     # Find the latest [siaan] reply timestamp
     latest_reply_at = latest_siaan_reply_time(comments)
 
@@ -994,16 +997,16 @@ defmodule SymphonyElixir.GitHub.Client do
       login = get_in(comment, ["user", "login"]) || ""
       body = (comment["body"] || "") |> String.trim()
 
-      # Skip bot comments, skip [siaan] replies, skip @codex review requests
-      not bot_login?(login) and
+      # Only actionable allowlist comments block auto-merge.
+      MapSet.member?(allowlist_set, String.downcase(login)) and
         not String.starts_with?(body, @reply_prefix) and
-        not String.contains?(body, "@codex review") and
+        not codex_review_request?(body) and
         not String.starts_with?(body, "## Codex Review") and
         comment_after_latest_reply?(comment, latest_reply_at)
     end)
   end
 
-  defp has_unanswered_review_comments?(comments) do
+  defp has_unanswered_review_comments?(comments, allowlist_set) do
     # Group by thread (in_reply_to_id), check if each thread has a [siaan] reply
     threads =
       comments
@@ -1016,7 +1019,11 @@ defmodule SymphonyElixir.GitHub.Client do
         Enum.any?(thread_comments, fn c ->
           login = get_in(c, ["user", "login"]) || ""
           body = (c["body"] || "") |> String.trim()
-          not bot_login?(login) and not String.starts_with?(body, @reply_prefix)
+
+          MapSet.member?(allowlist_set, String.downcase(login)) and
+            not String.starts_with?(body, @reply_prefix) and
+            not codex_review_request?(body) and
+            not String.starts_with?(body, "## Codex Review")
         end)
 
       has_siaan_reply =
@@ -1051,8 +1058,8 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp bot_login?(login) do
-    is_binary(login) and (MapSet.member?(@bot_logins, login) or String.ends_with?(login, "[bot]"))
+  defp codex_review_request?(body) when is_binary(body) do
+    Regex.match?(~r/@codex\b.*\breview\b/i, body)
   end
 
   defp auto_merge_pr(pr_number, request_fun) do

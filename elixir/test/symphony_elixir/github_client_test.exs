@@ -1466,6 +1466,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              body: [
                %{"user" => %{"login" => "github-actions[bot]"}, "body" => "automated", "created_at" => "2026-03-01T00:00:00Z"},
                %{"user" => %{"login" => "reviewer"}, "body" => "@codex review", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "@codex please review this PR", "created_at" => "2026-03-01T00:00:00Z"},
                %{"user" => %{"login" => "reviewer"}, "body" => "## Codex Review", "created_at" => "2026-03-01T00:00:00Z"},
                %{"user" => %{"login" => "reviewer"}, "body" => "please fix", "created_at" => "2026-03-01T00:00:00Z"},
                %{"user" => %{"login" => "siaan-bot"}, "body" => "[siaan] fixed", "created_at" => "2026-03-02T00:00:00Z"}
@@ -1933,6 +1934,38 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :needs_agent, ["unanswered PR comments"]} =
              Client.check_auto_merge_readiness_for_test("7", missing_timestamp_after_reply_request)
 
+    non_allowlist_comments_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 85, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/85") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-85"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-85/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/85/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/85/comments") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "outsider"}, "body" => "random note"}]}}
+
+        String.ends_with?(url, "/pulls/85/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 100, "user" => %{"login" => "outsider"}, "body" => "nit"}]}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 85} =
+             Client.check_auto_merge_readiness_for_test("7", non_allowlist_comments_request)
+
     bad_issue_id_request = fn _method, _url, _opts ->
       flunk("request function should not be called for invalid issue ids")
     end
@@ -2089,7 +2122,8 @@ defmodule SymphonyElixir.GitHub.ClientTest do
           tracker_kind: "github",
           tracker_repo_owner: "acme",
           tracker_repo_name: "repo",
-          tracker_api_token: "gh-token"
+          tracker_api_token: "gh-token",
+          allowlist: ["reviewer", "maintainer"]
         ],
         overrides
       )
