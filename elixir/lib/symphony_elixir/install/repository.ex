@@ -25,8 +25,8 @@ defmodule SymphonyElixir.Install.Repository do
   @spec github_rest_endpoint(Path.t()) :: {:ok, String.t()} | {:error, term()}
   def github_rest_endpoint(repo_root) do
     with {:ok, remote_url} <- origin_remote_url(repo_root),
-         {:ok, %{host: host, port: port}} <- parse_remote_target(remote_url) do
-      {:ok, rest_endpoint_for_host(host, port)}
+         {:ok, remote_target} <- parse_remote_target(remote_url) do
+      {:ok, rest_endpoint_for_target(remote_target)}
     end
   end
 
@@ -88,7 +88,14 @@ defmodule SymphonyElixir.Install.Repository do
     case parse_scp_style_remote(url) do
       {:ok, %{host: host, repo: repo}} ->
         with {:ok, %{owner: owner, repo: repo_name}} <- parse_repo_string(repo) do
-          {:ok, %{owner: owner, repo: repo_name, host: host, port: nil}}
+          {:ok,
+           %{
+             owner: owner,
+             repo: repo_name,
+             host: host,
+             endpoint_scheme: "https",
+             endpoint_port: nil
+           }}
         end
 
       :error ->
@@ -102,16 +109,33 @@ defmodule SymphonyElixir.Install.Repository do
            path
            |> String.trim_leading("/")
            |> parse_repo_string() do
-      {:ok, %{owner: owner, repo: repo, host: host, port: port}}
+      {endpoint_scheme, endpoint_port} =
+        case scheme do
+          "ssh" -> {"https", nil}
+          other -> {other, port}
+        end
+
+      {:ok,
+       %{
+         owner: owner,
+         repo: repo,
+         host: host,
+         endpoint_scheme: endpoint_scheme,
+         endpoint_port: endpoint_port
+       }}
     end
   end
 
   defp parse_uri_remote_target(_uri), do: {:error, :unsupported_remote}
 
   defp parse_scp_style_remote(url) do
-    case Regex.run(~r/\A[^@]+@([^:]+):(.+)\z/, url, capture: :all_but_first) do
-      [host, repo] -> {:ok, %{host: host, repo: repo}}
-      _ -> :error
+    if String.contains?(url, "://") do
+      :error
+    else
+      case Regex.run(~r/\A[^@]+@([^:]+):(.+)\z/, url, capture: :all_but_first) do
+        [host, repo] -> {:ok, %{host: host, repo: repo}}
+        _ -> :error
+      end
     end
   end
 
@@ -131,17 +155,22 @@ defmodule SymphonyElixir.Install.Repository do
 
   defp normalize_pair(_owner, _repo), do: :error
 
-  defp rest_endpoint_for_host(host, port) when is_binary(host) do
+  defp rest_endpoint_for_target(%{
+         host: host,
+         endpoint_scheme: endpoint_scheme,
+         endpoint_port: endpoint_port
+       })
+       when is_binary(host) and is_binary(endpoint_scheme) do
     if String.downcase(host) == "github.com" do
       "https://api.github.com"
     else
       port_segment =
-        case port do
+        case endpoint_port do
           port when is_integer(port) and port not in [80, 443] -> ":#{port}"
           _ -> ""
         end
 
-      "https://#{host}#{port_segment}/api/v3"
+      "#{endpoint_scheme}://#{host}#{port_segment}/api/v3"
     end
   end
 end

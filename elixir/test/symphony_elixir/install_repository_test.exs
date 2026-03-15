@@ -48,6 +48,17 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
+  test "github_rest_endpoint drops ssh transport ports from uri-form remotes" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-ssh-uri",
+        "ssh://git@ghe.example.com:2222/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
   test "github_rest_endpoint maps public GitHub remotes to api.github.com" do
     repo_root = git_repo_with_origin!("install-repository-public-github", "git@github.com:acme/repo.git")
 
@@ -66,6 +77,17 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, "https://ghe.example.com:8443/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
+  test "github_rest_endpoint preserves explicit http remotes" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-http",
+        "http://ghe.example.com:8080/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "http://ghe.example.com:8080/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
   test "github_repo prefers origin remote over ambient GITHUB_REPOSITORY" do
     repo_root = git_repo_with_origin!("install-repository-prefer-origin", "https://ghe.example.com/acme/repo.git")
     System.put_env("GITHUB_REPOSITORY", "Stevengre/siaan")
@@ -79,17 +101,21 @@ defmodule SymphonyElixir.Install.RepositoryTest do
 
   test "github_repo falls back through env and reports remote lookup failures" do
     repo_root = git_repo_with_origin!("install-repository-invalid-remote", "file:///tmp/not-github")
+    repo_root_without_scheme = git_repo_with_origin!("install-repository-invalid-scp", "not-a-github-remote")
 
     System.put_env("GITHUB_REPOSITORY", "env-owner/env-repo")
 
     try do
       assert {:ok, %{owner: "env-owner", repo: "env-repo"}} = Repository.github_repo(repo_root)
+      assert {:ok, %{owner: "env-owner", repo: "env-repo"}} = Repository.github_repo(repo_root_without_scheme)
     after
       System.delete_env("GITHUB_REPOSITORY")
     end
 
     assert {:error, :unsupported_remote} = Repository.github_rest_endpoint(repo_root)
+    assert {:error, :unsupported_remote} = Repository.github_rest_endpoint(repo_root_without_scheme)
     assert {:error, :missing_github_repository} = Repository.github_repo(repo_root)
+    assert {:error, :missing_github_repository} = Repository.github_repo(repo_root_without_scheme)
 
     repo_without_remote = make_tmp_dir!("install-repository-missing-origin")
     {_output, 0} = System.cmd("git", ["init"], cd: repo_without_remote, stderr_to_stdout: true)
