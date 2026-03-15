@@ -109,8 +109,7 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `status:ready` -> queued; immediately transition to `status:in-progress` before active work.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `status:review`).
 - `status:in-progress` -> implementation actively underway.
-- `status:review` -> PR is attached and validated; waiting on human review/approval via GitHub.
-- `closed` -> terminal state; no further action required.
+- Any other state (`status:review`, `closed`, etc.) -> stop; do not modify the issue.
 
 ## Step 0: Determine current ticket state and route
 
@@ -121,8 +120,7 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
    - `status:ready` -> immediately move to `status:in-progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `status:in-progress` -> continue execution flow from current scratchpad comment.
-   - `status:review` -> wait and poll for decision/review updates.
-   - `closed` -> do nothing and shut down.
+   - Any other state -> stop; do not modify the issue.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
