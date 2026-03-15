@@ -894,9 +894,10 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp approval_blockers(tracker, pr_number, headers, request_fun) do
-    case check_pr_approved(tracker, pr_number, headers, request_fun) do
-      {:ok, true} -> []
-      {:ok, false} -> ["no PR approval"]
+    case check_pr_approval_state(tracker, pr_number, headers, request_fun) do
+      {:ok, :approved} -> []
+      {:ok, :changes_requested} -> ["changes requested"]
+      {:ok, :no_approval} -> ["no PR approval"]
       {:error, _} -> ["failed to check approval"]
     end
   end
@@ -944,7 +945,7 @@ defmodule SymphonyElixir.GitHub.Client do
     case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
       {:ok, %{status: 200, body: %{"check_runs" => check_runs}}} when is_list(check_runs) ->
         cond do
-          check_runs == [] -> {:ok, :green}
+          check_runs == [] -> {:ok, :pending}
           Enum.any?(check_runs, &ci_check_failed?/1) -> {:ok, :failed}
           Enum.any?(check_runs, &ci_check_pending?/1) -> {:ok, :pending}
           true -> {:ok, :green}
@@ -1144,6 +1145,12 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp check_pr_approved(tracker, pr_number, headers, request_fun) do
+    with {:ok, approval_state} <- check_pr_approval_state(tracker, pr_number, headers, request_fun) do
+      {:ok, approval_state == :approved}
+    end
+  end
+
+  defp check_pr_approval_state(tracker, pr_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls/#{pr_number}/reviews"
 
     with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
@@ -1153,13 +1160,16 @@ defmodule SymphonyElixir.GitHub.Client do
         |> Enum.filter(&is_map/1)
         |> Enum.group_by(fn review -> get_in(review, ["user", "login"]) end)
         |> Enum.map(fn {_login, reviews} -> List.last(reviews) end)
+        |> Enum.filter(&human_approval_review?/1)
 
-      has_approval =
-        Enum.any?(latest_by_user, fn review ->
-          review["state"] == "APPROVED" and human_approval_review?(review)
-        end)
+      approval_state =
+        cond do
+          Enum.any?(latest_by_user, &(&1["state"] == "CHANGES_REQUESTED")) -> :changes_requested
+          Enum.any?(latest_by_user, &(&1["state"] == "APPROVED")) -> :approved
+          true -> :no_approval
+        end
 
-      {:ok, has_approval}
+      {:ok, approval_state}
     end
   end
 

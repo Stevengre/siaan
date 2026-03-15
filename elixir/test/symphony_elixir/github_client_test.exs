@@ -1616,6 +1616,78 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, :needs_agent, ["CI checks failed"]} = Client.check_auto_merge_readiness_for_test("7", ci_failed_request)
 
+    ci_not_yet_reported_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 98, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/98") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-98"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-98/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/98/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/98/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/98/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["CI checks pending"]} =
+             Client.check_auto_merge_readiness_for_test("7", ci_not_yet_reported_request)
+
+    changes_requested_review_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 99, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/99") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-99"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-99/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        String.ends_with?(url, "/pulls/99/reviews") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [%{"user" => %{"login" => "maintainer"}, "state" => "CHANGES_REQUESTED"}]
+           }}
+
+        String.ends_with?(url, "/issues/99/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/99/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["changes requested"]} =
+             Client.check_auto_merge_readiness_for_test("7", changes_requested_review_request)
+
     ci_green_completed_checks_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
@@ -1773,7 +1845,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-65/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/65/reviews") ->
           {:ok, %{status: 500, body: %{}}}
@@ -1805,7 +1877,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-66/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/66/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1834,7 +1906,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-67/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/67/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1863,7 +1935,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-68/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/68/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1895,7 +1967,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-84/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/84/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1927,7 +1999,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-82/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/82/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1959,7 +2031,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-83/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/83/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -1998,7 +2070,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-95/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/95/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2037,7 +2109,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-85/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/85/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2079,7 +2151,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-86/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/86/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2118,7 +2190,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-91/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/91/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2150,7 +2222,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-92/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/92/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2182,7 +2254,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-97/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/97/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2214,7 +2286,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-93/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/93/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2246,7 +2318,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-87/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/87/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2286,7 +2358,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-96/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/96/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2325,7 +2397,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-94/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/94/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
@@ -2367,7 +2439,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
            }}
 
         String.ends_with?(url, "/commits/sha-88/check-runs") ->
-          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
         String.ends_with?(url, "/pulls/88/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
