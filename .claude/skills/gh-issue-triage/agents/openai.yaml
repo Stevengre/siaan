@@ -1,0 +1,6 @@
+interface:
+  display_name: "GitHub Issue Triage"
+  short_description: "Triage a GitHub issue into a reviewable state"
+  icon_small: "./assets/github-small.svg"
+  icon_large: "./assets/github.png"
+  default_prompt: "Use $gh-issue-triage to classify this GitHub issue, draft acceptance criteria, and prepare it for human review."
