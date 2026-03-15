@@ -22,9 +22,21 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Workspace
 
       import SymphonyElixir.TestSupport,
-        only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
+        only: [
+          tmp_dir!: 1,
+          write_workflow_file!: 1,
+          write_workflow_file!: 2,
+          restore_env: 2,
+          stop_default_http_server: 0
+        ]
 
       setup do
+        github_token = System.get_env("GITHUB_TOKEN")
+        linear_api_key = System.get_env("LINEAR_API_KEY")
+
+        System.delete_env("GITHUB_TOKEN")
+        System.delete_env("LINEAR_API_KEY")
+
         workflow_root =
           Path.join(
             System.tmp_dir!(),
@@ -35,10 +47,18 @@ defmodule SymphonyElixir.TestSupport do
         workflow_file = Path.join(workflow_root, "WORKFLOW.md")
         write_workflow_file!(workflow_file)
         Workflow.set_workflow_file_path(workflow_file)
-        if Process.whereis(SymphonyElixir.WorkflowStore), do: SymphonyElixir.WorkflowStore.force_reload()
+        SymphonyElixir.TestSupport.ensure_test_application_started!()
+        SymphonyElixir.TestSupport.ensure_workflow_store_running!()
+
+        if Process.whereis(SymphonyElixir.WorkflowStore) do
+          SymphonyElixir.WorkflowStore.force_reload()
+        end
+
         stop_default_http_server()
 
         on_exit(fn ->
+          restore_env("GITHUB_TOKEN", github_token)
+          restore_env("LINEAR_API_KEY", linear_api_key)
           Application.delete_env(:symphony_elixir, :workflow_file_path)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
@@ -49,6 +69,13 @@ defmodule SymphonyElixir.TestSupport do
         :ok
       end
     end
+  end
+
+  def tmp_dir!(prefix) do
+    path = Path.join(System.tmp_dir!(), "#{prefix}-#{System.unique_integer([:positive])}")
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    path
   end
 
   def write_workflow_file!(path, overrides \\ []) do
@@ -69,8 +96,43 @@ defmodule SymphonyElixir.TestSupport do
   def restore_env(key, nil), do: System.delete_env(key)
   def restore_env(key, value), do: System.put_env(key, value)
 
+  def ensure_test_application_started! do
+    if Process.whereis(SymphonyElixir.Supervisor) do
+      :ok
+    else
+      case Application.ensure_all_started(:symphony_elixir) do
+        {:ok, _apps} -> :ok
+        {:error, reason} -> raise "failed to start :symphony_elixir for tests: #{inspect(reason)}"
+      end
+    end
+  end
+
+  def ensure_workflow_store_running! do
+    if Process.whereis(SymphonyElixir.WorkflowStore) do
+      :ok
+    else
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+    end
+  end
+
   def stop_default_http_server do
-    case Enum.find(Supervisor.which_children(SymphonyElixir.Supervisor), fn
+    children =
+      case Process.whereis(SymphonyElixir.Supervisor) do
+        pid when is_pid(pid) ->
+          try do
+            Supervisor.which_children(SymphonyElixir.Supervisor)
+          catch
+            :exit, _reason -> []
+          end
+
+        _ ->
+          []
+      end
+
+    case Enum.find(children, fn
            {SymphonyElixir.HttpServer, _pid, _type, _modules} -> true
            _child -> false
          end) do

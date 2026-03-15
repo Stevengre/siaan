@@ -1,0 +1,150 @@
+name: Restrict Issues and PRs
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-author:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load maintainer allowlist
+        id: allowlist
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Parse siaan security config
+        id: config
+        shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          ruby <<'RUBY'
+          require "yaml"
+
+          normalize_login = lambda do |value|
+            value.to_s.strip.sub(/\A@+/, "").downcase
+          end
+
+          path = ".github/siaan-security.yml"
+          config_parse_error = false
+          raw =
+            if File.exist?(path)
+              begin
+                YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
+              rescue Psych::Exception
+                config_parse_error = true
+                {}
+              end
+            else
+              {}
+            end
+
+          maintainers =
+            if raw.is_a?(Hash)
+              Array(raw["maintainers"])
+              .map { |value| normalize_login.call(value) }
+              .reject(&:empty?)
+            else
+              []
+            end
+
+          fallback_only = maintainers.empty?
+
+          issue_restriction =
+            if raw.is_a?(Hash) && raw["setup"].is_a?(Hash)
+              raw["setup"].fetch("issue_restriction", "collaborators_only").to_s.strip.downcase
+            else
+              "collaborators_only"
+            end
+
+          issue_restriction = "collaborators_only" if issue_restriction.empty?
+
+          maintainers = (maintainers + [normalize_login.call(ENV.fetch("REPO_OWNER"))]).uniq
+
+          File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |file|
+            file.puts("maintainers=#{maintainers.join(",")}")
+            file.puts("issue_restriction=#{issue_restriction}")
+            file.puts("config_parse_error=#{config_parse_error}")
+            file.puts("fallback_only=#{fallback_only}")
+          end
+          RUBY
+
+      - name: Close if author is outside the maintainer allowlist
+        uses: actions/github-script@v7
+        env:
+          MAINTAINERS: ${{ steps.config.outputs.maintainers }}
+          ISSUE_RESTRICTION: ${{ steps.config.outputs.issue_restriction }}
+          CONFIG_PARSE_ERROR: ${{ steps.config.outputs.config_parse_error }}
+          FALLBACK_ONLY: ${{ steps.config.outputs.fallback_only }}
+        with:
+          script: |
+            const policy = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/restrict_issues_prs_policy.js`);
+            const allowlist = policy.parseAllowlist(process.env.MAINTAINERS || '');
+            const issueRestriction = process.env.ISSUE_RESTRICTION || 'collaborators_only';
+            const isIssue = !!context.payload.issue;
+            const record = isIssue ? context.payload.issue : context.payload.pull_request;
+            const authorLogin = record.user.login;
+            const author = policy.normalizeLogin(authorLogin);
+            const number = record.number;
+            const type = isIssue ? 'issue' : 'pull request';
+
+            if (process.env.CONFIG_PARSE_ERROR === 'true') {
+              console.log(
+                'Could not parse .github/siaan-security.yml; falling back to the repo owner allowlist only.'
+              );
+            }
+
+            if (!policy.shouldEnforceRestriction(issueRestriction)) {
+              console.log(
+                `Issue/PR restriction is ${policy.normalizeIssueRestriction(issueRestriction) || 'unset'}; leaving ${type} #${number} open.`
+              );
+              return;
+            }
+
+            if (policy.shouldSkipFallbackOnlyEnforcement(allowlist, process.env.FALLBACK_ONLY)) {
+              console.log(
+                `Maintainer allowlist only contains the repo-owner fallback; leaving ${type} #${number} open until .github/siaan-security.yml defines explicit maintainers.`
+              );
+              return;
+            }
+
+            if (allowlist.includes(author)) {
+              console.log(`Author ${authorLogin} is in the maintainer allowlist. Allowing.`);
+              return;
+            }
+
+            // Add a comment explaining why it's closed
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body: [
+                `Hi @${authorLogin}, thank you for your interest!`,
+                '',
+                `This repository only accepts issues and pull requests from the configured maintainer allowlist: ${allowlist.map((login) => `@${login}`).join(', ')}.`,
+                'The allowlist is stored in `.github/siaan-security.yml` and maintained by `mix siaan.install`.',
+                `Please use [GitHub Discussions](https://github.com/${context.repo.owner}/${context.repo.repo}/discussions) for questions, suggestions, and community conversations.`,
+                '',
+                `Closing this ${type} automatically.`
+              ].join('\n')
+            });
+
+            // Close the issue or PR
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              state: 'closed'
+            });
+
+            console.log(`Closed ${type} #${number} by ${author}`);

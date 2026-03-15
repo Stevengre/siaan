@@ -16,40 +16,94 @@ Environment:
 EOF
 }
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elixir_dir="$script_dir/elixir"
+
 resolve_absolute_path() {
   local path="$1"
-  local path_dir
-  local path_file
+  local dir
+  local base
+  local absolute_dir
 
-  if [[ "$path" != /* ]]; then
-    path="$PWD/$path"
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+
+  if absolute_dir="$(cd "$dir" 2>/dev/null && /bin/pwd -P)"; then
+    printf '%s/%s\n' "$absolute_dir" "$base"
+  else
+    printf '%s\n' "$path"
   fi
-
-  path_dir="$(cd "$(dirname "$path")" && pwd)"
-  path_file="$(basename "$path")"
-
-  printf '%s/%s\n' "$path_dir" "$path_file"
 }
 
 extract_tracker_kind() {
-  local workflow_file="$1"
+  local workflow_path="$1"
 
   awk '
-    /^[[:space:]]*#/ { next }
-    /^tracker:[[:space:]]*$/ { in_tracker = 1; next }
-    in_tracker && /^[^[:space:]]/ { in_tracker = 0 }
-    in_tracker && /^[[:space:]]+kind:[[:space:]]*/ {
-      line = $0
-      sub(/^[[:space:]]+kind:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+#.*/, "", line)
-      print line
-      exit
+    function normalize_kind_value(value) {
+      sub(/^[[:space:]]*kind:[[:space:]]*/, "", value)
+      sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
+      gsub(/^["'"'"']/, "", value)
+      gsub(/["'"'"']$/, "", value)
+      return tolower(value)
     }
-  ' "$workflow_file"
-}
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-elixir_dir="$script_dir/elixir"
+    function print_inline_tracker_kind(line, candidate) {
+      candidate = line
+
+      if (!match(candidate, /kind:[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
+        return 0
+      }
+
+      candidate = substr(candidate, RSTART, RLENGTH)
+      print normalize_kind_value(candidate)
+      return 1
+    }
+
+    BEGIN {
+      in_tracker = 0
+      tracker_indent = -1
+    }
+
+    {
+      if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
+        next
+      }
+
+      match($0, /[^[:space:]]/)
+      indent = RSTART ? RSTART - 1 : 0
+    }
+
+    /^[[:space:]]*tracker:[[:space:]]*{/ {
+      if (print_inline_tracker_kind($0)) {
+        exit
+      }
+
+      next
+    }
+
+    /^[[:space:]]*tracker:[[:space:]]*$/ {
+      in_tracker = 1
+      tracker_indent = indent
+      next
+    }
+
+    in_tracker {
+      if (indent <= tracker_indent) {
+        exit
+      }
+
+      if ($0 ~ /^[[:space:]]*kind:[[:space:]]*/) {
+        line = $0
+        sub(/^[[:space:]]*kind:[[:space:]]*/, "", line)
+        sub(/[[:space:]]*(#.*)?$/, "", line)
+        gsub(/^["'"'"']/, "", line)
+        gsub(/["'"'"']$/, "", line)
+        print tolower(line)
+        exit
+      }
+    }
+  ' "$workflow_path"
+}
 
 bootstrap="false"
 port=""
@@ -91,6 +145,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+workflow="$(resolve_absolute_path "$workflow")"
+
 if ! command -v mise >/dev/null 2>&1; then
   echo "error: 'mise' is required. Install from https://mise.jdx.dev/getting-started.html" >&2
   exit 1
@@ -101,15 +157,7 @@ if [[ ! -f "$workflow" ]]; then
   exit 1
 fi
 
-workflow="$(resolve_absolute_path "$workflow")"
-
-tracker_kind="$(
-  extract_tracker_kind "$workflow" \
-    | tr -d '"' \
-    | tr -d "'" \
-    | xargs
-)"
-tracker_kind="$(printf '%s' "$tracker_kind" | tr '[:upper:]' '[:lower:]')"
+tracker_kind="$(extract_tracker_kind "$workflow")"
 
 if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "error: GITHUB_TOKEN is not set." >&2

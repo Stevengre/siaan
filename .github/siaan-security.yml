@@ -1,0 +1,11 @@
+# Maintainer usernames allowed to administer and merge changes for this repository.
+maintainers:
+  - stevengre
+
+setup:
+  # Ensure the issue lifecycle label taxonomy exists and stays current.
+  labels: true
+  # Repository issue/PR creation policy enforced by install-time guardrails.
+  issue_restriction: collaborators_only
+  # Keep default-branch protection aligned with the maintainer allowlist.
+  branch_protection: true

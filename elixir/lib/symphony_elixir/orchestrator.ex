@@ -522,9 +522,25 @@ defmodule SymphonyElixir.Orchestrator do
   defp last_activity_timestamp(_running_entry), do: nil
 
   defp terminate_task(pid) when is_pid(pid) do
-    case Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid) do
+    result =
+      case Process.whereis(SymphonyElixir.TaskSupervisor) do
+        task_supervisor when is_pid(task_supervisor) ->
+          try do
+            Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid)
+          catch
+            :exit, _reason -> {:error, :supervisor_unavailable}
+          end
+
+        _ ->
+          {:error, :supervisor_unavailable}
+      end
+
+    case result do
       :ok ->
         :ok
+
+      {:error, :supervisor_unavailable} ->
+        Process.exit(pid, :shutdown)
 
       {:error, :not_found} ->
         Process.exit(pid, :shutdown)

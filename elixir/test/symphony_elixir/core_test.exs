@@ -232,10 +232,11 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, :missing_github_repo_name} = Config.validate!()
   end
 
-  test "current WORKFLOW.md file is valid and complete" do
+  test "current GitHub workflow example is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
-    Workflow.clear_workflow_file_path()
+
+    Workflow.set_workflow_file_path(Path.expand("WORKFLOW.github.example.md", File.cwd!()))
 
     assert {:ok, %{config: config, prompt: prompt}} = Workflow.load()
     assert is_map(config)
@@ -250,10 +251,8 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/Stevengre/siaan ."
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
+    assert Map.get(hooks, "after_create") =~ "git clone --depth 1"
+    assert Map.get(hooks, "after_create") =~ "https://github.com/your-org-or-user/your-repo.git"
 
     assert String.trim(prompt) != ""
     assert is_binary(Config.workflow_prompt())
@@ -420,6 +419,82 @@ defmodule SymphonyElixir.CoreTest do
         description: "Not started",
         labels: []
       }
+
+      updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
+
+      refute Map.has_key?(updated_state.running, issue_id)
+      refute MapSet.member?(updated_state.claimed, issue_id)
+      refute Process.alive?(agent_pid)
+      assert File.exists?(workspace)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "non-active issue state tolerates a missing task supervisor when stopping a running agent" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-nonactive-reconcile-missing-task-supervisor-#{System.unique_integer([:positive])}"
+      )
+
+    issue_id = "issue-1"
+    issue_identifier = "MT-555"
+    workspace = Path.join(test_root, issue_identifier)
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: test_root,
+        tracker_active_states: ["Todo", "In Progress", "In Review"],
+        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+      )
+
+      File.mkdir_p!(test_root)
+      File.mkdir_p!(workspace)
+
+      agent_pid =
+        spawn(fn ->
+          receive do
+            :stop -> :ok
+          end
+        end)
+
+      state = %Orchestrator.State{
+        running: %{
+          issue_id => %{
+            pid: agent_pid,
+            ref: nil,
+            identifier: issue_identifier,
+            issue: %Issue{id: issue_id, state: "Todo", identifier: issue_identifier},
+            started_at: DateTime.utc_now()
+          }
+        },
+        claimed: MapSet.new([issue_id]),
+        codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        retry_attempts: %{}
+      }
+
+      issue = %Issue{
+        id: issue_id,
+        identifier: issue_identifier,
+        state: "Backlog",
+        title: "Queued",
+        description: "Not started",
+        labels: []
+      }
+
+      task_supervisor = Process.whereis(SymphonyElixir.TaskSupervisor)
+      assert is_pid(task_supervisor)
+      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.TaskSupervisor)
+
+      on_exit(fn ->
+        if is_nil(Process.whereis(SymphonyElixir.TaskSupervisor)) do
+          case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.TaskSupervisor) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+          end
+        end
+      end)
 
       updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
 
@@ -690,15 +765,18 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
+
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
+    after_ms = System.monotonic_time(:millisecond)
     state = :sys.get_state(pid)
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms, delay_type: :continuation} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_offset_between(due_at_ms, before_ms, after_ms, 1_000)
   end
 
   test "retry_delay_for_test keeps continuation retries on fixed delay" do
@@ -739,14 +817,17 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
+
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
+    after_ms = System.monotonic_time(:millisecond)
     state = :sys.get_state(pid)
 
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_offset_between(due_at_ms, before_ms, after_ms, 40_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -778,14 +859,17 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
+
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
+    after_ms = System.monotonic_time(:millisecond)
     state = :sys.get_state(pid)
 
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_due_offset_between(due_at_ms, before_ms, after_ms, 10_000)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -971,11 +1055,9 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-
-    assert remaining_ms >= min_remaining_ms
-    assert remaining_ms <= max_remaining_ms
+  defp assert_due_offset_between(due_at_ms, earliest_ms, latest_ms, delay_ms) do
+    assert due_at_ms >= earliest_ms + delay_ms
+    assert due_at_ms <= latest_ms + delay_ms
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
@@ -1204,13 +1286,13 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
-  test "in-repo WORKFLOW.md renders correctly" do
+  test "in-repo GitHub workflow example renders correctly" do
     workflow_path = Workflow.workflow_file_path()
-    Workflow.set_workflow_file_path(Path.expand("WORKFLOW.md", File.cwd!()))
+    Workflow.set_workflow_file_path(Path.expand("WORKFLOW.github.example.md", File.cwd!()))
 
     issue = %Issue{
       identifier: "MT-616",
-      title: "Use rich templates for WORKFLOW.md",
+      title: "Use rich templates for WORKFLOW.github.example.md",
       description: "Render with rich template variables",
       state: "In Progress",
       url: "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd",
@@ -1224,16 +1306,16 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "You are working on a GitHub issue `MT-616`"
     assert prompt =~ "Issue context:"
     assert prompt =~ "Identifier: MT-616"
-    assert prompt =~ "Title: Use rich templates for WORKFLOW.md"
+    assert prompt =~ "Title: Use rich templates for WORKFLOW.github.example.md"
     assert prompt =~ "Current status: In Progress"
+    assert prompt =~ "Labels:"
+    assert prompt =~ "templating"
+    assert prompt =~ "workflow"
     assert prompt =~ "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd"
-    assert prompt =~ "This is an unattended orchestration session."
-    assert prompt =~ "Only stop early for a true blocker"
-    assert prompt =~ "Do not include \"next steps for user\""
-    assert prompt =~ "open and follow `.codex/skills/land/SKILL.md`"
-    assert prompt =~ "Do not call `gh pr merge` directly"
-    assert prompt =~ "Continuation context:"
-    assert prompt =~ "retry attempt #2"
+    assert prompt =~ "Execution requirements:"
+    assert prompt =~ "If the issue has `status:ready`, retarget it to `status:in-progress` before coding."
+    assert prompt =~ "Open or update a PR that includes `closes #<issue-number>`."
+    assert prompt =~ "Keep scope aligned to the issue body; if blocked, report blocker details in the issue."
   end
 
   test "prompt builder adds continuation guidance for retries" do
