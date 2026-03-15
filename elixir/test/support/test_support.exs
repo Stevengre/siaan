@@ -48,6 +48,7 @@ defmodule SymphonyElixir.TestSupport do
         write_workflow_file!(workflow_file)
         Workflow.set_workflow_file_path(workflow_file)
         SymphonyElixir.TestSupport.ensure_test_application_started!()
+        SymphonyElixir.TestSupport.ensure_workflow_store_running!()
 
         if Process.whereis(SymphonyElixir.WorkflowStore) do
           SymphonyElixir.WorkflowStore.force_reload()
@@ -102,6 +103,17 @@ defmodule SymphonyElixir.TestSupport do
       case Application.ensure_all_started(:symphony_elixir) do
         {:ok, _apps} -> :ok
         {:error, reason} -> raise "failed to start :symphony_elixir for tests: #{inspect(reason)}"
+      end
+    end
+  end
+
+  def ensure_workflow_store_running! do
+    if Process.whereis(SymphonyElixir.WorkflowStore) do
+      :ok
+    else
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
       end
     end
   end
