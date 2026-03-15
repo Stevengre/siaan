@@ -108,7 +108,6 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `status:ready` -> queued; immediately transition to `status:in-progress` before active work.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `status:review`).
 - `status:in-progress` -> implementation actively underway.
-- Any other state (`status:review`, `closed`, etc.) -> stop; do not modify the issue.
 
 ## Step 0: Determine current ticket state and route
 
@@ -119,7 +118,6 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
    - `status:ready` -> immediately move to `status:in-progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `status:in-progress` -> continue execution flow from current scratchpad comment.
-   - Any other state -> stop; do not modify the issue.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
@@ -274,8 +272,7 @@ When dispatched for an issue that already has a PR and workpad (e.g., after orch
   link to the current issue, and `blockedBy` when the follow-up depends on the
   current issue.
 - Do not move to `status:review` unless the `Completion bar before status:review` is satisfied.
-- In `status:review`, do not make changes; wait and poll.
-- If state is terminal (`closed`), do nothing and shut down.
+- If the issue is in any state other than `status:ready` or `status:in-progress`, do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
 - If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.
 
