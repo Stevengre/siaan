@@ -703,6 +703,129 @@ defmodule SymphonyElixir.Install.RunnerTest do
              )
   end
 
+  defmodule CollaboratorLookupFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:error, {:github_api_status, 403}}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, _branch, payload) do
+      send(self(), {:collaborator_lookup_branch_payload, payload})
+      :ok
+    end
+  end
+
+  test "run/1 falls back to configured maintainers when collaborator lookup fails" do
+    repo_root = tmp_dir!("siaan-install-collaborator-lookup-fallback")
+    config_path = Path.join([repo_root, ".github", "siaan-security.yml"])
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+    File.mkdir_p!(Path.dirname(config_path))
+
+    File.write!(
+      config_path,
+      SecurityFile.render(%{
+        maintainers: ["alice"],
+        setup: %{
+          labels: true,
+          issue_restriction: "collaborators_only",
+          branch_protection: true
+        }
+      })
+    )
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: CollaboratorLookupFailureClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    assert result.maintainers == ["alice"]
+    assert_received {:collaborator_lookup_branch_payload, payload}
+    assert payload["restrictions"]["users"] == ["alice"]
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Current collaborators: unavailable ({:github_api_status, 403}); using configured maintainers as defaults"
+  end
+
+  test "run/1 allows prompted maintainers when collaborator lookup fails and no defaults exist" do
+    repo_root = tmp_dir!("siaan-install-collaborator-lookup-prompted")
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: false,
+               prompt: fn _label, _default_maintainers -> ["@Alice", "bob", "@alice"] end,
+               client: CollaboratorLookupFailureClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.maintainers == ["alice", "bob"]
+    assert_received {:collaborator_lookup_branch_payload, payload}
+    assert payload["restrictions"]["users"] == ["alice", "bob"]
+  end
+
+  defmodule EmptyMaintainerDefaultsClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, []}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+
+    def get_branch_protection(_repo, _branch) do
+      flunk("branch protection should not be applied without maintainers")
+    end
+  end
+
+  test "run/1 returns an explicit error when no maintainer defaults are available" do
+    repo_root = tmp_dir!("siaan-install-empty-maintainer-defaults")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:error, {:maintainer_selection_failed, :missing_maintainers}} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: EmptyMaintainerDefaultsClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Current collaborators: none reported"
+    assert log =~ "Maintainer allowlist — at least one maintainer is required before branch protection or config updates can be applied"
+  end
+
   defmodule MissingDefaultBranchClient do
     def build_repo_context(owner, repo, token) do
       {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}

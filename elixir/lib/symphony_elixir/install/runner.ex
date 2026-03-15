@@ -27,6 +27,11 @@ defmodule SymphonyElixir.Install.Runner do
           config_path: Path.t()
         }
 
+  @type collaborator_lookup :: %{
+          collaborators: [String.t()],
+          error: term() | nil
+        }
+
   @spec run(keyword()) :: {:ok, result()} | {:error, term()}
   def run(opts \\ []) do
     repo_root = Repository.repo_root(Keyword.get(opts, :cwd, File.cwd!()))
@@ -38,13 +43,13 @@ defmodule SymphonyElixir.Install.Runner do
 
     with {:ok, %{owner: owner, repo: repo_name}} <- Repository.github_repo(repo_root, opts),
          {:ok, repo_ctx} <- build_repo_context(client, repo_root, owner, repo_name, Keyword.get(opts, :api_key)),
-         {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)),
-         {:ok, collaborators} <- client.list_collaborators(repo_ctx) do
+         {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)) do
+      collaborator_lookup = lookup_collaborators(client, repo_ctx)
       branch = maybe_resolve_default_branch(security_config, client, repo_ctx, opts)
 
       info.("")
       info.("siaan install for #{owner}/#{repo_name}")
-      info.("Current collaborators: #{Enum.map_join(collaborators, ", ", &"@#{&1}")}")
+      info.(collaborator_status_line(collaborator_lookup, security_config))
       info.("")
 
       install_context = %{
@@ -53,7 +58,8 @@ defmodule SymphonyElixir.Install.Runner do
         repo_name: repo_name,
         branch: branch,
         security_config: security_config,
-        collaborators: collaborators,
+        collaborator_lookup: collaborator_lookup,
+        collaborators: collaborator_lookup.collaborators,
         prompt: prompt,
         client: client,
         repo_ctx: repo_ctx,
@@ -81,6 +87,37 @@ defmodule SymphonyElixir.Install.Runner do
       client.build_repo_context(owner, repo_name, api_key)
     end
   end
+
+  defp lookup_collaborators(client, repo_ctx) do
+    case client.list_collaborators(repo_ctx) do
+      {:ok, collaborators} ->
+        %{
+          collaborators: normalize_maintainers(collaborators),
+          error: nil
+        }
+
+      {:error, reason} ->
+        %{
+          collaborators: [],
+          error: reason
+        }
+    end
+  end
+
+  defp collaborator_status_line(%{error: nil, collaborators: collaborators}, _security_config) do
+    "Current collaborators: #{format_collaborators(collaborators)}"
+  end
+
+  defp collaborator_status_line(%{error: reason}, %{maintainers: []}) do
+    "Current collaborators: unavailable (#{inspect(reason)})"
+  end
+
+  defp collaborator_status_line(%{error: reason}, _security_config) do
+    "Current collaborators: unavailable (#{inspect(reason)}); using configured maintainers as defaults"
+  end
+
+  defp format_collaborators([]), do: "none reported"
+  defp format_collaborators(collaborators), do: Enum.map_join(collaborators, ", ", &"@#{&1}")
 
   defp ensure_labels(client, repo_ctx, dry_run, info) do
     case render_label_status(client, repo_ctx, dry_run) do
@@ -187,8 +224,13 @@ defmodule SymphonyElixir.Install.Runner do
   end
 
   defp select_maintainers(context, yes) do
-    %{security_config: security_config, collaborators: collaborators, prompt: prompt, info: info} =
-      context
+    %{
+      security_config: security_config,
+      collaborators: collaborators,
+      collaborator_lookup: collaborator_lookup,
+      prompt: prompt,
+      info: info
+    } = context
 
     info.("")
     info.("2. Maintainer allowlist")
@@ -207,10 +249,25 @@ defmodule SymphonyElixir.Install.Runner do
       end
       |> normalize_maintainers()
 
-    info.("   ✓ Selected maintainers — #{Enum.join(maintainers, ", ")}")
-    info.("")
+    case maintainers do
+      [] ->
+        info.("   ! #{missing_maintainers_message(collaborator_lookup)}")
+        info.("")
+        {:error, {:maintainer_selection_failed, :missing_maintainers}}
 
-    {:ok, maintainers}
+      _ ->
+        info.("   ✓ Selected maintainers — #{Enum.join(maintainers, ", ")}")
+        info.("")
+        {:ok, maintainers}
+    end
+  end
+
+  defp missing_maintainers_message(%{error: nil}) do
+    "Maintainer allowlist — at least one maintainer is required before branch protection or config updates can be applied"
+  end
+
+  defp missing_maintainers_message(%{error: reason}) do
+    "Maintainer allowlist — at least one maintainer is required before branch protection or config updates can be applied; collaborator lookup failed (#{inspect(reason)})"
   end
 
   defp maybe_ensure_labels(%{security_config: %{setup: %{labels: false}}, info: info}) do
