@@ -168,13 +168,13 @@ defmodule SymphonyElixir.Install.Repository do
     if String.downcase(host) == "github.com" do
       "https://api.github.com"
     else
-      port_segment =
-        case endpoint_port do
-          port when is_integer(port) and port not in [80, 443] -> ":#{port}"
-          _ -> ""
-        end
-
-      "#{endpoint_scheme}://#{host}#{port_segment}/api/v3"
+      "#{endpoint_scheme}://#{host}#{port_segment(endpoint_scheme, endpoint_port)}/api/v3"
     end
   end
+
+  defp port_segment("http", 80), do: ""
+  defp port_segment("https", 443), do: ""
+  defp port_segment(_endpoint_scheme, endpoint_port) when is_integer(endpoint_port), do: ":#{endpoint_port}"
+
+  defp port_segment(_endpoint_scheme, _endpoint_port), do: ""
 end

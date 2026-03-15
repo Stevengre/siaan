@@ -88,6 +88,28 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, "https://ghe.example.com:8443/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
+  test "github_rest_endpoint omits explicit default https ports" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-https-port-443",
+        "https://ghe.example.com:443/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
+  test "github_rest_endpoint preserves explicit https remotes on port 80" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-https-port-80",
+        "https://ghe.example.com:80/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com:80/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
   test "github_rest_endpoint preserves explicit http remotes" do
     repo_root =
       git_repo_with_origin!(
@@ -97,6 +119,28 @@ defmodule SymphonyElixir.Install.RepositoryTest do
 
     assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
     assert {:ok, "http://ghe.example.com:8080/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
+  test "github_rest_endpoint omits explicit default http ports" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-http-port-80",
+        "http://ghe.example.com:80/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "http://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
+  test "github_rest_endpoint preserves explicit http remotes on port 443" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-http-port-443",
+        "http://ghe.example.com:443/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "http://ghe.example.com:443/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
   test "github_repo trims trailing slashes from uri remotes before splitting owner and repo" do
