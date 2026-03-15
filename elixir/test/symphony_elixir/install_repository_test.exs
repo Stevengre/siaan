@@ -38,12 +38,32 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     repo_root = git_repo_with_origin!("install-repository-enterprise-https", "https://ghe.example.com/acme/repo.git")
 
     assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
   test "github_repo infers owner and repo from enterprise ssh remotes" do
     repo_root = git_repo_with_origin!("install-repository-enterprise-ssh", "git@ghe.example.com:acme/repo.git")
 
     assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
+  test "github_rest_endpoint maps public GitHub remotes to api.github.com" do
+    repo_root = git_repo_with_origin!("install-repository-public-github", "git@github.com:acme/repo.git")
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://api.github.com"} = Repository.github_rest_endpoint(repo_root)
+  end
+
+  test "github_rest_endpoint preserves custom enterprise ports" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-port",
+        "https://ghe.example.com:8443/acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com:8443/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
   test "github_repo prefers origin remote over ambient GITHUB_REPOSITORY" do
@@ -68,11 +88,13 @@ defmodule SymphonyElixir.Install.RepositoryTest do
       System.delete_env("GITHUB_REPOSITORY")
     end
 
+    assert {:error, :unsupported_remote} = Repository.github_rest_endpoint(repo_root)
     assert {:error, :missing_github_repository} = Repository.github_repo(repo_root)
 
     repo_without_remote = make_tmp_dir!("install-repository-missing-origin")
     {_output, 0} = System.cmd("git", ["init"], cd: repo_without_remote, stderr_to_stdout: true)
 
+    assert {:error, :missing_origin_remote} = Repository.github_rest_endpoint(repo_without_remote)
     assert {:error, :missing_github_repository} = Repository.github_repo(repo_without_remote)
   end
 

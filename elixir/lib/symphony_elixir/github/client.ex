@@ -113,8 +113,15 @@ defmodule SymphonyElixir.GitHub.Client do
     normalize_issue(raw_issue)
   end
 
-  @spec build_repo_context(String.t(), String.t(), String.t() | nil) :: {:ok, repo_context()} | {:error, term()}
+  @spec build_repo_context(String.t(), String.t(), String.t() | nil) ::
+          {:ok, repo_context()} | {:error, term()}
   def build_repo_context(repo_owner, repo_name, api_key \\ nil) do
+    build_repo_context(repo_owner, repo_name, api_key, [])
+  end
+
+  @spec build_repo_context(String.t(), String.t(), String.t() | nil, keyword()) ::
+          {:ok, repo_context()} | {:error, term()}
+  def build_repo_context(repo_owner, repo_name, api_key, opts) when is_list(opts) do
     with {:ok, normalized_owner} <- ensure_present_string(repo_owner, :missing_github_repo_owner),
          {:ok, normalized_repo} <- ensure_present_string(repo_name, :missing_github_repo_name),
          {:ok, normalized_token} <- ensure_present_string(api_key || System.get_env("GITHUB_TOKEN"), :missing_github_api_token) do
@@ -123,7 +130,7 @@ defmodule SymphonyElixir.GitHub.Client do
          repo_owner: normalized_owner,
          repo_name: normalized_repo,
          api_key: normalized_token,
-         rest_endpoint: github_rest_endpoint()
+         rest_endpoint: repo_context_rest_endpoint(opts)
        }}
     end
   end
@@ -675,6 +682,19 @@ defmodule SymphonyElixir.GitHub.Client do
 
       {:error, _reason} ->
         @rest_endpoint
+    end
+  end
+
+  defp repo_context_rest_endpoint(opts) do
+    case Keyword.get(opts, :rest_endpoint) do
+      endpoint when is_binary(endpoint) ->
+        case String.trim(endpoint) do
+          "" -> github_rest_endpoint()
+          trimmed -> trimmed
+        end
+
+      _ ->
+        github_rest_endpoint()
     end
   end
 

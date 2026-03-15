@@ -395,6 +395,40 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
+  test "build_repo_context honors an explicit REST endpoint override" do
+    valid_workflow = Workflow.workflow_file_path()
+    invalid_workflow = Path.join(Path.dirname(valid_workflow), "BROKEN_WORKFLOW_OVERRIDE.md")
+    File.write!(invalid_workflow, "---\ntracker: [\n---\nBroken prompt\n")
+
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
+    Workflow.set_workflow_file_path(invalid_workflow)
+
+    assert {:error, _reason} = Config.settings()
+
+    assert {:ok, context} =
+             Client.build_repo_context("acme", "repo", "gh-token", rest_endpoint: "https://ghe.example.com/api/v3")
+
+    assert context.rest_endpoint == "https://ghe.example.com/api/v3"
+
+    Workflow.set_workflow_file_path(valid_workflow)
+    assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
+  end
+
+  test "build_repo_context ignores blank REST endpoint overrides" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_endpoint: "https://ghe.example.com/api/graphql"
+    )
+
+    assert {:ok, context} =
+             Client.build_repo_context("acme", "repo", "gh-token", rest_endpoint: "   ")
+
+    assert context.rest_endpoint == "https://ghe.example.com/api/v3"
+  end
+
   test "fetch_candidate_issues_for_test uses the configured REST endpoint" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "github",

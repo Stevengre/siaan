@@ -121,6 +121,34 @@ defmodule SymphonyElixir.Install.RunnerTest do
     end
   end
 
+  defmodule EndpointOverrideClient do
+    def build_repo_context(owner, repo, token, opts) do
+      send(self(), {:build_repo_context, owner, repo, token, opts})
+
+      {:ok,
+       %{
+         repo_owner: owner,
+         repo_name: repo,
+         api_key: token || "token",
+         rest_endpoint: Keyword.get(opts, :rest_endpoint)
+       }}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+    def put_branch_protection(_repo, _branch, _payload), do: :ok
+  end
+
   test "run/1 writes config and applies missing labels with defaults when yes is set" do
     repo_root = tmp_dir!("siaan-install")
     messages = Agent.start_link(fn -> [] end) |> elem(1)
@@ -192,6 +220,31 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert log =~ "already exists"
     assert log =~ "Branch protection on main — already configured"
     assert log =~ ".github/siaan-security.yml — already up to date"
+  end
+
+  test "run/1 passes an enterprise REST endpoint override to 4-arity clients" do
+    repo_root = tmp_dir!("siaan-install-enterprise-endpoint")
+    {_output, 0} = System.cmd("git", ["init"], cd: repo_root, stderr_to_stdout: true)
+
+    {_output, 0} =
+      System.cmd("git", ["remote", "add", "origin", "https://ghe.example.com/acme/repo.git"],
+        cd: repo_root,
+        stderr_to_stdout: true
+      )
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               api_key: "token",
+               yes: true,
+               client: EndpointOverrideClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.repo_owner == "acme"
+    assert result.repo_name == "repo"
+
+    assert_received {:build_repo_context, "acme", "repo", "token", [rest_endpoint: "https://ghe.example.com/api/v3"]}
   end
 
   test "run/1 preserves existing required status checks when syncing maintainers" do

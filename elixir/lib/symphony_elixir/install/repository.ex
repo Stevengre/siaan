@@ -22,6 +22,14 @@ defmodule SymphonyElixir.Install.Repository do
     ]
   end
 
+  @spec github_rest_endpoint(Path.t()) :: {:ok, String.t()} | {:error, term()}
+  def github_rest_endpoint(repo_root) do
+    with {:ok, remote_url} <- origin_remote_url(repo_root),
+         {:ok, %{host: host, port: port}} <- parse_remote_target(remote_url) do
+      {:ok, rest_endpoint_for_host(host, port)}
+    end
+  end
+
   @spec github_repo(Path.t(), keyword()) :: {:ok, %{owner: String.t(), repo: String.t()}} | {:error, term()}
   def github_repo(repo_root, opts \\ []) do
     with {:error, _reason} <- from_opts(opts),
@@ -63,34 +71,46 @@ defmodule SymphonyElixir.Install.Repository do
   end
 
   defp from_git_remote(repo_root) do
+    with {:ok, remote_url} <- origin_remote_url(repo_root),
+         {:ok, %{owner: owner, repo: repo}} <- parse_remote_target(remote_url) do
+      {:ok, %{owner: owner, repo: repo}}
+    end
+  end
+
+  defp origin_remote_url(repo_root) do
     case System.cmd("git", ["remote", "get-url", "origin"], cd: repo_root, stderr_to_stdout: true) do
-      {output, 0} -> parse_remote_url(String.trim(output))
+      {output, 0} -> {:ok, String.trim(output)}
       {_output, _status} -> {:error, :missing_origin_remote}
     end
   end
 
-  defp parse_remote_url(url) when is_binary(url) do
+  defp parse_remote_target(url) when is_binary(url) do
     case parse_scp_style_remote(url) do
-      {:ok, repo} ->
-        parse_repo_string(repo)
+      {:ok, %{host: host, repo: repo}} ->
+        with {:ok, %{owner: owner, repo: repo_name}} <- parse_repo_string(repo) do
+          {:ok, %{owner: owner, repo: repo_name, host: host, port: nil}}
+        end
 
       :error ->
-        case URI.parse(url) do
-          %URI{scheme: scheme, host: host, path: path}
-          when scheme in ["http", "https", "ssh"] and is_binary(host) and is_binary(path) ->
-            path
-            |> String.trim_leading("/")
-            |> parse_repo_string()
-
-          _ ->
-            {:error, :unsupported_remote}
-        end
+        parse_uri_remote_target(URI.parse(url))
     end
   end
 
+  defp parse_uri_remote_target(%URI{scheme: scheme, host: host, path: path, port: port})
+       when scheme in ["http", "https", "ssh"] and is_binary(host) and is_binary(path) do
+    with {:ok, %{owner: owner, repo: repo}} <-
+           path
+           |> String.trim_leading("/")
+           |> parse_repo_string() do
+      {:ok, %{owner: owner, repo: repo, host: host, port: port}}
+    end
+  end
+
+  defp parse_uri_remote_target(_uri), do: {:error, :unsupported_remote}
+
   defp parse_scp_style_remote(url) do
-    case Regex.run(~r/\A[^@]+@[^:]+:(.+)\z/, url, capture: :all_but_first) do
-      [repo] -> {:ok, repo}
+    case Regex.run(~r/\A[^@]+@([^:]+):(.+)\z/, url, capture: :all_but_first) do
+      [host, repo] -> {:ok, %{host: host, repo: repo}}
       _ -> :error
     end
   end
@@ -110,4 +130,18 @@ defmodule SymphonyElixir.Install.Repository do
   end
 
   defp normalize_pair(_owner, _repo), do: :error
+
+  defp rest_endpoint_for_host(host, port) when is_binary(host) do
+    if String.downcase(host) == "github.com" do
+      "https://api.github.com"
+    else
+      port_segment =
+        case port do
+          port when is_integer(port) and port not in [80, 443] -> ":#{port}"
+          _ -> ""
+        end
+
+      "https://#{host}#{port_segment}/api/v3"
+    end
+  end
 end

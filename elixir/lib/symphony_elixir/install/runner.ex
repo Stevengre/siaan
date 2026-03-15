@@ -37,7 +37,7 @@ defmodule SymphonyElixir.Install.Runner do
     client = Keyword.get(opts, :client, Client)
 
     with {:ok, %{owner: owner, repo: repo_name}} <- Repository.github_repo(repo_root, opts),
-         {:ok, repo_ctx} <- client.build_repo_context(owner, repo_name, Keyword.get(opts, :api_key)),
+         {:ok, repo_ctx} <- build_repo_context(client, repo_root, owner, repo_name, Keyword.get(opts, :api_key)),
          {:ok, security_config} <- SecurityFile.read(Repository.security_config_path(repo_root)),
          {:ok, collaborators} <- client.list_collaborators(repo_ctx) do
       branch = maybe_resolve_default_branch(security_config, client, repo_ctx, opts)
@@ -67,6 +67,20 @@ defmodule SymphonyElixir.Install.Runner do
 
   @spec desired_labels() :: [map()]
   def desired_labels, do: @desired_labels
+
+  defp build_repo_context(client, repo_root, owner, repo_name, api_key) do
+    context_opts =
+      case Repository.github_rest_endpoint(repo_root) do
+        {:ok, rest_endpoint} -> [rest_endpoint: rest_endpoint]
+        {:error, _reason} -> []
+      end
+
+    if function_exported?(client, :build_repo_context, 4) do
+      client.build_repo_context(owner, repo_name, api_key, context_opts)
+    else
+      client.build_repo_context(owner, repo_name, api_key)
+    end
+  end
 
   defp ensure_labels(client, repo_ctx, dry_run, info) do
     case render_label_status(client, repo_ctx, dry_run) do
