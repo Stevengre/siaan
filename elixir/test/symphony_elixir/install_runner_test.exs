@@ -247,6 +247,31 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert_received {:build_repo_context, "acme", "repo", "token", [rest_endpoint: "https://ghe.example.com/api/v3"]}
   end
 
+  test "run/1 infers enterprise REST endpoints from SCP remotes without an explicit user" do
+    repo_root = tmp_dir!("siaan-install-enterprise-scp-without-user")
+    {_output, 0} = System.cmd("git", ["init"], cd: repo_root, stderr_to_stdout: true)
+
+    {_output, 0} =
+      System.cmd("git", ["remote", "add", "origin", "ghe.example.com:acme/repo.git"],
+        cd: repo_root,
+        stderr_to_stdout: true
+      )
+
+    assert {:ok, result} =
+             Runner.run(
+               cwd: repo_root,
+               api_key: "token",
+               yes: true,
+               client: EndpointOverrideClient,
+               info: fn _line -> :ok end
+             )
+
+    assert result.repo_owner == "acme"
+    assert result.repo_name == "repo"
+
+    assert_received {:build_repo_context, "acme", "repo", "token", [rest_endpoint: "https://ghe.example.com/api/v3"]}
+  end
+
   test "run/1 preserves existing required status checks when syncing maintainers" do
     repo_root = tmp_dir!("siaan-install-preserve-checks")
 

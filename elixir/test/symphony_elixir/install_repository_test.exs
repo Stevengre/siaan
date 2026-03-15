@@ -66,6 +66,17 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, "https://api.github.com"} = Repository.github_rest_endpoint(repo_root)
   end
 
+  test "github_repo accepts SCP remotes without an explicit ssh username" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-scp-without-user",
+        "github.com:acme/repo.git"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://api.github.com"} = Repository.github_rest_endpoint(repo_root)
+  end
+
   test "github_rest_endpoint preserves custom enterprise ports" do
     repo_root =
       git_repo_with_origin!(

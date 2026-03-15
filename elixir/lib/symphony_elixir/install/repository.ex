@@ -132,7 +132,7 @@ defmodule SymphonyElixir.Install.Repository do
     if String.contains?(url, "://") do
       :error
     else
-      case Regex.run(~r/\A[^@]+@([^:]+):(.+)\z/, url, capture: :all_but_first) do
+      case Regex.run(~r/\A(?:[^@]+@)?([^:]+):(.+)\z/, url, capture: :all_but_first) do
         [host, repo] -> {:ok, %{host: host, repo: repo}}
         _ -> :error
       end
