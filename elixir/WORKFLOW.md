@@ -161,21 +161,17 @@ When a ticket has an attached PR, run this protocol before moving to `status:rev
 **All PR comments and replies posted by the agent must be prefixed with `[siaan]`.**
 
 1. Identify the PR number from issue links/attachments.
-2. If `@codex` review has not yet been requested on the current PR revision, post this exact PR comment:
-   - `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
-   - Replace `{base_branch}` with the actual PR base branch name.
-   - Replace `{issue_url}` with the full issue URL.
-3. Gather **ONLY** feedback from `{{ allowlist }}` across all channels:
+2. Gather **ONLY** feedback from `{{ allowlist }}` across all channels:
    - Top-level PR comments (`gh pr view <pr> --json comments --jq '.comments[] | select(.author.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
    - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments --jq '.[] | select(.user.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
    - Review summaries/states (`gh pr view <pr> --json reviews --jq '.reviews[] | select(.author.login as $login | "{{ allowlist }}" | split(", ") | index($login))'`).
-4. For any non-actionable comment from `{{ allowlist }}`, reply briefly with the disposition; if it is thread-based, resolve it when appropriate.
-5. Treat every actionable comment from `{{ allowlist }}` as blocking until one of these is true:
+3. For any non-actionable comment from `{{ allowlist }}`, reply briefly with the disposition; if it is thread-based, resolve it when appropriate.
+4. Treat every actionable comment from `{{ allowlist }}` as blocking until one of these is true:
    - code/test/docs updated to address it, with a reply that includes the commit SHA and a brief fix summary, and resolve the thread when that feedback is thread-based, or
    - explicit, justified pushback reply is posted on that feedback item.
-6. Amend the existing workpad plan/checklist in place to include each feedback item and its resolution status.
-7. Re-run validation after feedback-driven changes and push updates.
-8. Repeat this sweep until there are no outstanding actionable comments from `{{ allowlist }}`.
+5. Amend the existing workpad plan/checklist in place to include each feedback item and its resolution status.
+6. Re-run validation after feedback-driven changes and push updates.
+7. Repeat this sweep until there are no outstanding actionable comments from `{{ allowlist }}`.
 
 ## Blocked-access escape hatch (required behavior)
 
