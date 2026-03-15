@@ -861,8 +861,20 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp merge_conflict_blockers(%{mergeable: "CONFLICTING"}), do: ["merge conflicts"]
-  defp merge_conflict_blockers(_pr_data), do: []
+  defp merge_conflict_blockers(pr_data) do
+    normalized =
+      pr_data
+      |> Map.get(:mergeable, "")
+      |> to_string()
+      |> String.downcase()
+      |> String.trim()
+
+    if normalized in ["conflicting", "dirty"] do
+      ["merge conflicts"]
+    else
+      []
+    end
+  end
 
   defp ci_blockers(tracker, pr_data, headers, request_fun) do
     case check_ci_status(tracker, pr_data.head_sha, headers, request_fun) do
@@ -1188,16 +1200,18 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp find_issue_closing_pr_number(prs, issue_number) when is_list(prs) do
-    issue_ref = "closes ##{issue_number}"
-    issue_ref_alt = "Closes ##{issue_number}"
-
     case Enum.find(prs, fn pr ->
            pr_body = pr["body"] || ""
-           String.contains?(pr_body, issue_ref) or String.contains?(pr_body, issue_ref_alt)
+           issue_closing_reference?(pr_body, issue_number)
          end) do
       %{"number" => pr_number} -> {:ok, pr_number}
       _ -> :not_found
     end
+  end
+
+  defp issue_closing_reference?(body, issue_number) when is_binary(body) do
+    escaped_issue = issue_number |> to_string() |> Regex.escape()
+    Regex.match?(Regex.compile!("(^|\\W)closes\\s+#" <> escaped_issue <> "(?!\\d)", "i"), body)
   end
 
   defp check_pr_for_actionable_comments(tracker, pr_number, allowlist, headers, request_fun) do

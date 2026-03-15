@@ -2037,6 +2037,77 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :ready, 86} =
              Client.check_auto_merge_readiness_for_test("7", paginated_pr_search_request)
 
+    issue_number_boundary_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"number" => 90, "body" => "closes #70"},
+               %{"number" => 91, "body" => "closes #7"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/91") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-91"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-91/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/91/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/91/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/91/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 91} =
+             Client.check_auto_merge_readiness_for_test("7", issue_number_boundary_request)
+
+    dirty_conflict_state_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 92, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/92") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "dirty", "head" => %{"sha" => "sha-92"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-92/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/92/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/92/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/92/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["merge conflicts"]} =
+             Client.check_auto_merge_readiness_for_test("7", dirty_conflict_state_request)
+
     follow_up_after_siaan_review_comment_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
