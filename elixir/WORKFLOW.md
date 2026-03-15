@@ -6,6 +6,8 @@ tracker:
   active_states:
     - status:ready
     - status:in-progress
+  watch_states:
+    - status:review
   terminal_states:
     - closed
 polling:
@@ -24,7 +26,7 @@ agent:
   max_concurrent_agents: 5
   max_turns: 7
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
+  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=medium --model gpt-5.3-codex app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -33,6 +35,7 @@ codex:
   stall_timeout_ms: 3600000
 allowlist:
   - Stevengre
+  - siaan-bot
   - chatgpt-codex-connector[bot]
 ---
 
@@ -98,7 +101,7 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- `land`: when ticket reaches `status:approval`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
+- `land`: when the PR is approved via GitHub review, open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
 
 ## Status map
 
@@ -106,8 +109,7 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `status:ready` -> queued; immediately transition to `status:in-progress` before active work.
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `status:review`).
 - `status:in-progress` -> implementation actively underway.
-- `status:review` -> PR is attached and validated; waiting on human approval.
-- `status:approval` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
+- `status:review` -> PR is attached and validated; waiting on human review/approval via GitHub.
 - `closed` -> terminal state; no further action required.
 
 ## Step 0: Determine current ticket state and route
@@ -120,7 +122,6 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `status:in-progress` -> continue execution flow from current scratchpad comment.
    - `status:review` -> wait and poll for decision/review updates.
-   - `status:approval` -> on entry, open and follow `.codex/skills/land/SKILL.md`; do not call `gh pr merge` directly.
    - `closed` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
@@ -203,7 +204,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Keep parent/child structure intact as scope evolves.
     - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
     - Never leave completed work unchecked in the plan.
-    - For tickets that started as `status:ready` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
+    - For tickets that started as `status:ready` with an attached PR, address existing actionable PR feedback from `{{ allowlist }}` before new feature work.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
     - Prefer a targeted proof that directly demonstrates the behavior you changed.
@@ -216,9 +217,7 @@ Use this only when completion is blocked by missing required tools or missing au
 8.  Create or update a PR whose body includes `closes #<issue-number>` to auto-link it to the issue.
     - If PR creation is unavailable, record the PR URL in the workpad comment as a fallback.
     - Ensure the GitHub PR has label `siaan` (add it if missing).
-    - Once the branch is ready for review-quality feedback, request `@codex` review with:
-      `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
-    - Add a workpad TODO to review and handle the resulting `@codex` feedback.
+    - Do **not** request `@codex` review at this stage; review is requested only once at handoff time (Step 2.11).
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -226,48 +225,41 @@ Use this only when completion is blocked by missing required tools or missing au
     - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
-11. Before moving to `status:review`, poll PR feedback and checks:
-    - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
-    - Confirm the current PR revision has gone through an `@codex` review pass.
-    - Run the full PR feedback sweep protocol.
+11. Handoff to review:
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
-    - Repeat this loop until no outstanding actionable comments from `{{ allowlist }}` remain and checks are passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `status:review`.
+    - Request `@codex` review exactly once by posting this PR comment:
+      `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
+    - Move issue to `status:review` immediately after requesting review. Do not wait for the review result.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `status:review` with the blocker brief and explicit unblock actions.
 13. For `status:ready` tickets that already had a PR attached at kickoff:
     - Ensure all existing actionable PR feedback from `{{ allowlist }}`, including inline review comments, was reviewed and resolved.
     - Ensure branch was pushed with any required updates.
     - Then move to `status:review`.
 
-## Step 3: `status:review` and merge handling
+## Step 3: Rework or land (`status:in-progress` with existing PR)
 
-1. When the issue is in `status:review`, do not code or change ticket content.
-2. Poll for updates as needed. Treat **ONLY** comments from `{{ allowlist }}` as actionable.
-3. If review feedback requires changes, move the issue to `status:in-progress` and follow the execution flow.
-4. If approved, human moves the issue to `status:approval`.
-5. When the issue is in `status:approval`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, close the issue.
+When dispatched for an issue that already has a PR and workpad (e.g., after orchestrator transitions from `status:review`):
 
-## Step 4: Rework handling (`status:review` -> `status:in-progress`)
-
-1. Treat review-requested rework as a full approach reset, not incremental patching.
-2. Re-read the full issue body and all actionable comments from `{{ allowlist }}`; explicitly identify what will be done differently this attempt.
-3. Close the existing PR tied to the issue.
-4. Remove the existing `## Agent Workpad` comment from the issue.
-5. Create a fresh branch from `origin/main`.
-6. Start over from the normal kickoff flow:
-   - If current issue state is `status:ready`, move it to `status:in-progress`; otherwise keep the current state.
-   - Create a new bootstrap `## Agent Workpad` comment.
-   - Build a fresh plan/checklist and execute end-to-end.
+1. Keep the existing PR, branch, and workpad — do not start over.
+2. Check the PR review state via `gh pr view --json reviews`.
+3. **If the PR has a GitHub review approval (APPROVED state):**
+   - Open and follow `.codex/skills/land/SKILL.md` to squash-merge the PR. Do not call `gh pr merge` directly.
+   - After merge is complete, close the issue.
+4. **If the PR has actionable feedback (no approval):**
+   - Re-read the full issue body and all actionable comments from `{{ allowlist }}`; identify what needs to change.
+   - Update the workpad plan/checklist to include each feedback item and its resolution status.
+   - Implement fixes, re-run validation, and push updates.
+   - Run the PR feedback sweep protocol until no outstanding actionable comments remain.
+   - Refresh workpad, confirm checks are green, and follow the handoff flow (Step 2.11) to move back to `status:review`.
 
 ## Completion bar before `status:review`
 
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
-- PR feedback sweep is complete, `@codex` review has run on the current PR revision, and no actionable comments remain from `{{ allowlist }}`.
+- `@codex` review has been requested on the current PR revision.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
 - Required PR metadata is present (`siaan` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.

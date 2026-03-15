@@ -36,6 +36,22 @@ defmodule SymphonyElixir.Tracker do
     adapter().update_issue_state(issue_id, state_name)
   end
 
+  @spec has_actionable_pr_feedback?(String.t(), [String.t()]) :: {:ok, boolean()} | {:error, term()}
+  def has_actionable_pr_feedback?(issue_id, allowlist) do
+    case adapter() do
+      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.has_actionable_pr_feedback?(issue_id, allowlist)
+      _ -> {:ok, false}
+    end
+  end
+
+  @spec has_pr_approval?(String.t()) :: {:ok, boolean()} | {:error, term()}
+  def has_pr_approval?(issue_id) do
+    case adapter() do
+      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.has_pr_approval?(issue_id)
+      _ -> {:ok, false}
+    end
+  end
+
   @spec adapter() :: module()
   def adapter do
     case Config.settings!().tracker.kind do

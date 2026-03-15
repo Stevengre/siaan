@@ -12,7 +12,7 @@ description:
 
 - Ensure the PR is conflict-free with main.
 - Keep CI green and fix failures when they occur.
-- Require human approval via linked issue label `status:approval`.
+- Require human approval via GitHub PR review (APPROVED state).
 - Squash-merge the PR once checks pass.
 - Do not yield to the user until the PR is merged; keep the watcher loop running
   unless blocked.
@@ -33,7 +33,7 @@ description:
 4. Check mergeability and conflicts against main.
 5. If conflicts exist, use the `pull` skill to fetch/merge `origin/main` and
    resolve conflicts, then use the `push` skill to publish the updated branch.
-6. Ensure linked issue(s) for the PR have `status:approval` before merge.
+6. Ensure the PR has at least one GitHub review approval (APPROVED state) before merge.
 7. Ensure Codex review comments (if present) are acknowledged and any required
    fixes are handled before merging.
 8. Watch checks until complete.
@@ -67,18 +67,12 @@ pr_title=$(gh pr view --json title -q .title)
 pr_body=$(gh pr view --json body -q .body)
 linked_issues=$(gh pr view --json closingIssuesReferences -q '.closingIssuesReferences[].number')
 
-# Human approval gate: every linked issue must carry status:approval
-if [ -z "$linked_issues" ]; then
-  echo "No linked issue found; merge blocked until status:approval can be verified."
+# Human approval gate: PR must have at least one GitHub review approval
+pr_approved=$(gh pr view --json reviews -q '[.reviews[] | select(.state == "APPROVED")] | length')
+if [ "$pr_approved" = "0" ] || [ -z "$pr_approved" ]; then
+  echo "PR has no GitHub review approval; merge blocked."
   exit 1
 fi
-for issue_number in $linked_issues; do
-  has_approval=$(gh issue view "$issue_number" --json labels -q '.labels[].name' | rg -ix 'status:approval' -N || true)
-  if [ -z "$has_approval" ]; then
-    echo "Issue #$issue_number is missing status:approval; merge blocked."
-    exit 1
-  fi
-done
 
 # Check mergeability and conflicts
 mergeable=$(gh pr view --json mergeable -q .mergeable)
@@ -128,7 +122,7 @@ Exit codes:
 - 2: Review comments detected (address feedback)
 - 3: CI checks failed
 - 4: PR head updated (autofix commit detected)
-- 6: Missing `status:approval` on linked issue(s)
+- 6: PR missing GitHub review approval
 
 ## Failure Handling
 

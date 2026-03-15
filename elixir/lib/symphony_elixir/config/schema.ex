@@ -55,6 +55,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:ready_label, :string, default: "status:ready")
       field(:assignee, :string)
       field(:active_states, {:array, :string})
+      field(:watch_states, {:array, :string})
       field(:terminal_states, {:array, :string})
     end
 
@@ -73,11 +74,13 @@ defmodule SymphonyElixir.Config.Schema do
           :ready_label,
           :assignee,
           :active_states,
+          :watch_states,
           :terminal_states
         ],
         empty_values: []
       )
       |> validate_state_list(:active_states)
+      |> validate_state_list(:watch_states)
       |> validate_state_list(:terminal_states)
     end
 
@@ -422,6 +425,7 @@ defmodule SymphonyElixir.Config.Schema do
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
         ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
         active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
+        watch_states: resolve_watch_states(settings.tracker.watch_states),
         terminal_states: resolve_terminal_states(settings.tracker.kind, settings.tracker.terminal_states),
         assignee: resolve_secret_setting(settings.tracker.assignee, assignee_fallback)
     }
@@ -496,6 +500,9 @@ defmodule SymphonyElixir.Config.Schema do
     do: "https://api.github.com/graphql"
 
   defp normalize_tracker_endpoint_for_kind(_kind, endpoint), do: endpoint
+
+  defp resolve_watch_states(nil), do: []
+  defp resolve_watch_states(watch_states), do: watch_states
 
   defp resolve_active_states("github", nil), do: ["status:ready", "status:in-progress"]
   defp resolve_active_states(_kind, nil), do: ["Todo", "In Progress"]

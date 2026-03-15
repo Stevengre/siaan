@@ -183,6 +183,7 @@ tracker_kind="$(extract_tracker_kind "$workflow")"
 
 if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "error: GITHUB_TOKEN is not set." >&2
+  echo "run: export GITHUB_TOKEN=..." >&2
   echo "set it in .env, export GITHUB_TOKEN=..., or export GH_TOKEN=..." >&2
   exit 1
 fi

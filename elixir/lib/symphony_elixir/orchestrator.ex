@@ -225,6 +225,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
+    state = check_watch_states(state)
 
     with :ok <- Config.validate!(),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
@@ -297,6 +298,79 @@ defmodule SymphonyElixir.Orchestrator do
           state
       end
     end
+  end
+
+  defp check_watch_states(%State{} = state) do
+    watch_states = watch_state_set()
+
+    if MapSet.size(watch_states) == 0 do
+      state
+    else
+      watch_state_names =
+        watch_states
+        |> MapSet.to_list()
+
+      case Tracker.fetch_issues_by_states(watch_state_names) do
+        {:ok, issues} ->
+          transition_watched_issues(issues, state)
+
+        {:error, reason} ->
+          Logger.debug("Failed to fetch watch_states issues: #{inspect(reason)}")
+          state
+      end
+    end
+  end
+
+  defp transition_watched_issues([], state), do: state
+
+  defp transition_watched_issues([issue | rest], state) do
+    allowlist = Config.settings!().allowlist
+
+    case check_watched_issue_action(issue, allowlist) do
+      {:transition, reason} ->
+        Logger.info("Watch state transition: #{issue_context(issue)} #{reason}; moving to status:in-progress")
+
+        case Tracker.update_issue_state(issue.id, "status:in-progress") do
+          :ok ->
+            Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress")
+
+          {:error, err} ->
+            Logger.warning("Failed to transition watched issue #{issue_context(issue)}: #{inspect(err)}")
+        end
+
+        transition_watched_issues(rest, state)
+
+      :no_action ->
+        transition_watched_issues(rest, state)
+    end
+  end
+
+  defp check_watched_issue_action(issue, allowlist) do
+    case Tracker.has_actionable_pr_feedback?(issue.id, allowlist) do
+      {:ok, true} ->
+        {:transition, "has actionable PR feedback"}
+
+      {:ok, false} ->
+        case Tracker.has_pr_approval?(issue.id) do
+          {:ok, true} -> {:transition, "PR approved via GitHub review"}
+          {:ok, false} -> :no_action
+          {:error, reason} ->
+            Logger.debug("Failed to check PR approval for #{issue_context(issue)}: #{inspect(reason)}")
+            :no_action
+        end
+
+      {:error, reason} ->
+        Logger.debug("Failed to check PR feedback for #{issue_context(issue)}: #{inspect(reason)}")
+        :no_action
+    end
+  end
+
+  defp watch_state_set do
+    (Config.settings!().tracker.watch_states || [])
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&normalize_issue_state/1)
+    |> Enum.filter(&(&1 != ""))
+    |> MapSet.new()
   end
 
   @doc false
