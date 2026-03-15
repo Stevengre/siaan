@@ -32,7 +32,7 @@ codex:
   turn_sandbox_policy:
     type: dangerFullAccess
   read_timeout_ms: 30000
-  stall_timeout_ms: 3600000
+  stall_timeout_ms: 900000
 allowlist:
   - Stevengre
   - siaan-bot
