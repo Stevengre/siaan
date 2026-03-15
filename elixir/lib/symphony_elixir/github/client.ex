@@ -132,6 +132,7 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   @reply_prefix "[siaan]"
+  @pulls_per_page 100
 
   @type auto_merge_result :: {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
 
@@ -1152,29 +1153,49 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp find_linked_pr_number(tracker, issue_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls"
-    params = [state: "open", per_page: 100]
+    find_linked_pr_number_page(url, issue_number, headers, request_fun, 1)
+  end
+
+  defp find_linked_pr_number_page(url, issue_number, headers, request_fun, page) do
+    params = [state: "open", per_page: @pulls_per_page, page: page]
 
     case request_fun.(:get, url, headers: headers, params: params) do
       {:ok, %{status: 200, body: body}} when is_list(body) ->
-        issue_ref = "closes ##{issue_number}"
-        issue_ref_alt = "Closes ##{issue_number}"
-
-        pr =
-          Enum.find(body, fn pr ->
-            pr_body = pr["body"] || ""
-            String.contains?(pr_body, issue_ref) or String.contains?(pr_body, issue_ref_alt)
-          end)
-
-        case pr do
-          %{"number" => pr_number} -> {:ok, pr_number}
-          nil -> {:error, :no_pr}
-        end
+        resolve_linked_pr_page(body, issue_number, url, headers, request_fun, page)
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
 
       {:error, reason} ->
         {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp resolve_linked_pr_page(body, issue_number, url, headers, request_fun, page) do
+    case find_issue_closing_pr_number(body, issue_number) do
+      {:ok, pr_number} -> {:ok, pr_number}
+      :not_found -> continue_linked_pr_page_search(body, issue_number, url, headers, request_fun, page)
+    end
+  end
+
+  defp continue_linked_pr_page_search(body, _issue_number, _url, _headers, _request_fun, _page)
+       when length(body) < @pulls_per_page,
+       do: {:error, :no_pr}
+
+  defp continue_linked_pr_page_search(_body, issue_number, url, headers, request_fun, page) do
+    find_linked_pr_number_page(url, issue_number, headers, request_fun, page + 1)
+  end
+
+  defp find_issue_closing_pr_number(prs, issue_number) when is_list(prs) do
+    issue_ref = "closes ##{issue_number}"
+    issue_ref_alt = "Closes ##{issue_number}"
+
+    case Enum.find(prs, fn pr ->
+           pr_body = pr["body"] || ""
+           String.contains?(pr_body, issue_ref) or String.contains?(pr_body, issue_ref_alt)
+         end) do
+      %{"number" => pr_number} -> {:ok, pr_number}
+      _ -> :not_found
     end
   end
 

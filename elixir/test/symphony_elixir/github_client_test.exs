@@ -1966,6 +1966,48 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :ready, 85} =
              Client.check_auto_merge_readiness_for_test("7", non_allowlist_comments_request)
 
+    paginated_pr_search_request = fn :get, url, opts ->
+      params = Keyword.get(opts, :params, [])
+
+      cond do
+        String.ends_with?(url, "/pulls") and Keyword.get(params, :page) == 1 ->
+          filler =
+            Enum.map(1..100, fn n ->
+              %{"number" => 1_000 + n, "body" => "misc body #{n}"}
+            end)
+
+          {:ok, %{status: 200, body: filler}}
+
+        String.ends_with?(url, "/pulls") and Keyword.get(params, :page) == 2 ->
+          {:ok, %{status: 200, body: [%{"number" => 86, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/86") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-86"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-86/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/86/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/86/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/86/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url} params=#{inspect(params)}")
+      end
+    end
+
+    assert {:ok, :ready, 86} =
+             Client.check_auto_merge_readiness_for_test("7", paginated_pr_search_request)
+
     bad_issue_id_request = fn _method, _url, _opts ->
       flunk("request function should not be called for invalid issue ids")
     end

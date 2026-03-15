@@ -225,9 +225,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
-    state = check_watch_states(state)
 
     with :ok <- Config.validate!(),
+         state <- check_watch_states(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
