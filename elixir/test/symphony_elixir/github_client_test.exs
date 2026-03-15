@@ -1372,6 +1372,35 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, false} = Client.has_pr_approval_for_test("7", not_approved_request)
 
+    paginated_not_approved_request = fn :get, url, opts ->
+      params = Keyword.get(opts, :params, [])
+
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 54, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/54/reviews") and Keyword.get(params, :page) == 1 ->
+          filler =
+            Enum.map(1..99, fn n ->
+              %{"user" => %{"login" => "reviewer-#{n}"}, "state" => "COMMENTED"}
+            end)
+
+          {:ok,
+           %{
+             status: 200,
+             body: [%{"user" => %{"login" => "reviewer"}, "state" => "APPROVED"} | filler]
+           }}
+
+        String.ends_with?(url, "/pulls/54/reviews") and Keyword.get(params, :page) == 2 ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "reviewer"}, "state" => "CHANGES_REQUESTED"}]}}
+
+        true ->
+          flunk("unexpected URL #{url} params=#{inspect(params)}")
+      end
+    end
+
+    assert {:ok, false} = Client.has_pr_approval_for_test("7", paginated_not_approved_request)
+
     review_status_error = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
@@ -2007,6 +2036,88 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, :ready, 86} =
              Client.check_auto_merge_readiness_for_test("7", paginated_pr_search_request)
+
+    follow_up_after_siaan_review_comment_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 87, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/87") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-87"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-87/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/87/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/87/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/87/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"id" => 20, "user" => %{"login" => "reviewer"}, "body" => "first", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"id" => 21, "in_reply_to_id" => 20, "user" => %{"login" => "siaan-bot"}, "body" => "[siaan] fixed", "created_at" => "2026-03-02T00:00:00Z"},
+               %{"id" => 22, "in_reply_to_id" => 20, "user" => %{"login" => "reviewer"}, "body" => "one more thing", "created_at" => "2026-03-03T00:00:00Z"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", follow_up_after_siaan_review_comment_request)
+
+    paginated_issue_comments_request = fn :get, url, opts ->
+      params = Keyword.get(opts, :params, [])
+
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 88, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/88") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-88"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-88/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/88/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/88/comments") and Keyword.get(params, :page) == 1 ->
+          filler =
+            Enum.map(1..100, fn n ->
+              %{"user" => %{"login" => "outsider"}, "body" => "n#{n}"}
+            end)
+
+          {:ok, %{status: 200, body: filler}}
+
+        String.ends_with?(url, "/issues/88/comments") and Keyword.get(params, :page) == 2 ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "reviewer"}, "body" => "blocker", "created_at" => "2026-03-03T00:00:00Z"}]}}
+
+        String.ends_with?(url, "/pulls/88/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url} params=#{inspect(params)}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered PR comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", paginated_issue_comments_request)
 
     bad_issue_id_request = fn _method, _url, _opts ->
       flunk("request function should not be called for invalid issue ids")

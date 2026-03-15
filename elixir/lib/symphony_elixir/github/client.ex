@@ -972,22 +972,12 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp fetch_pr_issue_comments(tracker, pr_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/issues/#{pr_number}/comments"
-
-    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
-      {:ok, %{status: 200, body: body}} when is_list(body) -> {:ok, body}
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, {:github_api_request, reason}}
-    end
+    fetch_paginated_list(url, headers, request_fun)
   end
 
   defp fetch_pr_review_comments(tracker, pr_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls/#{pr_number}/comments"
-
-    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
-      {:ok, %{status: 200, body: body}} when is_list(body) -> {:ok, body}
-      {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
-      {:error, reason} -> {:error, {:github_api_request, reason}}
-    end
+    fetch_paginated_list(url, headers, request_fun)
   end
 
   defp has_unanswered_issue_comments?(comments, allowlist_set) do
@@ -1016,25 +1006,38 @@ defmodule SymphonyElixir.GitHub.Client do
       end)
 
     Enum.any?(threads, fn {_thread_id, thread_comments} ->
-      has_human_comment =
-        Enum.any?(thread_comments, fn c ->
-          login = get_in(c, ["user", "login"]) || ""
-          body = (c["body"] || "") |> String.trim()
+      latest_human_index =
+        thread_comments
+        |> Enum.with_index()
+        |> Enum.filter(fn {comment, _index} -> actionable_review_comment?(comment, allowlist_set) end)
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.max(fn -> nil end)
 
-          MapSet.member?(allowlist_set, String.downcase(login)) and
-            not String.starts_with?(body, @reply_prefix) and
-            not codex_review_request?(body) and
-            not String.starts_with?(body, "## Codex Review")
-        end)
-
-      has_siaan_reply =
-        Enum.any?(thread_comments, fn c ->
-          body = (c["body"] || "") |> String.trim()
+      latest_siaan_index =
+        thread_comments
+        |> Enum.with_index()
+        |> Enum.filter(fn {comment, _index} ->
+          body = (comment["body"] || "") |> String.trim()
           String.starts_with?(body, @reply_prefix)
         end)
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.max(fn -> nil end)
 
-      has_human_comment and not has_siaan_reply
+      case latest_human_index do
+        nil -> false
+        _ -> is_nil(latest_siaan_index) or latest_human_index > latest_siaan_index
+      end
     end)
+  end
+
+  defp actionable_review_comment?(comment, allowlist_set) do
+    login = get_in(comment, ["user", "login"]) || ""
+    body = (comment["body"] || "") |> String.trim()
+
+    MapSet.member?(allowlist_set, String.downcase(login)) and
+      not String.starts_with?(body, @reply_prefix) and
+      not codex_review_request?(body) and
+      not String.starts_with?(body, "## Codex Review")
   end
 
   defp latest_siaan_reply_time(comments) do
@@ -1043,9 +1046,7 @@ defmodule SymphonyElixir.GitHub.Client do
       body = (c["body"] || "") |> String.trim()
       String.starts_with?(body, @reply_prefix)
     end)
-    |> Enum.map(fn c -> c["created_at"] || c["updated_at"] end)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.max(fn -> nil end)
+    |> latest_comment_time()
   end
 
   defp comment_after_latest_reply?(_comment, nil), do: true
@@ -1057,6 +1058,13 @@ defmodule SymphonyElixir.GitHub.Client do
       nil -> true
       _ -> comment_at > latest_reply_at
     end
+  end
+
+  defp latest_comment_time(comments) when is_list(comments) do
+    comments
+    |> Enum.map(fn c -> c["created_at"] || c["updated_at"] end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.max(fn -> nil end)
   end
 
   defp codex_review_request?(body) when is_binary(body) do
@@ -1115,27 +1123,20 @@ defmodule SymphonyElixir.GitHub.Client do
   defp check_pr_approved(tracker, pr_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls/#{pr_number}/reviews"
 
-    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
-      {:ok, %{status: 200, body: body}} when is_list(body) ->
-        # Dedupe by user, keep latest review per user
-        latest_by_user =
-          body
-          |> Enum.filter(&is_map/1)
-          |> Enum.group_by(fn review -> get_in(review, ["user", "login"]) end)
-          |> Enum.map(fn {_login, reviews} -> List.last(reviews) end)
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      # Dedupe by user, keep latest review per user
+      latest_by_user =
+        body
+        |> Enum.filter(&is_map/1)
+        |> Enum.group_by(fn review -> get_in(review, ["user", "login"]) end)
+        |> Enum.map(fn {_login, reviews} -> List.last(reviews) end)
 
-        has_approval =
-          Enum.any?(latest_by_user, fn review ->
-            review["state"] == "APPROVED"
-          end)
+      has_approval =
+        Enum.any?(latest_by_user, fn review ->
+          review["state"] == "APPROVED"
+        end)
 
-        {:ok, has_approval}
-
-      {:ok, %{status: status}} ->
-        {:error, {:github_api_status, status}}
-
-      {:error, reason} ->
-        {:error, {:github_api_request, reason}}
+      {:ok, has_approval}
     end
   end
 
@@ -1213,36 +1214,45 @@ defmodule SymphonyElixir.GitHub.Client do
   defp check_pr_review_comments(tracker, pr_number, allowlist_set, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls/#{pr_number}/comments"
 
-    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
-      {:ok, %{status: 200, body: body}} when is_list(body) ->
-        has_actionable =
-          Enum.any?(body, fn comment ->
-            login = get_in(comment, ["user", "login"]) || ""
-            MapSet.member?(allowlist_set, String.downcase(login))
-          end)
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      has_actionable =
+        Enum.any?(body, fn comment ->
+          login = get_in(comment, ["user", "login"]) || ""
+          MapSet.member?(allowlist_set, String.downcase(login))
+        end)
 
-        {:ok, has_actionable}
-
-      {:ok, %{status: status}} ->
-        {:error, {:github_api_status, status}}
-
-      {:error, reason} ->
-        {:error, {:github_api_request, reason}}
+      {:ok, has_actionable}
     end
   end
 
   defp check_pr_issue_comments(tracker, pr_number, allowlist_set, headers, request_fun) do
     url = "#{repo_url(tracker)}/issues/#{pr_number}/comments"
 
-    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
-      {:ok, %{status: 200, body: body}} when is_list(body) ->
-        has_actionable =
-          Enum.any?(body, fn comment ->
-            login = get_in(comment, ["user", "login"]) || ""
-            MapSet.member?(allowlist_set, String.downcase(login))
-          end)
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      has_actionable =
+        Enum.any?(body, fn comment ->
+          login = get_in(comment, ["user", "login"]) || ""
+          MapSet.member?(allowlist_set, String.downcase(login))
+        end)
 
-        {:ok, has_actionable}
+      {:ok, has_actionable}
+    end
+  end
+
+  defp fetch_paginated_list(url, headers, request_fun) do
+    fetch_paginated_list(url, headers, request_fun, 1, [])
+  end
+
+  defp fetch_paginated_list(url, headers, request_fun, page, acc) do
+    params = [per_page: @pulls_per_page, page: page]
+
+    case request_fun.(:get, url, headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        if length(body) < @pulls_per_page do
+          {:ok, Enum.reverse([body | acc]) |> List.flatten()}
+        else
+          fetch_paginated_list(url, headers, request_fun, page + 1, [body | acc])
+        end
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
