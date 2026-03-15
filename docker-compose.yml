@@ -15,6 +15,7 @@ services:
       - GH_TOKEN=${GITHUB_TOKEN}
       - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME-Codex}
       - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL-codex@users.noreply.github.com}
+      - CODEX_HOME=/root/code/workspaces/siaan/.codex-home
       - OPENAI_API_KEY=${OPENAI_API_KEY-}
       - OPENAI_ORG_ID=${OPENAI_ORG_ID-}
       - OPENAI_PROJECT_ID=${OPENAI_PROJECT_ID-}
