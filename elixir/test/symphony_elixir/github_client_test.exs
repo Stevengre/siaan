@@ -2108,6 +2108,38 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :needs_agent, ["merge conflicts"]} =
              Client.check_auto_merge_readiness_for_test("7", dirty_conflict_state_request)
 
+    unknown_mergeability_state_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 93, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/93") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "unknown", "head" => %{"sha" => "sha-93"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-93/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/93/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/93/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/93/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["mergeability pending"]} =
+             Client.check_auto_merge_readiness_for_test("7", unknown_mergeability_state_request)
+
     follow_up_after_siaan_review_comment_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
@@ -2147,6 +2179,46 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, :needs_agent, ["unanswered review comments"]} =
              Client.check_auto_merge_readiness_for_test("7", follow_up_after_siaan_review_comment_request)
+
+    single_reply_for_multiple_issue_comments_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 94, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/94") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-94"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-94/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/94/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/94/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "reviewer"}, "body" => "first unresolved", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "second unresolved", "created_at" => "2026-03-02T00:00:00Z"},
+               %{"user" => %{"login" => "siaan-bot"}, "body" => "[siaan] handled one", "created_at" => "2026-03-03T00:00:00Z"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/94/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered PR comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", single_reply_for_multiple_issue_comments_request)
 
     paginated_issue_comments_request = fn :get, url, opts ->
       params = Keyword.get(opts, :params, [])

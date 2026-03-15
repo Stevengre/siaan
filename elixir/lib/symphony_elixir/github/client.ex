@@ -869,10 +869,15 @@ defmodule SymphonyElixir.GitHub.Client do
       |> String.downcase()
       |> String.trim()
 
-    if normalized in ["conflicting", "dirty"] do
-      ["merge conflicts"]
-    else
-      []
+    cond do
+      normalized in ["conflicting", "dirty"] ->
+        ["merge conflicts"]
+
+      normalized == "clean" ->
+        []
+
+      true ->
+        ["mergeability pending"]
     end
   end
 
@@ -993,20 +998,40 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp has_unanswered_issue_comments?(comments, allowlist_set) do
-    # Find the latest [siaan] reply timestamp
-    latest_reply_at = latest_siaan_reply_time(comments)
+    actionable_comment_times =
+      comments
+      |> Enum.filter(&actionable_issue_comment?(&1, allowlist_set))
+      |> Enum.map(&comment_time/1)
 
-    Enum.any?(comments, fn comment ->
-      login = get_in(comment, ["user", "login"]) || ""
-      body = (comment["body"] || "") |> String.trim()
+    reply_times =
+      comments
+      |> Enum.filter(&siaan_reply_comment?/1)
+      |> Enum.map(&comment_time/1)
+      |> Enum.reject(&is_nil/1)
 
-      # Only actionable allowlist comments block auto-merge.
-      MapSet.member?(allowlist_set, String.downcase(login)) and
-        not String.starts_with?(body, @reply_prefix) and
-        not codex_review_request?(body) and
-        not String.starts_with?(body, "## Codex Review") and
-        comment_after_latest_reply?(comment, latest_reply_at)
-    end)
+    unmatched_actionable_comment?(actionable_comment_times, reply_times)
+  end
+
+  defp actionable_issue_comment?(comment, allowlist_set) do
+    login = get_in(comment, ["user", "login"]) || ""
+    body = (comment["body"] || "") |> String.trim()
+
+    MapSet.member?(allowlist_set, String.downcase(login)) and
+      not String.starts_with?(body, @reply_prefix) and
+      not codex_review_request?(body) and
+      not String.starts_with?(body, "## Codex Review")
+  end
+
+  defp unmatched_actionable_comment?([], _reply_times), do: false
+  defp unmatched_actionable_comment?([nil | _rest], _reply_times), do: true
+  defp unmatched_actionable_comment?(_actionable_times, []), do: true
+
+  defp unmatched_actionable_comment?([comment_at | rest_comments], [reply_at | rest_replies]) do
+    if reply_at > comment_at do
+      unmatched_actionable_comment?(rest_comments, rest_replies)
+    else
+      unmatched_actionable_comment?([comment_at | rest_comments], rest_replies)
+    end
   end
 
   defp has_unanswered_review_comments?(comments, allowlist_set) do
@@ -1052,32 +1077,12 @@ defmodule SymphonyElixir.GitHub.Client do
       not String.starts_with?(body, "## Codex Review")
   end
 
-  defp latest_siaan_reply_time(comments) do
-    comments
-    |> Enum.filter(fn c ->
-      body = (c["body"] || "") |> String.trim()
-      String.starts_with?(body, @reply_prefix)
-    end)
-    |> latest_comment_time()
+  defp siaan_reply_comment?(comment) do
+    body = (comment["body"] || "") |> String.trim()
+    String.starts_with?(body, @reply_prefix)
   end
 
-  defp comment_after_latest_reply?(_comment, nil), do: true
-
-  defp comment_after_latest_reply?(comment, latest_reply_at) do
-    comment_at = comment["created_at"] || comment["updated_at"]
-
-    case comment_at do
-      nil -> true
-      _ -> comment_at > latest_reply_at
-    end
-  end
-
-  defp latest_comment_time(comments) when is_list(comments) do
-    comments
-    |> Enum.map(fn c -> c["created_at"] || c["updated_at"] end)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.max(fn -> nil end)
-  end
+  defp comment_time(comment), do: comment["created_at"] || comment["updated_at"]
 
   defp codex_review_request?(body) when is_binary(body) do
     Regex.match?(~r/@codex\b.*\breview\b/i, body)
