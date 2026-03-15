@@ -101,7 +101,7 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- `land`: when the PR is approved via GitHub review, open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
+- All PR comments posted by the agent must be prefixed with `[siaan]`.
 
 ## Status map
 
@@ -236,21 +236,18 @@ Use this only when completion is blocked by missing required tools or missing au
     - Ensure branch was pushed with any required updates.
     - Then move to `status:review`.
 
-## Step 3: Rework or land (`status:in-progress` with existing PR)
+## Step 3: Fix blockers (`status:in-progress` with existing PR)
 
-When dispatched for an issue that already has a PR and workpad (e.g., after orchestrator transitions from `status:review`):
+When dispatched for an issue that already has a PR and workpad (e.g., after orchestrator transitions from `status:review` due to merge blockers):
 
 1. Keep the existing PR, branch, and workpad — do not start over.
-2. Check the PR review state via `gh pr view --json reviews`.
-3. **If the PR has a GitHub review approval (APPROVED state):**
-   - Open and follow `.codex/skills/land/SKILL.md` to squash-merge the PR. Do not call `gh pr merge` directly.
-   - After merge is complete, close the issue.
-4. **If the PR has actionable feedback (no approval):**
-   - Re-read the full issue body and all actionable comments from `{{ allowlist }}`; identify what needs to change.
-   - Update the workpad plan/checklist to include each feedback item and its resolution status.
-   - Implement fixes, re-run validation, and push updates.
-   - Run the PR feedback sweep protocol until no outstanding actionable comments remain.
-   - Refresh workpad, confirm checks are green, and follow the handoff flow (Step 2.11) to move back to `status:review`.
+2. Identify what is blocking the merge. Common blockers:
+   - **CI failures** -> fix the issue, commit, push.
+   - **Merge conflicts** -> use the `pull` skill to merge `origin/main`, resolve conflicts, push.
+   - **Unanswered PR comments** -> reply to each with a `[siaan]`-prefixed response, resolve conversations.
+   - **Actionable review feedback** -> address feedback, commit, push.
+3. After all blockers are resolved, follow the handoff flow (Step 2.11) to move back to `status:review`.
+4. Do **not** merge the PR directly — the orchestrator handles merging when all conditions are met.
 
 ## Completion bar before `status:review`
 

@@ -320,7 +320,7 @@ def is_bot_user(user: dict[str, Any]) -> bool:
 
 
 def is_codex_reply_body(body: str) -> bool:
-    return body.startswith("[codex]")
+    return body.startswith("[siaan]")
 
 
 def is_codex_review_body(body: str) -> bool:
@@ -457,7 +457,7 @@ def is_blocking_review(
     state = review.get("state")
     if user_login in CODEX_BOTS:
         return state == "CHANGES_REQUESTED"
-    if body.startswith("[codex]") or state in ("APPROVED", "DISMISSED"):
+    if body.startswith("[siaan]") or state in ("APPROVED", "DISMISSED"):
         return False
     blocking = False
     if body or state == "CHANGES_REQUESTED":

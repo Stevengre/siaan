@@ -324,45 +324,50 @@ defmodule SymphonyElixir.Orchestrator do
   defp transition_watched_issues([], state), do: state
 
   defp transition_watched_issues([issue | rest], state) do
-    allowlist = Config.settings!().allowlist
+    case Tracker.check_auto_merge_readiness(issue.id) do
+      {:ok, :ready, pr_number} ->
+        Logger.info("Auto-merge: #{issue_context(issue)} PR ##{pr_number} is ready; merging")
 
-    case check_watched_issue_action(issue, allowlist) do
-      {:transition, reason} ->
-        Logger.info("Watch state transition: #{issue_context(issue)} #{reason}; moving to status:in-progress")
-
-        case Tracker.update_issue_state(issue.id, "status:in-progress") do
+        case Tracker.auto_merge_pr(pr_number) do
           :ok ->
-            Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress")
+            Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
 
-          {:error, err} ->
-            Logger.warning("Failed to transition watched issue #{issue_context(issue)}: #{inspect(err)}")
+          {:error, reason} ->
+            Logger.warning("Auto-merge failed for #{issue_context(issue)} PR ##{pr_number}: #{inspect(reason)}; dispatching agent")
+            dispatch_watched_issue(issue, ["auto-merge failed: #{inspect(reason)}"])
         end
 
-        transition_watched_issues(rest, state)
-
-      :no_action ->
-        transition_watched_issues(rest, state)
-    end
-  end
-
-  defp check_watched_issue_action(issue, allowlist) do
-    case Tracker.has_actionable_pr_feedback?(issue.id, allowlist) do
-      {:ok, true} ->
-        {:transition, "has actionable PR feedback"}
-
-      {:ok, false} ->
-        case Tracker.has_pr_approval?(issue.id) do
-          {:ok, true} -> {:transition, "PR approved via GitHub review"}
-          {:ok, false} -> :no_action
-          {:error, reason} ->
-            Logger.debug("Failed to check PR approval for #{issue_context(issue)}: #{inspect(reason)}")
-            :no_action
+      {:ok, :needs_agent, reasons} ->
+        # Only dispatch agent if there's actually something actionable (not just waiting)
+        if actionable_blocker?(reasons) do
+          Logger.info("Watch state dispatch: #{issue_context(issue)} needs agent: #{Enum.join(reasons, ", ")}")
+          dispatch_watched_issue(issue, reasons)
+        else
+          Logger.debug("Watch state: #{issue_context(issue)} waiting: #{Enum.join(reasons, ", ")}")
         end
 
       {:error, reason} ->
-        Logger.debug("Failed to check PR feedback for #{issue_context(issue)}: #{inspect(reason)}")
-        :no_action
+        Logger.debug("Failed to check auto-merge readiness for #{issue_context(issue)}: #{inspect(reason)}")
     end
+
+    transition_watched_issues(rest, state)
+  end
+
+  defp dispatch_watched_issue(issue, reasons) do
+    case Tracker.update_issue_state(issue.id, "status:in-progress") do
+      :ok ->
+        Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress (#{Enum.join(reasons, ", ")})")
+
+      {:error, err} ->
+        Logger.warning("Failed to transition watched issue #{issue_context(issue)}: #{inspect(err)}")
+    end
+  end
+
+  # Blockers that need agent action vs. just waiting
+  defp actionable_blocker?(reasons) do
+    Enum.any?(reasons, fn reason ->
+      reason not in ["no PR approval", "CI checks pending", "no linked PR found"]
+    end)
   end
 
   defp watch_state_set do

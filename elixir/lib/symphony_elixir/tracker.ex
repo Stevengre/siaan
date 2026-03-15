@@ -52,6 +52,23 @@ defmodule SymphonyElixir.Tracker do
     end
   end
 
+  @spec check_auto_merge_readiness(String.t()) ::
+          {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
+  def check_auto_merge_readiness(issue_id) do
+    case adapter() do
+      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.check_auto_merge_readiness(issue_id)
+      _ -> {:ok, :needs_agent, ["unsupported tracker"]}
+    end
+  end
+
+  @spec auto_merge_pr(pos_integer()) :: :ok | {:error, term()}
+  def auto_merge_pr(pr_number) do
+    case adapter() do
+      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.auto_merge_pr(pr_number)
+      _ -> {:error, :unsupported_tracker}
+    end
+  end
+
   @spec adapter() :: module()
   def adapter do
     case Config.settings!().tracker.kind do
