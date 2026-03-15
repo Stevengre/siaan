@@ -12,12 +12,18 @@ Options:
   -h, --help         Show this help.
 
 Environment:
+  ./.env             Loaded automatically when present.
   GITHUB_TOKEN       Required for GitHub tracker mode.
+  GH_TOKEN           Accepted as an alias for GITHUB_TOKEN.
+
+This script starts siaan directly on the host. For containerized runtime usage,
+prefer: docker compose up -d --build siaan
 EOF
 }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 elixir_dir="$script_dir/elixir"
+env_file="$script_dir/.env"
 
 resolve_absolute_path() {
   local path="$1"
@@ -109,6 +115,22 @@ bootstrap="false"
 port=""
 workflow="$elixir_dir/WORKFLOW.md"
 
+if [[ -f "$env_file" ]]; then
+  # Load simple KEY=VALUE entries from the repo-local .env for local runs.
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+fi
+
+if [[ -z "${GITHUB_TOKEN:-}" ]] && [[ -n "${GH_TOKEN:-}" ]]; then
+  export GITHUB_TOKEN="$GH_TOKEN"
+fi
+
+if [[ -z "${GH_TOKEN:-}" ]] && [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  export GH_TOKEN="$GITHUB_TOKEN"
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bootstrap)
@@ -161,7 +183,7 @@ tracker_kind="$(extract_tracker_kind "$workflow")"
 
 if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "error: GITHUB_TOKEN is not set." >&2
-  echo "run: export GITHUB_TOKEN=..." >&2
+  echo "set it in .env, export GITHUB_TOKEN=..., or export GH_TOKEN=..." >&2
   exit 1
 fi
 

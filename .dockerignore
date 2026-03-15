@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+.codex
+elixir/_build
+elixir/deps
+elixir/.elixir_ls
+*.beam
+*.ez
+erl_crash.dump
+.DS_Store
+.env
+.env.*
+.worktrees

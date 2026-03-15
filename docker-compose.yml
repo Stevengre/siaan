@@ -1,0 +1,27 @@
+services:
+  # Runtime: run siaan with a workflow file and isolated issue workspaces
+  siaan:
+    build:
+      context: .
+      target: runtime
+    volumes:
+      - ./elixir/WORKFLOW.md:/app/WORKFLOW.md:ro
+      - ~/code/workspaces/siaan:/root/code/workspaces/siaan
+      - ${HOME}/.codex:/root/.codex:ro
+    ports:
+      - "4000:4000"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GH_TOKEN=${GITHUB_TOKEN}
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME-Codex}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL-codex@users.noreply.github.com}
+      - OPENAI_API_KEY=${OPENAI_API_KEY-}
+      - OPENAI_ORG_ID=${OPENAI_ORG_ID-}
+      - OPENAI_PROJECT_ID=${OPENAI_PROJECT_ID-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL-}
+    command:
+      - "--i-understand-that-this-will-be-running-without-the-usual-guardrails"
+      - "--port"
+      - "4000"
+      - "/app/WORKFLOW.md"
+    restart: unless-stopped
