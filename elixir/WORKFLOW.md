@@ -101,7 +101,6 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- All PR comments posted by the agent must be prefixed with `[siaan]`.
 
 ## Status map
 
@@ -161,6 +160,8 @@ The agent should be able to talk to GitHub, either via a configured GitHub MCP s
 
 When a ticket has an attached PR, run this protocol before moving to `status:review`:
 
+**All PR comments and replies posted by the agent must be prefixed with `[siaan]`.**
+
 1. Identify the PR number from issue links/attachments.
 2. If `@codex` review has not yet been requested on the current PR revision, post this exact PR comment:
    - `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
@@ -215,7 +216,6 @@ Use this only when completion is blocked by missing required tools or missing au
 8.  Create or update a PR whose body includes `closes #<issue-number>` to auto-link it to the issue.
     - If PR creation is unavailable, record the PR URL in the workpad comment as a fallback.
     - Ensure the GitHub PR has label `siaan` (add it if missing).
-    - Do **not** request `@codex` review at this stage; review is requested only once at handoff time (Step 2.11).
 9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
