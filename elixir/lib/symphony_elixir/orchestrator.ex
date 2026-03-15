@@ -393,7 +393,7 @@ defmodule SymphonyElixir.Orchestrator do
   # Blockers that need agent action vs. just waiting
   defp actionable_blocker?(reasons) do
     Enum.any?(reasons, fn reason ->
-      reason not in ["no PR approval", "CI checks pending", "no linked PR found"]
+      reason not in ["no PR approval", "CI checks pending", "no linked PR found", "mergeability pending"]
     end)
   end
 
@@ -403,6 +403,12 @@ defmodule SymphonyElixir.Orchestrator do
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
+  end
+
+  @doc false
+  @spec actionable_blocker_for_test([String.t()]) :: boolean()
+  def actionable_blocker_for_test(reasons) when is_list(reasons) do
+    actionable_blocker?(reasons)
   end
 
   @doc false

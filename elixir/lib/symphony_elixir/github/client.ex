@@ -1150,11 +1150,21 @@ defmodule SymphonyElixir.GitHub.Client do
 
       has_approval =
         Enum.any?(latest_by_user, fn review ->
-          review["state"] == "APPROVED"
+          review["state"] == "APPROVED" and human_approval_review?(review)
         end)
 
       {:ok, has_approval}
     end
+  end
+
+  defp human_approval_review?(review) when is_map(review) do
+    login = get_in(review, ["user", "login"])
+    user_type = get_in(review, ["user", "type"])
+
+    is_binary(login) and String.trim(login) != "" and
+      user_type not in ["Bot", "App"] and
+      not String.ends_with?(String.downcase(login), "[bot]") and
+      not String.ends_with?(String.downcase(login), "-bot")
   end
 
   defp has_actionable_pr_feedback?(issue_id, allowlist, request_fun) do

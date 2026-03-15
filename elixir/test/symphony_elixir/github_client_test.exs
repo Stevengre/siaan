@@ -1350,6 +1350,28 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, true} = Client.has_pr_approval_for_test("7", approved_request)
 
+    bot_approved_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 55, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/55/reviews") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "siaan-bot", "type" => "User"}, "state" => "APPROVED"},
+               %{"user" => %{"login" => "chatgpt-codex-connector[bot]", "type" => "Bot"}, "state" => "APPROVED"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, false} = Client.has_pr_approval_for_test("7", bot_approved_request)
+
     not_approved_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
