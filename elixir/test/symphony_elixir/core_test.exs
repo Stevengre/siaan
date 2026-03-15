@@ -785,6 +785,12 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.retry_delay_for_test(2, %{}) >= 20_000
   end
 
+  test "actionable_blocker_for_test treats mergeability pending as waiting" do
+    refute Orchestrator.actionable_blocker_for_test(["mergeability pending"])
+    refute Orchestrator.actionable_blocker_for_test(["CI checks pending", "mergeability pending"])
+    assert Orchestrator.actionable_blocker_for_test(["mergeability pending", "unanswered PR comments"])
+  end
+
   test "abnormal worker exit increments retry attempt progressively" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
 

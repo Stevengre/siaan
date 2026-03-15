@@ -1,0 +1,6 @@
+interface:
+  display_name: "GitHub Issue Config"
+  short_description: "Reference the GitHub issue workflow and closing rules"
+  icon_small: "./assets/github-small.svg"
+  icon_large: "./assets/github.png"
+  default_prompt: "Use $gh-issue-config to review the GitHub issue workflow, labels, status rules, and closing criteria for this repo."

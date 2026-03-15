@@ -9,7 +9,7 @@ from typing import Any
 
 POLL_SECONDS = 10
 CHECKS_APPEAR_TIMEOUT_SECONDS = 120
-REQUIRED_APPROVAL_LABEL = "status:approval"
+# Approval is now checked via GitHub PR review state (APPROVED), not labels.
 CODEX_BOTS = {
     "chatgpt-codex-connector[bot]",
     "github-actions[bot]",
@@ -182,50 +182,24 @@ async def get_check_runs(head_sha: str) -> list[dict[str, Any]]:
     return check_runs
 
 
-async def get_issue_labels(issue_number: int) -> list[str]:
-    data = await run_gh(
-        "issue",
-        "view",
-        str(issue_number),
-        "--json",
-        "labels",
-    )
-    parsed = json.loads(data)
-    labels = parsed.get("labels")
-    if not isinstance(labels, list):
-        return []
-    normalized: list[str] = []
-    for label in labels:
-        if not isinstance(label, dict):
-            continue
-        name = label.get("name")
-        if not isinstance(name, str):
-            continue
-        normalized.append(normalize_label(name))
-    return normalized
-
 
 async def enforce_approval_gate(pr: PrInfo) -> None:
-    if not pr.linked_issue_numbers:
-        print(
-            "status:approval gate blocked: PR has no linked issues. Link an issue "
-            "and set status:approval before merge.",
-        )
-        raise SystemExit(6)
+    reviews = await get_reviews(pr.number)
+    # Dedupe by user, keep latest review per user
+    latest_by_user: dict[str, dict[str, Any]] = {}
+    for review in reviews:
+        login = review.get("user", {}).get("login")
+        if not login:
+            continue
+        latest_by_user[login] = review
 
-    missing: list[tuple[int, list[str]]] = []
-    for issue_number in pr.linked_issue_numbers:
-        labels = await get_issue_labels(issue_number)
-        if REQUIRED_APPROVAL_LABEL not in labels:
-            missing.append((issue_number, labels))
-
-    if missing:
-        print("status:approval gate blocked: linked issue(s) missing approval label.")
-        for issue_number, labels in missing:
-            if labels:
-                print(f"- #{issue_number}: labels={','.join(labels)}")
-            else:
-                print(f"- #{issue_number}: labels=<none>")
+    has_approval = any(
+        r.get("state") == "APPROVED"
+        and is_human_review_user(r.get("user", {}))
+        for r in latest_by_user.values()
+    )
+    if not has_approval:
+        print("Approval gate blocked: PR has no GitHub review approval.")
         raise SystemExit(6)
 
 
@@ -339,16 +313,23 @@ def is_codex_bot_user(user: dict[str, Any]) -> bool:
 
 
 def is_bot_user(user: dict[str, Any]) -> bool:
-    login = user.get("login") or ""
+    login = (user.get("login") or "").lower()
     if is_codex_bot_user(user):
         return True
-    if user.get("type") == "Bot":
+    if user.get("type") in ("Bot", "App"):
         return True
-    return login.endswith("[bot]")
+    return login.endswith("[bot]") or login.endswith("-bot")
+
+
+def is_human_review_user(user: dict[str, Any]) -> bool:
+    login = user.get("login")
+    if not isinstance(login, str) or not login.strip():
+        return False
+    return not is_bot_user(user)
 
 
 def is_codex_reply_body(body: str) -> bool:
-    return body.startswith("[codex]")
+    return body.startswith("[siaan]")
 
 
 def is_codex_review_body(body: str) -> bool:
@@ -485,7 +466,7 @@ def is_blocking_review(
     state = review.get("state")
     if user_login in CODEX_BOTS:
         return state == "CHANGES_REQUESTED"
-    if body.startswith("[codex]") or state in ("APPROVED", "DISMISSED"):
+    if body.startswith("[siaan]") or state in ("APPROVED", "DISMISSED"):
         return False
     blocking = False
     if body or state == "CHANGES_REQUESTED":

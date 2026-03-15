@@ -227,6 +227,7 @@ defmodule SymphonyElixir.Orchestrator do
     state = reconcile_running_issues(state)
 
     with :ok <- Config.validate!(),
+         state <- check_watch_states(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
@@ -297,6 +298,117 @@ defmodule SymphonyElixir.Orchestrator do
           state
       end
     end
+  end
+
+  defp check_watch_states(%State{} = state) do
+    watch_states = watch_state_set()
+
+    if MapSet.size(watch_states) == 0 do
+      state
+    else
+      watch_state_names =
+        watch_states
+        |> MapSet.to_list()
+
+      case Tracker.fetch_issues_by_states(watch_state_names) do
+        {:ok, issues} ->
+          transition_watched_issues(issues, state)
+
+        {:error, reason} ->
+          Logger.debug("Failed to fetch watch_states issues: #{inspect(reason)}")
+          state
+      end
+    end
+  end
+
+  defp transition_watched_issues([], state), do: state
+
+  defp transition_watched_issues([issue | rest], state) do
+    process_watched_issue(issue)
+
+    transition_watched_issues(rest, state)
+  end
+
+  defp process_watched_issue(issue) do
+    if watched_issue_merge_candidate?(issue) do
+      evaluate_watched_issue(issue)
+    else
+      Logger.debug("Watch state skip: #{issue_context(issue)} state=#{inspect(issue.state)} not open/non-terminal")
+    end
+  end
+
+  defp evaluate_watched_issue(issue) do
+    case Tracker.check_auto_merge_readiness(issue.id) do
+      {:ok, :ready, pr_number} ->
+        Logger.info("Auto-merge: #{issue_context(issue)} PR ##{pr_number} is ready; merging")
+        handle_ready_watch_issue(issue, pr_number)
+
+      {:ok, :needs_agent, reasons} ->
+        handle_watch_issue_blockers(issue, reasons)
+
+      {:error, reason} ->
+        Logger.debug("Failed to check auto-merge readiness for #{issue_context(issue)}: #{inspect(reason)}")
+    end
+  end
+
+  defp handle_ready_watch_issue(issue, pr_number) do
+    case Tracker.auto_merge_pr(pr_number) do
+      :ok ->
+        Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
+
+      {:error, reason} ->
+        Logger.warning("Auto-merge failed for #{issue_context(issue)} PR ##{pr_number}: #{inspect(reason)}; dispatching agent")
+        dispatch_watched_issue(issue, ["auto-merge failed: #{inspect(reason)}"])
+    end
+  end
+
+  defp handle_watch_issue_blockers(issue, reasons) do
+    # Only dispatch agent if there's actually something actionable (not just waiting)
+    if actionable_blocker?(reasons) do
+      Logger.info("Watch state dispatch: #{issue_context(issue)} needs agent: #{Enum.join(reasons, ", ")}")
+      dispatch_watched_issue(issue, reasons)
+    else
+      Logger.debug("Watch state: #{issue_context(issue)} waiting: #{Enum.join(reasons, ", ")}")
+    end
+  end
+
+  defp watched_issue_merge_candidate?(%Issue{state: state_name}) when is_binary(state_name) do
+    normalized_state = normalize_issue_state(state_name)
+
+    normalized_state != "closed" and not terminal_issue_state?(state_name, terminal_state_set())
+  end
+
+  defp watched_issue_merge_candidate?(_issue), do: false
+
+  defp dispatch_watched_issue(issue, reasons) do
+    case Tracker.update_issue_state(issue.id, "status:in-progress") do
+      :ok ->
+        Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress (#{Enum.join(reasons, ", ")})")
+
+      {:error, err} ->
+        Logger.warning("Failed to transition watched issue #{issue_context(issue)}: #{inspect(err)}")
+    end
+  end
+
+  # Blockers that need agent action vs. just waiting
+  defp actionable_blocker?(reasons) do
+    Enum.any?(reasons, fn reason ->
+      reason not in ["no PR approval", "CI checks pending", "no linked PR found", "mergeability pending"]
+    end)
+  end
+
+  defp watch_state_set do
+    (Config.settings!().tracker.watch_states || [])
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&normalize_issue_state/1)
+    |> Enum.filter(&(&1 != ""))
+    |> MapSet.new()
+  end
+
+  @doc false
+  @spec actionable_blocker_for_test([String.t()]) :: boolean()
+  def actionable_blocker_for_test(reasons) when is_list(reasons) do
+    actionable_blocker?(reasons)
   end
 
   @doc false
@@ -650,7 +762,7 @@ defmodule SymphonyElixir.Orchestrator do
          terminal_states
        )
        when is_binary(issue_state) and is_list(blockers) do
-    normalize_issue_state(issue_state) == "todo" and
+    pre_execution_state?(issue_state) and
       Enum.any?(blockers, fn
         %{state: blocker_state} when is_binary(blocker_state) ->
           !terminal_issue_state?(blocker_state, terminal_states)
@@ -661,6 +773,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp todo_issue_blocked_by_non_terminal?(_issue, _terminal_states), do: false
+
+  defp pre_execution_state?(issue_state) when is_binary(issue_state) do
+    normalize_issue_state(issue_state) in ["todo", "status:ready"]
+  end
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     MapSet.member?(terminal_states, normalize_issue_state(state_name))

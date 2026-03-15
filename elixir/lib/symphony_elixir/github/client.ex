@@ -17,8 +17,7 @@ defmodule SymphonyElixir.GitHub.Client do
     "status:triage" => ["status:ready"],
     "status:ready" => ["status:in-progress"],
     "status:in-progress" => ["status:review"],
-    "status:review" => ["status:in-progress", "status:approval"],
-    "status:approval" => []
+    "status:review" => ["status:in-progress"]
   }
 
   @type request_fun :: (atom(), String.t(), keyword() -> {:ok, map()} | {:error, term()})
@@ -106,6 +105,57 @@ defmodule SymphonyElixir.GitHub.Client do
         Logger.error("GitHub GraphQL request failed: #{inspect(reason)}")
         {:error, {:github_api_request, reason}}
     end
+  end
+
+  @spec has_actionable_pr_feedback?(String.t(), [String.t()]) :: {:ok, boolean()} | {:error, term()}
+  def has_actionable_pr_feedback?(issue_id, allowlist)
+      when is_binary(issue_id) and is_list(allowlist) do
+    has_actionable_pr_feedback?(issue_id, allowlist, &request/3)
+  end
+
+  @spec has_actionable_pr_feedback_for_test(String.t(), [String.t()], request_fun()) ::
+          {:ok, boolean()} | {:error, term()}
+  def has_actionable_pr_feedback_for_test(issue_id, allowlist, request_fun)
+      when is_binary(issue_id) and is_list(allowlist) and is_function(request_fun, 3) do
+    has_actionable_pr_feedback?(issue_id, allowlist, request_fun)
+  end
+
+  @spec has_pr_approval?(String.t()) :: {:ok, boolean()} | {:error, term()}
+  def has_pr_approval?(issue_id) when is_binary(issue_id) do
+    has_pr_approval?(issue_id, &request/3)
+  end
+
+  @spec has_pr_approval_for_test(String.t(), request_fun()) :: {:ok, boolean()} | {:error, term()}
+  def has_pr_approval_for_test(issue_id, request_fun)
+      when is_binary(issue_id) and is_function(request_fun, 3) do
+    has_pr_approval?(issue_id, request_fun)
+  end
+
+  @reply_prefix "[siaan]"
+  @pulls_per_page 100
+
+  @type auto_merge_result :: {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
+
+  @spec check_auto_merge_readiness(String.t()) :: auto_merge_result()
+  def check_auto_merge_readiness(issue_id) when is_binary(issue_id) do
+    check_auto_merge_readiness(issue_id, &request/3)
+  end
+
+  @spec check_auto_merge_readiness_for_test(String.t(), request_fun()) :: auto_merge_result()
+  def check_auto_merge_readiness_for_test(issue_id, request_fun)
+      when is_binary(issue_id) and is_function(request_fun, 3) do
+    check_auto_merge_readiness(issue_id, request_fun)
+  end
+
+  @spec auto_merge_pr(pos_integer()) :: :ok | {:error, term()}
+  def auto_merge_pr(pr_number) when is_integer(pr_number) do
+    auto_merge_pr(pr_number, &request/3)
+  end
+
+  @spec auto_merge_pr_for_test(pos_integer(), request_fun()) :: :ok | {:error, term()}
+  def auto_merge_pr_for_test(pr_number, request_fun)
+      when is_integer(pr_number) and is_function(request_fun, 3) do
+    auto_merge_pr(pr_number, request_fun)
   end
 
   @spec normalize_issue_for_test(map()) :: Issue.t() | nil
@@ -453,6 +503,7 @@ defmodule SymphonyElixir.GitHub.Client do
            request_fun.(:put, branch_protection_url(repo, branch), headers: protection_headers, json: payload) do
       :ok
     else
+      {:ok, %{status: 422, body: body}} -> {:error, {:github_api_status, 422, body}}
       {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
       {:error, reason} -> {:error, {:github_api_request, reason}}
     end
@@ -628,7 +679,8 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_tracker_config do
-    tracker = Config.settings!().tracker
+    settings = Config.settings!()
+    tracker = settings.tracker
 
     with {:ok, _api_key} <- ensure_present_string(tracker.api_key, :missing_github_api_token),
          {:ok, normalized_owner} <- ensure_present_string(tracker.repo_owner, :missing_github_repo_owner),
@@ -639,6 +691,7 @@ defmodule SymphonyElixir.GitHub.Client do
          repo_name: normalized_repo,
          ready_label: normalize_label(tracker.ready_label || "status:ready"),
          active_states: normalize_state_names(tracker.active_states || []),
+         allowlist: normalize_state_names(settings.allowlist),
          api_key: tracker.api_key,
          rest_endpoint: github_rest_endpoint()
        }}
@@ -783,6 +836,476 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp extract_default_branch(_body), do: {:error, :missing_default_branch}
+
+  defp check_auto_merge_readiness(issue_id, request_fun) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, number} <- parse_issue_number(issue_id),
+         {:ok, headers} <- github_headers(),
+         {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
+      do_check_auto_merge_readiness(tracker, pr_number, headers, request_fun)
+    else
+      {:error, :no_pr} -> {:ok, :needs_agent, ["no linked PR found"]}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp do_check_auto_merge_readiness(tracker, pr_number, headers, request_fun) do
+    with {:ok, pr_data} <- fetch_pr_data(tracker, pr_number, headers, request_fun) do
+      blockers =
+        merge_conflict_blockers(pr_data)
+        |> Kernel.++(ci_blockers(tracker, pr_data, headers, request_fun))
+        |> Kernel.++(approval_blockers(tracker, pr_number, headers, request_fun))
+        |> Kernel.++(comment_blockers(tracker, pr_number, headers, request_fun))
+
+      readiness_result(blockers, pr_number)
+    end
+  end
+
+  defp merge_conflict_blockers(pr_data) do
+    normalized =
+      pr_data
+      |> Map.get(:mergeable, "")
+      |> to_string()
+      |> String.downcase()
+      |> String.trim()
+
+    cond do
+      normalized in ["conflicting", "dirty"] ->
+        ["merge conflicts"]
+
+      normalized == "clean" ->
+        []
+
+      normalized == "behind" ->
+        ["branch out of date"]
+
+      true ->
+        ["mergeability pending"]
+    end
+  end
+
+  defp ci_blockers(tracker, pr_data, headers, request_fun) do
+    case check_ci_status(tracker, pr_data.head_sha, headers, request_fun) do
+      {:ok, :green} -> []
+      {:ok, :pending} -> ["CI checks pending"]
+      {:ok, :failed} -> ["CI checks failed"]
+      {:error, _} -> ["failed to check CI"]
+    end
+  end
+
+  defp approval_blockers(tracker, pr_number, headers, request_fun) do
+    case check_pr_approval_state(tracker, pr_number, headers, request_fun) do
+      {:ok, :approved} -> []
+      {:ok, :changes_requested} -> ["changes requested"]
+      {:ok, :no_approval} -> ["no PR approval"]
+      {:error, _} -> ["failed to check approval"]
+    end
+  end
+
+  defp comment_blockers(tracker, pr_number, headers, request_fun) do
+    case check_unanswered_comments(tracker, pr_number, headers, request_fun) do
+      {:ok, []} -> []
+      {:ok, reasons} -> Enum.reverse(reasons)
+      {:error, _} -> ["failed to check comments"]
+    end
+  end
+
+  defp readiness_result([], pr_number), do: {:ok, :ready, pr_number}
+  defp readiness_result(blockers, _pr_number), do: {:ok, :needs_agent, blockers}
+
+  defp fetch_pr_data(tracker, pr_number, headers, request_fun) do
+    url = "#{repo_url(tracker)}/pulls/#{pr_number}"
+
+    case request_fun.(:get, url, headers: headers) do
+      {:ok, %{status: 200, body: body}} when is_map(body) ->
+        {:ok,
+         %{
+           mergeable: body["mergeable_state"],
+           head_sha: body["head"] |> get_in_safe(["sha"]),
+           title: body["title"],
+           body: body["body"]
+         }}
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp get_in_safe(nil, _keys), do: nil
+  defp get_in_safe(data, []), do: data
+  defp get_in_safe(data, [key | rest]) when is_map(data), do: get_in_safe(Map.get(data, key), rest)
+  defp get_in_safe(_data, _keys), do: nil
+
+  defp check_ci_status(tracker, head_sha, headers, request_fun) when is_binary(head_sha) do
+    url = "#{repo_url(tracker)}/commits/#{head_sha}/check-runs"
+
+    case request_fun.(:get, url, headers: headers, params: [per_page: 100]) do
+      {:ok, %{status: 200, body: %{"check_runs" => check_runs}}} when is_list(check_runs) ->
+        cond do
+          check_runs == [] -> {:ok, :pending}
+          Enum.any?(check_runs, &ci_check_failed?/1) -> {:ok, :failed}
+          Enum.any?(check_runs, &ci_check_pending?/1) -> {:ok, :pending}
+          true -> {:ok, :green}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp check_ci_status(_tracker, _head_sha, _headers, _request_fun), do: {:ok, :green}
+
+  defp ci_check_failed?(%{"status" => "completed", "conclusion" => conclusion})
+       when conclusion not in ["success", "skipped", "neutral"],
+       do: true
+
+  defp ci_check_failed?(_check), do: false
+
+  defp ci_check_pending?(%{"status" => status}) when status != "completed", do: true
+  defp ci_check_pending?(_check), do: false
+
+  defp check_unanswered_comments(tracker, pr_number, headers, request_fun) do
+    allowlist_set = tracker.allowlist |> MapSet.new(&String.downcase/1)
+
+    with {:ok, issue_comments} <- fetch_pr_issue_comments(tracker, pr_number, headers, request_fun),
+         {:ok, review_comments} <- fetch_pr_review_comments(tracker, pr_number, headers, request_fun) do
+      blockers = []
+
+      blockers =
+        if has_unanswered_issue_comments?(issue_comments, allowlist_set),
+          do: ["unanswered PR comments" | blockers],
+          else: blockers
+
+      blockers =
+        if has_unanswered_review_comments?(review_comments, allowlist_set),
+          do: ["unanswered review comments" | blockers],
+          else: blockers
+
+      {:ok, blockers}
+    end
+  end
+
+  defp fetch_pr_issue_comments(tracker, pr_number, headers, request_fun) do
+    url = "#{repo_url(tracker)}/issues/#{pr_number}/comments"
+    fetch_paginated_list(url, headers, request_fun)
+  end
+
+  defp fetch_pr_review_comments(tracker, pr_number, headers, request_fun) do
+    url = "#{repo_url(tracker)}/pulls/#{pr_number}/comments"
+    fetch_paginated_list(url, headers, request_fun)
+  end
+
+  defp has_unanswered_issue_comments?(comments, allowlist_set) do
+    actionable_comment_times =
+      comments
+      |> Enum.filter(&actionable_issue_comment?(&1, allowlist_set))
+      |> Enum.map(&comment_time/1)
+
+    reply_times =
+      comments
+      |> Enum.filter(&trusted_siaan_reply_comment?(&1, allowlist_set))
+      |> Enum.map(&comment_time/1)
+      |> Enum.reject(&is_nil/1)
+
+    unmatched_actionable_comment?(actionable_comment_times, reply_times)
+  end
+
+  defp actionable_issue_comment?(comment, allowlist_set) do
+    login = get_in(comment, ["user", "login"]) || ""
+    body = (comment["body"] || "") |> String.trim()
+
+    MapSet.member?(allowlist_set, String.downcase(login)) and
+      not String.starts_with?(body, @reply_prefix) and
+      not codex_review_request?(body) and
+      not String.starts_with?(body, "## Codex Review")
+  end
+
+  defp unmatched_actionable_comment?([], _reply_times), do: false
+  defp unmatched_actionable_comment?([nil | _rest], _reply_times), do: true
+  defp unmatched_actionable_comment?(_actionable_times, []), do: true
+
+  defp unmatched_actionable_comment?([comment_at | rest_comments], [reply_at | rest_replies]) do
+    if reply_at > comment_at do
+      unmatched_actionable_comment?(rest_comments, rest_replies)
+    else
+      unmatched_actionable_comment?([comment_at | rest_comments], rest_replies)
+    end
+  end
+
+  defp has_unanswered_review_comments?(comments, allowlist_set) do
+    # Group by thread (in_reply_to_id), check if each thread has a [siaan] reply
+    threads =
+      comments
+      |> Enum.group_by(fn comment ->
+        comment["in_reply_to_id"] || comment["id"]
+      end)
+
+    Enum.any?(threads, fn {_thread_id, thread_comments} ->
+      latest_human_index =
+        thread_comments
+        |> Enum.with_index()
+        |> Enum.filter(fn {comment, _index} -> actionable_review_comment?(comment, allowlist_set) end)
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.max(fn -> nil end)
+
+      latest_siaan_index =
+        thread_comments
+        |> Enum.with_index()
+        |> Enum.filter(fn {comment, _index} ->
+          trusted_siaan_reply_comment?(comment, allowlist_set)
+        end)
+        |> Enum.map(&elem(&1, 1))
+        |> Enum.max(fn -> nil end)
+
+      case latest_human_index do
+        nil -> false
+        _ -> is_nil(latest_siaan_index) or latest_human_index > latest_siaan_index
+      end
+    end)
+  end
+
+  defp actionable_review_comment?(comment, allowlist_set) do
+    login = get_in(comment, ["user", "login"]) || ""
+    body = (comment["body"] || "") |> String.trim()
+
+    MapSet.member?(allowlist_set, String.downcase(login)) and
+      not String.starts_with?(body, @reply_prefix) and
+      not codex_review_request?(body) and
+      not String.starts_with?(body, "## Codex Review")
+  end
+
+  defp trusted_siaan_reply_comment?(comment, allowlist_set) do
+    body = (comment["body"] || "") |> String.trim()
+    login = get_in(comment, ["user", "login"])
+    normalized_login = if is_binary(login), do: String.downcase(login), else: ""
+
+    String.starts_with?(body, @reply_prefix) and
+      MapSet.member?(allowlist_set, normalized_login)
+  end
+
+  defp comment_time(comment), do: comment["created_at"] || comment["updated_at"]
+
+  defp codex_review_request?(body) when is_binary(body) do
+    Regex.match?(~r/@codex\b.*\breview\b/i, body)
+  end
+
+  defp auto_merge_pr(pr_number, request_fun) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, headers} <- github_headers() do
+      :ok = update_pr_branch(tracker, pr_number, headers, request_fun)
+      merge_pr(tracker, pr_number, headers, request_fun)
+    end
+  end
+
+  defp update_pr_branch(tracker, pr_number, headers, request_fun) do
+    update_url = "#{repo_url(tracker)}/pulls/#{pr_number}/update-branch"
+
+    case request_fun.(:put, update_url, headers: headers, json: %{}) do
+      {:ok, %{status: status}} when status in [200, 202] -> :ok
+      # Already up to date
+      {:ok, %{status: 422}} -> :ok
+      # Best effort; merge will fail if branch is behind
+      _ -> :ok
+    end
+  end
+
+  defp merge_pr(tracker, pr_number, headers, request_fun) do
+    merge_url = "#{repo_url(tracker)}/pulls/#{pr_number}/merge"
+    merge_payload = %{"merge_method" => "squash"}
+
+    case request_fun.(:put, merge_url, headers: headers, json: merge_payload) do
+      {:ok, %{status: 200}} ->
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        message = if is_map(body), do: body["message"], else: inspect(body)
+        {:error, {:merge_failed, status, message}}
+
+      {:error, reason} ->
+        {:error, {:merge_request_failed, reason}}
+    end
+  end
+
+  defp has_pr_approval?(issue_id, request_fun) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, number} <- parse_issue_number(issue_id),
+         {:ok, headers} <- github_headers(),
+         {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
+      check_pr_approved(tracker, pr_number, headers, request_fun)
+    else
+      {:error, :no_pr} -> {:ok, false}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp check_pr_approved(tracker, pr_number, headers, request_fun) do
+    with {:ok, approval_state} <- check_pr_approval_state(tracker, pr_number, headers, request_fun) do
+      {:ok, approval_state == :approved}
+    end
+  end
+
+  defp check_pr_approval_state(tracker, pr_number, headers, request_fun) do
+    url = "#{repo_url(tracker)}/pulls/#{pr_number}/reviews"
+
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      # Dedupe by user, keep latest review per user
+      latest_by_user =
+        body
+        |> Enum.filter(&is_map/1)
+        |> Enum.group_by(fn review -> get_in(review, ["user", "login"]) end)
+        |> Enum.map(fn {_login, reviews} -> List.last(reviews) end)
+        |> Enum.filter(&human_approval_review?/1)
+
+      approval_state =
+        cond do
+          Enum.any?(latest_by_user, &(&1["state"] == "CHANGES_REQUESTED")) -> :changes_requested
+          Enum.any?(latest_by_user, &(&1["state"] == "APPROVED")) -> :approved
+          true -> :no_approval
+        end
+
+      {:ok, approval_state}
+    end
+  end
+
+  defp human_approval_review?(review) when is_map(review) do
+    login = get_in(review, ["user", "login"])
+    user_type = get_in(review, ["user", "type"])
+
+    is_binary(login) and String.trim(login) != "" and
+      user_type not in ["Bot", "App"] and
+      not String.ends_with?(String.downcase(login), "[bot]") and
+      not String.ends_with?(String.downcase(login), "-bot")
+  end
+
+  defp has_actionable_pr_feedback?(issue_id, allowlist, request_fun) do
+    with {:ok, tracker} <- github_tracker_config(),
+         {:ok, number} <- parse_issue_number(issue_id),
+         {:ok, headers} <- github_headers(),
+         {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
+      check_pr_for_actionable_comments(tracker, pr_number, allowlist, headers, request_fun)
+    else
+      {:error, :no_pr} -> {:ok, false}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp find_linked_pr_number(tracker, issue_number, headers, request_fun) do
+    url = "#{repo_url(tracker)}/pulls"
+    find_linked_pr_number_page(url, issue_number, headers, request_fun, 1)
+  end
+
+  defp find_linked_pr_number_page(url, issue_number, headers, request_fun, page) do
+    params = [state: "open", per_page: @pulls_per_page, page: page]
+
+    case request_fun.(:get, url, headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        resolve_linked_pr_page(body, issue_number, url, headers, request_fun, page)
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
+
+  defp resolve_linked_pr_page(body, issue_number, url, headers, request_fun, page) do
+    case find_issue_closing_pr_number(body, issue_number) do
+      {:ok, pr_number} -> {:ok, pr_number}
+      :not_found -> continue_linked_pr_page_search(body, issue_number, url, headers, request_fun, page)
+    end
+  end
+
+  defp continue_linked_pr_page_search(body, _issue_number, _url, _headers, _request_fun, _page)
+       when length(body) < @pulls_per_page,
+       do: {:error, :no_pr}
+
+  defp continue_linked_pr_page_search(_body, issue_number, url, headers, request_fun, page) do
+    find_linked_pr_number_page(url, issue_number, headers, request_fun, page + 1)
+  end
+
+  defp find_issue_closing_pr_number(prs, issue_number) when is_list(prs) do
+    case Enum.find(prs, fn pr ->
+           pr_body = pr["body"] || ""
+           issue_closing_reference?(pr_body, issue_number)
+         end) do
+      %{"number" => pr_number} -> {:ok, pr_number}
+      _ -> :not_found
+    end
+  end
+
+  defp issue_closing_reference?(body, issue_number) when is_binary(body) do
+    escaped_issue = issue_number |> to_string() |> Regex.escape()
+    Regex.match?(Regex.compile!("(^|\\W)closes\\s+#" <> escaped_issue <> "(?!\\d)", "i"), body)
+  end
+
+  defp check_pr_for_actionable_comments(tracker, pr_number, allowlist, headers, request_fun) do
+    normalized_allowlist = MapSet.new(allowlist, &String.downcase/1)
+
+    with {:ok, has_review_comments} <-
+           check_pr_review_comments(tracker, pr_number, normalized_allowlist, headers, request_fun),
+         {:ok, has_issue_comments} <-
+           check_pr_issue_comments(tracker, pr_number, normalized_allowlist, headers, request_fun) do
+      {:ok, has_review_comments or has_issue_comments}
+    end
+  end
+
+  defp check_pr_review_comments(tracker, pr_number, allowlist_set, headers, request_fun) do
+    url = "#{repo_url(tracker)}/pulls/#{pr_number}/comments"
+
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      has_actionable =
+        Enum.any?(body, fn comment ->
+          login = get_in(comment, ["user", "login"]) || ""
+          MapSet.member?(allowlist_set, String.downcase(login))
+        end)
+
+      {:ok, has_actionable}
+    end
+  end
+
+  defp check_pr_issue_comments(tracker, pr_number, allowlist_set, headers, request_fun) do
+    url = "#{repo_url(tracker)}/issues/#{pr_number}/comments"
+
+    with {:ok, body} <- fetch_paginated_list(url, headers, request_fun) do
+      has_actionable =
+        Enum.any?(body, fn comment ->
+          login = get_in(comment, ["user", "login"]) || ""
+          MapSet.member?(allowlist_set, String.downcase(login))
+        end)
+
+      {:ok, has_actionable}
+    end
+  end
+
+  defp fetch_paginated_list(url, headers, request_fun) do
+    fetch_paginated_list(url, headers, request_fun, 1, [])
+  end
+
+  defp fetch_paginated_list(url, headers, request_fun, page, acc) do
+    params = [per_page: @pulls_per_page, page: page]
+
+    case request_fun.(:get, url, headers: headers, params: params) do
+      {:ok, %{status: 200, body: body}} when is_list(body) ->
+        if length(body) < @pulls_per_page do
+          {:ok, Enum.reverse([body | acc]) |> List.flatten()}
+        else
+          fetch_paginated_list(url, headers, request_fun, page + 1, [body | acc])
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
 
   defp request(method, url, opts) when is_atom(method) and is_binary(url) and is_list(opts) do
     Req.request(
