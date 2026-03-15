@@ -39,6 +39,26 @@ extract_tracker_kind() {
   local workflow_path="$1"
 
   awk '
+    function normalize_kind_value(value) {
+      sub(/^[[:space:]]*kind:[[:space:]]*/, "", value)
+      sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
+      gsub(/^["'"'"']/, "", value)
+      gsub(/["'"'"']$/, "", value)
+      return tolower(value)
+    }
+
+    function print_inline_tracker_kind(line, candidate) {
+      candidate = line
+
+      if (!match(candidate, /kind:[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
+        return 0
+      }
+
+      candidate = substr(candidate, RSTART, RLENGTH)
+      print normalize_kind_value(candidate)
+      return 1
+    }
+
     BEGIN {
       in_tracker = 0
       tracker_indent = -1
@@ -51,6 +71,14 @@ extract_tracker_kind() {
 
       match($0, /[^[:space:]]/)
       indent = RSTART ? RSTART - 1 : 0
+    }
+
+    /^[[:space:]]*tracker:[[:space:]]*{/ {
+      if (print_inline_tracker_kind($0)) {
+        exit
+      }
+
+      next
     }
 
     /^[[:space:]]*tracker:[[:space:]]*$/ {
