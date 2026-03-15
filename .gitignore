@@ -22,6 +22,3 @@ erl_crash.dump
 # Env
 .env
 .env.*
-
-# User workflow (use WORKFLOW.*.example.md as template)
-elixir/WORKFLOW.md
