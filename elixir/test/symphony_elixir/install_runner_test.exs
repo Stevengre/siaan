@@ -227,7 +227,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
     {_output, 0} = System.cmd("git", ["init"], cd: repo_root, stderr_to_stdout: true)
 
     {_output, 0} =
-      System.cmd("git", ["remote", "add", "origin", "https://ghe.example.com/acme/repo.git"],
+      System.cmd("git", ["remote", "add", "origin", "https://ghe.example.com/acme/repo.git/"],
         cd: repo_root,
         stderr_to_stdout: true
       )

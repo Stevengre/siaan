@@ -88,6 +88,17 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert {:ok, "http://ghe.example.com:8080/api/v3"} = Repository.github_rest_endpoint(repo_root)
   end
 
+  test "github_repo trims trailing slashes from uri remotes before splitting owner and repo" do
+    repo_root =
+      git_repo_with_origin!(
+        "install-repository-enterprise-trailing-slash",
+        "https://ghe.example.com/acme/repo.git/"
+      )
+
+    assert {:ok, %{owner: "acme", repo: "repo"}} = Repository.github_repo(repo_root)
+    assert {:ok, "https://ghe.example.com/api/v3"} = Repository.github_rest_endpoint(repo_root)
+  end
+
   test "github_repo prefers origin remote over ambient GITHUB_REPOSITORY" do
     repo_root = git_repo_with_origin!("install-repository-prefer-origin", "https://ghe.example.com/acme/repo.git")
     System.put_env("GITHUB_REPOSITORY", "Stevengre/siaan")

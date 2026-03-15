@@ -140,7 +140,11 @@ defmodule SymphonyElixir.Install.Repository do
   end
 
   defp parse_repo_string(raw) when is_binary(raw) do
-    trimmed = raw |> String.trim() |> String.trim_trailing(".git")
+    trimmed =
+      raw
+      |> String.trim()
+      |> String.trim_trailing("/")
+      |> String.replace_suffix(".git", "")
 
     case String.split(trimmed, "/", parts: 2) do
       [owner, repo] -> normalize_pair(owner, repo)
