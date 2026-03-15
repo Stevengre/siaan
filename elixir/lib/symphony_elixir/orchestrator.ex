@@ -324,34 +324,61 @@ defmodule SymphonyElixir.Orchestrator do
   defp transition_watched_issues([], state), do: state
 
   defp transition_watched_issues([issue | rest], state) do
+    process_watched_issue(issue)
+
+    transition_watched_issues(rest, state)
+  end
+
+  defp process_watched_issue(issue) do
+    if watched_issue_merge_candidate?(issue) do
+      evaluate_watched_issue(issue)
+    else
+      Logger.debug("Watch state skip: #{issue_context(issue)} state=#{inspect(issue.state)} not open/non-terminal")
+    end
+  end
+
+  defp evaluate_watched_issue(issue) do
     case Tracker.check_auto_merge_readiness(issue.id) do
       {:ok, :ready, pr_number} ->
         Logger.info("Auto-merge: #{issue_context(issue)} PR ##{pr_number} is ready; merging")
-
-        case Tracker.auto_merge_pr(pr_number) do
-          :ok ->
-            Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
-
-          {:error, reason} ->
-            Logger.warning("Auto-merge failed for #{issue_context(issue)} PR ##{pr_number}: #{inspect(reason)}; dispatching agent")
-            dispatch_watched_issue(issue, ["auto-merge failed: #{inspect(reason)}"])
-        end
+        handle_ready_watch_issue(issue, pr_number)
 
       {:ok, :needs_agent, reasons} ->
-        # Only dispatch agent if there's actually something actionable (not just waiting)
-        if actionable_blocker?(reasons) do
-          Logger.info("Watch state dispatch: #{issue_context(issue)} needs agent: #{Enum.join(reasons, ", ")}")
-          dispatch_watched_issue(issue, reasons)
-        else
-          Logger.debug("Watch state: #{issue_context(issue)} waiting: #{Enum.join(reasons, ", ")}")
-        end
+        handle_watch_issue_blockers(issue, reasons)
 
       {:error, reason} ->
         Logger.debug("Failed to check auto-merge readiness for #{issue_context(issue)}: #{inspect(reason)}")
     end
-
-    transition_watched_issues(rest, state)
   end
+
+  defp handle_ready_watch_issue(issue, pr_number) do
+    case Tracker.auto_merge_pr(pr_number) do
+      :ok ->
+        Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
+
+      {:error, reason} ->
+        Logger.warning("Auto-merge failed for #{issue_context(issue)} PR ##{pr_number}: #{inspect(reason)}; dispatching agent")
+        dispatch_watched_issue(issue, ["auto-merge failed: #{inspect(reason)}"])
+    end
+  end
+
+  defp handle_watch_issue_blockers(issue, reasons) do
+    # Only dispatch agent if there's actually something actionable (not just waiting)
+    if actionable_blocker?(reasons) do
+      Logger.info("Watch state dispatch: #{issue_context(issue)} needs agent: #{Enum.join(reasons, ", ")}")
+      dispatch_watched_issue(issue, reasons)
+    else
+      Logger.debug("Watch state: #{issue_context(issue)} waiting: #{Enum.join(reasons, ", ")}")
+    end
+  end
+
+  defp watched_issue_merge_candidate?(%Issue{state: state_name}) when is_binary(state_name) do
+    normalized_state = normalize_issue_state(state_name)
+
+    normalized_state != "closed" and not terminal_issue_state?(state_name, terminal_state_set())
+  end
+
+  defp watched_issue_merge_candidate?(_issue), do: false
 
   defp dispatch_watched_issue(issue, reasons) do
     case Tracker.update_issue_state(issue.id, "status:in-progress") do
