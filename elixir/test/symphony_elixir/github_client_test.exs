@@ -1173,6 +1173,863 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              )
   end
 
+  test "new public github wrappers fail fast without auth and without issuing network requests" do
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    System.delete_env("GITHUB_TOKEN")
+    on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
+
+    write_github_tracker_workflow(tracker_api_token: nil)
+
+    assert {:error, :missing_github_api_token} = Client.has_actionable_pr_feedback?("7", [])
+    assert {:error, :missing_github_api_token} = Client.has_pr_approval?("7")
+    assert {:error, :missing_github_api_token} = Client.check_auto_merge_readiness("7")
+    assert {:error, :missing_github_api_token} = Client.auto_merge_pr(7)
+  end
+
+  test "has_actionable_pr_feedback_for_test handles no-pr, success, and API error paths" do
+    write_github_tracker_workflow()
+
+    no_pr_request = fn :get, url, _opts ->
+      assert String.ends_with?(url, "/pulls")
+      {:ok, %{status: 200, body: []}}
+    end
+
+    assert {:ok, false} = Client.has_actionable_pr_feedback_for_test("7", ["reviewer-1"], no_pr_request)
+    assert {:error, :invalid_github_issue_id} = Client.has_actionable_pr_feedback_for_test("bad-id", [], no_pr_request)
+
+    review_allowlist_hit = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 42, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/42/comments") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "Reviewer-1"}, "body" => "needs change"}]}}
+
+        String.ends_with?(url, "/issues/42/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, true} = Client.has_actionable_pr_feedback_for_test("7", ["reviewer-1"], review_allowlist_hit)
+    assert {:ok, false} = Client.has_actionable_pr_feedback_for_test("7", ["other-reviewer"], review_allowlist_hit)
+
+    issue_allowlist_hit = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 43, "body" => "Closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/43/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/issues/43/comments") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "Maintainer"}, "body" => "follow up"}]}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, true} = Client.has_actionable_pr_feedback_for_test("7", ["maintainer"], issue_allowlist_hit)
+
+    review_status_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 44, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/44/comments") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.has_actionable_pr_feedback_for_test("7", ["anyone"], review_status_error)
+
+    review_transport_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 46, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/46/comments") ->
+          {:error, :timeout}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_request, :timeout}} =
+             Client.has_actionable_pr_feedback_for_test("7", ["anyone"], review_transport_error)
+
+    issue_transport_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 45, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/45/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/issues/45/comments") ->
+          {:error, :closed}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.has_actionable_pr_feedback_for_test("7", ["anyone"], issue_transport_error)
+
+    issue_status_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 47, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/47/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/issues/47/comments") ->
+          {:ok, %{status: 502, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_status, 502}} =
+             Client.has_actionable_pr_feedback_for_test("7", ["anyone"], issue_status_error)
+
+    pulls_transport_error = fn :get, url, _opts ->
+      assert String.ends_with?(url, "/pulls")
+      {:error, :closed}
+    end
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.has_actionable_pr_feedback_for_test("7", ["anyone"], pulls_transport_error)
+  end
+
+  test "has_pr_approval_for_test handles approval states, no-pr, and error paths" do
+    write_github_tracker_workflow()
+
+    no_pr_request = fn :get, url, _opts ->
+      assert String.ends_with?(url, "/pulls")
+      {:ok, %{status: 200, body: []}}
+    end
+
+    assert {:ok, false} = Client.has_pr_approval_for_test("7", no_pr_request)
+
+    approved_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 50, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/50/reviews") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "reviewer"}, "state" => "COMMENTED"},
+               %{"user" => %{"login" => "reviewer"}, "state" => "APPROVED"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, true} = Client.has_pr_approval_for_test("7", approved_request)
+
+    not_approved_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 51, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/51/reviews") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "reviewer"}, "state" => "APPROVED"},
+               %{"user" => %{"login" => "reviewer"}, "state" => "CHANGES_REQUESTED"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, false} = Client.has_pr_approval_for_test("7", not_approved_request)
+
+    review_status_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 52, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/52/reviews") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_status, 500}} = Client.has_pr_approval_for_test("7", review_status_error)
+
+    review_transport_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 53, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/53/reviews") ->
+          {:error, :timeout}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_request, :timeout}} =
+             Client.has_pr_approval_for_test("7", review_transport_error)
+  end
+
+  test "check_auto_merge_readiness_for_test covers ready, blocker, and error branches" do
+    write_github_tracker_workflow()
+
+    no_pr_request = fn :get, url, _opts ->
+      assert String.ends_with?(url, "/pulls")
+      {:ok, %{status: 200, body: []}}
+    end
+
+    assert {:ok, :needs_agent, ["no linked PR found"]} =
+             Client.check_auto_merge_readiness_for_test("7", no_pr_request)
+
+    pulls_status_error = fn :get, url, _opts ->
+      assert String.ends_with?(url, "/pulls")
+      {:ok, %{status: 500, body: %{}}}
+    end
+
+    assert {:error, {:github_api_status, 500}} =
+             Client.check_auto_merge_readiness_for_test("7", pulls_status_error)
+
+    pr_request_failure = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 60, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/60") ->
+          {:error, :closed}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_request, :closed}} =
+             Client.check_auto_merge_readiness_for_test("7", pr_request_failure)
+
+    ready_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 61, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/61") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "mergeable_state" => "clean",
+               "head" => "not-a-map",
+               "title" => "Ready PR",
+               "body" => "body"
+             }
+           }}
+
+        String.ends_with?(url, "/pulls/61/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/61/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "github-actions[bot]"}, "body" => "automated", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "@codex review", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "## Codex Review", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "please fix", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "siaan-bot"}, "body" => "[siaan] fixed", "created_at" => "2026-03-02T00:00:00Z"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/61/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"id" => 1, "user" => %{"login" => "reviewer"}, "body" => "nit"},
+               %{"id" => 2, "in_reply_to_id" => 1, "user" => %{"login" => "siaan-bot"}, "body" => "[siaan] addressed"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 61} = Client.check_auto_merge_readiness_for_test("7", ready_request)
+
+    blocked_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 62, "body" => "Closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/62") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "mergeable_state" => "CONFLICTING",
+               "head" => %{"sha" => "abc123"},
+               "title" => "Blocked PR",
+               "body" => "body"
+             }
+           }}
+
+        String.ends_with?(url, "/commits/abc123/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"status" => "queued"}]}}}
+
+        String.ends_with?(url, "/pulls/62/reviews") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/issues/62/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "siaan-bot"}, "body" => "[siaan] older reply", "created_at" => "2026-03-02T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "new blocker", "created_at" => "2026-03-03T00:00:00Z"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/62/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 9, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["merge conflicts", "CI checks pending", "no PR approval", "unanswered PR comments", "unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", blocked_request)
+
+    ci_failed_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 63, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/63") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-63"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-63/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => [%{"status" => "completed", "conclusion" => "failure"}]}}}
+
+        String.ends_with?(url, "/pulls/63/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/63/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/63/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["CI checks failed"]} = Client.check_auto_merge_readiness_for_test("7", ci_failed_request)
+
+    ci_green_completed_checks_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 69, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/69") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-69"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-69/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        String.ends_with?(url, "/pulls/69/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/69/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/69/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 69} =
+             Client.check_auto_merge_readiness_for_test("7", ci_green_completed_checks_request)
+
+    head_nil_ready_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 79, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/79") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => nil, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/pulls/79/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/79/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/79/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 79} =
+             Client.check_auto_merge_readiness_for_test("7", head_nil_ready_request)
+
+    ci_status_error_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 80, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/80") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-80"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-80/check-runs") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        String.ends_with?(url, "/pulls/80/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/80/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/80/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check CI"]} =
+             Client.check_auto_merge_readiness_for_test("7", ci_status_error_request)
+
+    ci_error_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 64, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/64") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-64"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-64/check-runs") ->
+          {:error, :timeout}
+
+        String.ends_with?(url, "/pulls/64/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/64/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/64/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check CI"]} = Client.check_auto_merge_readiness_for_test("7", ci_error_request)
+
+    pr_status_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 81, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/81") ->
+          {:ok, %{status: 503, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:github_api_status, 503}} =
+             Client.check_auto_merge_readiness_for_test("7", pr_status_error)
+
+    approval_error_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 65, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/65") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-65"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-65/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/65/reviews") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        String.ends_with?(url, "/issues/65/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/65/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check approval"]} =
+             Client.check_auto_merge_readiness_for_test("7", approval_error_request)
+
+    comments_error_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 66, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/66") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-66"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-66/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/66/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/66/comments") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", comments_error_request)
+
+    bad_issue_comments_transport = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 67, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/67") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-67"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-67/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/67/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/67/comments") ->
+          {:error, :broken_pipe}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", bad_issue_comments_transport)
+
+    bad_review_comments_transport = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 68, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/68") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-68"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-68/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/68/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/68/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/68/comments") ->
+          {:error, :closed}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", bad_review_comments_transport)
+
+    review_comments_status_error = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 84, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/84") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-84"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-84/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/84/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/84/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/84/comments") ->
+          {:ok, %{status: 500, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", review_comments_status_error)
+
+    unanswered_without_reply_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 82, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/82") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-82"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-82/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/82/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/82/comments") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "reviewer"}, "body" => "still blocked"}]}}
+
+        String.ends_with?(url, "/pulls/82/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered PR comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", unanswered_without_reply_request)
+
+    missing_timestamp_after_reply_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 83, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/83") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-83"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-83/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/83/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/83/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "siaan-bot"}, "body" => "[siaan] checked", "created_at" => "2026-03-03T00:00:00Z"},
+               %{"user" => %{"login" => "reviewer"}, "body" => "timestamp missing"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/83/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered PR comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", missing_timestamp_after_reply_request)
+
+    bad_issue_id_request = fn _method, _url, _opts ->
+      flunk("request function should not be called for invalid issue ids")
+    end
+
+    assert {:error, :invalid_github_issue_id} =
+             Client.check_auto_merge_readiness_for_test("invalid", bad_issue_id_request)
+  end
+
+  test "auto_merge_pr_for_test handles update and merge result branches" do
+    write_github_tracker_workflow()
+
+    success_request = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/70/update-branch") ->
+          {:ok, %{status: 202, body: %{}}}
+
+        String.ends_with?(url, "/pulls/70/merge") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert :ok = Client.auto_merge_pr_for_test(70, success_request)
+
+    already_updated_request = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/71/update-branch") ->
+          {:ok, %{status: 422, body: %{}}}
+
+        String.ends_with?(url, "/pulls/71/merge") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert :ok = Client.auto_merge_pr_for_test(71, already_updated_request)
+
+    update_transport_error = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/72/update-branch") ->
+          {:error, :network_down}
+
+        String.ends_with?(url, "/pulls/72/merge") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert :ok = Client.auto_merge_pr_for_test(72, update_transport_error)
+
+    merge_status_map_body = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/73/update-branch") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        String.ends_with?(url, "/pulls/73/merge") ->
+          {:ok, %{status: 405, body: %{"message" => "merge not allowed"}}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:merge_failed, 405, "merge not allowed"}} = Client.auto_merge_pr_for_test(73, merge_status_map_body)
+
+    merge_status_non_map_body = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/74/update-branch") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        String.ends_with?(url, "/pulls/74/merge") ->
+          {:ok, %{status: 409, body: "conflict"}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:merge_failed, 409, "\"conflict\""}} = Client.auto_merge_pr_for_test(74, merge_status_non_map_body)
+
+    merge_transport_error = fn :put, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls/75/update-branch") ->
+          {:ok, %{status: 200, body: %{}}}
+
+        String.ends_with?(url, "/pulls/75/merge") ->
+          {:error, :closed}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:error, {:merge_request_failed, :closed}} = Client.auto_merge_pr_for_test(75, merge_transport_error)
+  end
+
   test "normalize_issue_for_test falls back to raw state and raw id when needed" do
     issue =
       Client.normalize_issue_for_test(%{
@@ -1217,5 +2074,20 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       })
 
     assert issue_with_non_numeric_value.number == nil
+  end
+
+  defp write_github_tracker_workflow(overrides \\ []) do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      Keyword.merge(
+        [
+          tracker_kind: "github",
+          tracker_repo_owner: "acme",
+          tracker_repo_name: "repo",
+          tracker_api_token: "gh-token"
+        ],
+        overrides
+      )
+    )
   end
 end

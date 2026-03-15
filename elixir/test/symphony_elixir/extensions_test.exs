@@ -205,6 +205,43 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert SymphonyElixir.Tracker.adapter() == Adapter
   end
 
+  test "tracker github-specific delegation falls back on non-github adapters" do
+    for tracker_kind <- ["memory", "linear"] do
+      write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: tracker_kind)
+
+      assert {:ok, false} = SymphonyElixir.Tracker.has_actionable_pr_feedback?("1", ["reviewer"])
+      assert {:ok, false} = SymphonyElixir.Tracker.has_pr_approval?("1")
+
+      assert {:ok, :needs_agent, ["unsupported tracker"]} =
+               SymphonyElixir.Tracker.check_auto_merge_readiness("1")
+
+      assert {:error, :unsupported_tracker} = SymphonyElixir.Tracker.auto_merge_pr(1)
+    end
+  end
+
+  test "tracker github-specific delegation fails fast when github token is missing" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: nil
+    )
+
+    results = [
+      SymphonyElixir.Tracker.has_actionable_pr_feedback?("1", ["reviewer"]),
+      SymphonyElixir.Tracker.has_pr_approval?("1"),
+      SymphonyElixir.Tracker.check_auto_merge_readiness("1"),
+      SymphonyElixir.Tracker.auto_merge_pr(1)
+    ]
+
+    for result <- results do
+      assert result in [
+               {:error, :missing_github_api_token},
+               {:error, {:github_api_request, :missing_github_api_token}}
+             ]
+    end
+  end
+
   test "linear adapter delegates reads and validates mutation responses" do
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 

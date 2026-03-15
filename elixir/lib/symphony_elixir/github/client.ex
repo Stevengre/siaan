@@ -841,61 +841,66 @@ defmodule SymphonyElixir.GitHub.Client do
          {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
       do_check_auto_merge_readiness(tracker, pr_number, headers, request_fun)
     else
-      {:ok, :no_pr} -> {:ok, :needs_agent, ["no linked PR found"]}
+      {:error, :no_pr} -> {:ok, :needs_agent, ["no linked PR found"]}
       {:error, reason} -> {:error, reason}
     end
   end
 
   defp do_check_auto_merge_readiness(tracker, pr_number, headers, request_fun) do
-    blockers = []
-
-    # Check PR state (mergeable, head SHA)
     with {:ok, pr_data} <- fetch_pr_data(tracker, pr_number, headers, request_fun) do
-      blockers = if pr_data.mergeable == "CONFLICTING", do: ["merge conflicts" | blockers], else: blockers
-
-      # Check CI
       blockers =
-        case check_ci_status(tracker, pr_data.head_sha, headers, request_fun) do
-          {:ok, :green} -> blockers
-          {:ok, :pending} -> ["CI checks pending" | blockers]
-          {:ok, :failed} -> ["CI checks failed" | blockers]
-          {:error, _} -> ["failed to check CI" | blockers]
-        end
+        merge_conflict_blockers(pr_data)
+        |> Kernel.++(ci_blockers(tracker, pr_data, headers, request_fun))
+        |> Kernel.++(approval_blockers(tracker, pr_number, headers, request_fun))
+        |> Kernel.++(comment_blockers(tracker, pr_number, headers, request_fun))
 
-      # Check approval
-      blockers =
-        case check_pr_approved(tracker, pr_number, headers, request_fun) do
-          {:ok, true} -> blockers
-          {:ok, false} -> ["no PR approval" | blockers]
-          {:error, _} -> ["failed to check approval" | blockers]
-        end
-
-      # Check unanswered comments
-      blockers =
-        case check_unanswered_comments(tracker, pr_number, headers, request_fun) do
-          {:ok, []} -> blockers
-          {:ok, reasons} -> reasons ++ blockers
-          {:error, _} -> ["failed to check comments" | blockers]
-        end
-
-      case blockers do
-        [] -> {:ok, :ready, pr_number}
-        _ -> {:ok, :needs_agent, Enum.reverse(blockers)}
-      end
+      readiness_result(blockers, pr_number)
     end
   end
+
+  defp merge_conflict_blockers(%{mergeable: "CONFLICTING"}), do: ["merge conflicts"]
+  defp merge_conflict_blockers(_pr_data), do: []
+
+  defp ci_blockers(tracker, pr_data, headers, request_fun) do
+    case check_ci_status(tracker, pr_data.head_sha, headers, request_fun) do
+      {:ok, :green} -> []
+      {:ok, :pending} -> ["CI checks pending"]
+      {:ok, :failed} -> ["CI checks failed"]
+      {:error, _} -> ["failed to check CI"]
+    end
+  end
+
+  defp approval_blockers(tracker, pr_number, headers, request_fun) do
+    case check_pr_approved(tracker, pr_number, headers, request_fun) do
+      {:ok, true} -> []
+      {:ok, false} -> ["no PR approval"]
+      {:error, _} -> ["failed to check approval"]
+    end
+  end
+
+  defp comment_blockers(tracker, pr_number, headers, request_fun) do
+    case check_unanswered_comments(tracker, pr_number, headers, request_fun) do
+      {:ok, []} -> []
+      {:ok, reasons} -> Enum.reverse(reasons)
+      {:error, _} -> ["failed to check comments"]
+    end
+  end
+
+  defp readiness_result([], pr_number), do: {:ok, :ready, pr_number}
+  defp readiness_result(blockers, _pr_number), do: {:ok, :needs_agent, blockers}
 
   defp fetch_pr_data(tracker, pr_number, headers, request_fun) do
     url = "#{repo_url(tracker)}/pulls/#{pr_number}"
 
     case request_fun.(:get, url, headers: headers) do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
-        {:ok, %{
-          mergeable: body["mergeable_state"],
-          head_sha: body["head"] |> get_in_safe(["sha"]),
-          title: body["title"],
-          body: body["body"]
-        }}
+        {:ok,
+         %{
+           mergeable: body["mergeable_state"],
+           head_sha: body["head"] |> get_in_safe(["sha"]),
+           title: body["title"],
+           body: body["body"]
+         }}
 
       {:ok, %{status: status}} ->
         {:error, {:github_api_status, status}}
@@ -1006,16 +1011,18 @@ defmodule SymphonyElixir.GitHub.Client do
       end)
 
     Enum.any?(threads, fn {_thread_id, thread_comments} ->
-      has_human_comment = Enum.any?(thread_comments, fn c ->
-        login = get_in(c, ["user", "login"]) || ""
-        body = (c["body"] || "") |> String.trim()
-        not bot_login?(login) and not String.starts_with?(body, @reply_prefix)
-      end)
+      has_human_comment =
+        Enum.any?(thread_comments, fn c ->
+          login = get_in(c, ["user", "login"]) || ""
+          body = (c["body"] || "") |> String.trim()
+          not bot_login?(login) and not String.starts_with?(body, @reply_prefix)
+        end)
 
-      has_siaan_reply = Enum.any?(thread_comments, fn c ->
-        body = (c["body"] || "") |> String.trim()
-        String.starts_with?(body, @reply_prefix)
-      end)
+      has_siaan_reply =
+        Enum.any?(thread_comments, fn c ->
+          body = (c["body"] || "") |> String.trim()
+          String.starts_with?(body, @reply_prefix)
+        end)
 
       has_human_comment and not has_siaan_reply
     end)
@@ -1043,35 +1050,44 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp bot_login?(login) when is_binary(login) do
-    MapSet.member?(@bot_logins, login) or String.ends_with?(login, "[bot]")
+  defp bot_login?(login) do
+    is_binary(login) and (MapSet.member?(@bot_logins, login) or String.ends_with?(login, "[bot]"))
   end
-
-  defp bot_login?(_login), do: false
 
   defp auto_merge_pr(pr_number, request_fun) do
     with {:ok, tracker} <- github_tracker_config(),
          {:ok, headers} <- github_headers() do
-      # Update branch first
-      update_url = "#{repo_url(tracker)}/pulls/#{pr_number}/update-branch"
+      :ok = update_pr_branch(tracker, pr_number, headers, request_fun)
+      merge_pr(tracker, pr_number, headers, request_fun)
+    end
+  end
 
-      case request_fun.(:put, update_url, headers: headers, json: %{}) do
-        {:ok, %{status: status}} when status in [200, 202] -> :ok
-        {:ok, %{status: 422}} -> :ok  # Already up to date
-        _ -> :ok  # Best effort; merge will fail if branch is behind
-      end
+  defp update_pr_branch(tracker, pr_number, headers, request_fun) do
+    update_url = "#{repo_url(tracker)}/pulls/#{pr_number}/update-branch"
 
-      # Squash merge
-      merge_url = "#{repo_url(tracker)}/pulls/#{pr_number}/merge"
-      merge_payload = %{"merge_method" => "squash"}
+    case request_fun.(:put, update_url, headers: headers, json: %{}) do
+      {:ok, %{status: status}} when status in [200, 202] -> :ok
+      # Already up to date
+      {:ok, %{status: 422}} -> :ok
+      # Best effort; merge will fail if branch is behind
+      _ -> :ok
+    end
+  end
 
-      case request_fun.(:put, merge_url, headers: headers, json: merge_payload) do
-        {:ok, %{status: 200}} -> :ok
-        {:ok, %{status: status, body: body}} ->
-          message = if is_map(body), do: body["message"], else: inspect(body)
-          {:error, {:merge_failed, status, message}}
-        {:error, reason} -> {:error, {:merge_request_failed, reason}}
-      end
+  defp merge_pr(tracker, pr_number, headers, request_fun) do
+    merge_url = "#{repo_url(tracker)}/pulls/#{pr_number}/merge"
+    merge_payload = %{"merge_method" => "squash"}
+
+    case request_fun.(:put, merge_url, headers: headers, json: merge_payload) do
+      {:ok, %{status: 200}} ->
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        message = if is_map(body), do: body["message"], else: inspect(body)
+        {:error, {:merge_failed, status, message}}
+
+      {:error, reason} ->
+        {:error, {:merge_request_failed, reason}}
     end
   end
 
@@ -1082,7 +1098,7 @@ defmodule SymphonyElixir.GitHub.Client do
          {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
       check_pr_approved(tracker, pr_number, headers, request_fun)
     else
-      {:ok, :no_pr} -> {:ok, false}
+      {:error, :no_pr} -> {:ok, false}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -1121,7 +1137,7 @@ defmodule SymphonyElixir.GitHub.Client do
          {:ok, pr_number} <- find_linked_pr_number(tracker, number, headers, request_fun) do
       check_pr_for_actionable_comments(tracker, pr_number, allowlist, headers, request_fun)
     else
-      {:ok, :no_pr} -> {:ok, false}
+      {:error, :no_pr} -> {:ok, false}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -1143,7 +1159,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
         case pr do
           %{"number" => pr_number} -> {:ok, pr_number}
-          nil -> {:ok, :no_pr}
+          nil -> {:error, :no_pr}
         end
 
       {:ok, %{status: status}} ->

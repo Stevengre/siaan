@@ -4,6 +4,8 @@ defmodule SymphonyElixir.Tracker do
   """
 
   alias SymphonyElixir.Config
+  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
+  alias SymphonyElixir.GitHub.Client, as: GitHubClient
 
   @callback fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   @callback fetch_issues_by_states([String.t()]) :: {:ok, [term()]} | {:error, term()}
@@ -39,7 +41,7 @@ defmodule SymphonyElixir.Tracker do
   @spec has_actionable_pr_feedback?(String.t(), [String.t()]) :: {:ok, boolean()} | {:error, term()}
   def has_actionable_pr_feedback?(issue_id, allowlist) do
     case adapter() do
-      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.has_actionable_pr_feedback?(issue_id, allowlist)
+      GitHubAdapter -> GitHubClient.has_actionable_pr_feedback?(issue_id, allowlist)
       _ -> {:ok, false}
     end
   end
@@ -47,7 +49,7 @@ defmodule SymphonyElixir.Tracker do
   @spec has_pr_approval?(String.t()) :: {:ok, boolean()} | {:error, term()}
   def has_pr_approval?(issue_id) do
     case adapter() do
-      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.has_pr_approval?(issue_id)
+      GitHubAdapter -> GitHubClient.has_pr_approval?(issue_id)
       _ -> {:ok, false}
     end
   end
@@ -56,7 +58,7 @@ defmodule SymphonyElixir.Tracker do
           {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
   def check_auto_merge_readiness(issue_id) do
     case adapter() do
-      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.check_auto_merge_readiness(issue_id)
+      GitHubAdapter -> GitHubClient.check_auto_merge_readiness(issue_id)
       _ -> {:ok, :needs_agent, ["unsupported tracker"]}
     end
   end
@@ -64,7 +66,7 @@ defmodule SymphonyElixir.Tracker do
   @spec auto_merge_pr(pos_integer()) :: :ok | {:error, term()}
   def auto_merge_pr(pr_number) do
     case adapter() do
-      SymphonyElixir.GitHub.Adapter -> SymphonyElixir.GitHub.Client.auto_merge_pr(pr_number)
+      GitHubAdapter -> GitHubClient.auto_merge_pr(pr_number)
       _ -> {:error, :unsupported_tracker}
     end
   end
@@ -73,7 +75,7 @@ defmodule SymphonyElixir.Tracker do
   def adapter do
     case Config.settings!().tracker.kind do
       "memory" -> SymphonyElixir.Tracker.Memory
-      "github" -> SymphonyElixir.GitHub.Adapter
+      "github" -> GitHubAdapter
       _ -> SymphonyElixir.Linear.Adapter
     end
   end
