@@ -876,6 +876,9 @@ defmodule SymphonyElixir.GitHub.Client do
       normalized == "clean" ->
         []
 
+      normalized == "behind" ->
+        ["branch out of date"]
+
       true ->
         ["mergeability pending"]
     end

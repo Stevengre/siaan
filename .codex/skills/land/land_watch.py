@@ -194,7 +194,9 @@ async def enforce_approval_gate(pr: PrInfo) -> None:
         latest_by_user[login] = review
 
     has_approval = any(
-        r.get("state") == "APPROVED" for r in latest_by_user.values()
+        r.get("state") == "APPROVED"
+        and is_human_review_user(r.get("user", {}))
+        for r in latest_by_user.values()
     )
     if not has_approval:
         print("Approval gate blocked: PR has no GitHub review approval.")
@@ -311,12 +313,19 @@ def is_codex_bot_user(user: dict[str, Any]) -> bool:
 
 
 def is_bot_user(user: dict[str, Any]) -> bool:
-    login = user.get("login") or ""
+    login = (user.get("login") or "").lower()
     if is_codex_bot_user(user):
         return True
-    if user.get("type") == "Bot":
+    if user.get("type") in ("Bot", "App"):
         return True
-    return login.endswith("[bot]")
+    return login.endswith("[bot]") or login.endswith("-bot")
+
+
+def is_human_review_user(user: dict[str, Any]) -> bool:
+    login = user.get("login")
+    if not isinstance(login, str) or not login.strip():
+        return False
+    return not is_bot_user(user)
 
 
 def is_codex_reply_body(body: str) -> bool:

@@ -2169,6 +2169,38 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :needs_agent, ["merge conflicts"]} =
              Client.check_auto_merge_readiness_for_test("7", dirty_conflict_state_request)
 
+    behind_mergeability_state_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 97, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/97") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "behind", "head" => %{"sha" => "sha-97"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-97/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/97/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/97/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/97/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["branch out of date"]} =
+             Client.check_auto_merge_readiness_for_test("7", behind_mergeability_state_request)
+
     unknown_mergeability_state_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
