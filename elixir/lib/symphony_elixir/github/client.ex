@@ -503,6 +503,7 @@ defmodule SymphonyElixir.GitHub.Client do
            request_fun.(:put, branch_protection_url(repo, branch), headers: protection_headers, json: payload) do
       :ok
     else
+      {:ok, %{status: 422, body: body}} -> {:error, {:github_api_status, 422, body}}
       {:ok, %{status: status}} -> {:error, {:github_api_status, status}}
       {:error, reason} -> {:error, {:github_api_request, reason}}
     end

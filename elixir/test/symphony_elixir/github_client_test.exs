@@ -612,6 +612,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
                {:ok, %{status: 500, body: %{}}}
              end)
 
+    assert {:error, {:github_api_status, 422, %{"message" => "unsupported"}}} =
+             Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts ->
+               {:ok, %{status: 422, body: %{"message" => "unsupported"}}}
+             end)
+
     assert {:error, {:github_api_request, :closed}} =
              Client.put_branch_protection_for_test(repo, "main", %{}, fn _method, _url, _opts -> {:error, :closed} end)
   end

@@ -629,7 +629,7 @@ defmodule SymphonyElixir.Install.RunnerTest do
 
     def put_branch_protection(_repo, _branch, payload) do
       if payload["restrictions"] != nil do
-        {:error, {:github_api_status, 422}}
+        {:error, {:github_api_status, 422, %{"message" => "Push restrictions are only available for organization-owned repositories."}}}
       else
         send(self(), {:personal_repo_fallback_payload, payload})
         :ok
@@ -660,6 +660,52 @@ defmodule SymphonyElixir.Install.RunnerTest do
     assert log =~ "Push restrictions unavailable"
     assert log =~ "Any collaborator with write access can push directly to main"
     assert log =~ "GitHub Organization"
+  end
+
+  defmodule RestrictionValidationFailureClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, _branch, payload) do
+      if payload["restrictions"] != nil do
+        {:error, {:github_api_status, 422, %{"message" => "Validation Failed"}}}
+      else
+        flunk("fallback should not remove restrictions for non-personal-repo 422 errors")
+      end
+    end
+  end
+
+  test "run/1 does not drop restrictions for non-personal-repo 422 validation failures" do
+    repo_root = tmp_dir!("siaan-install-restriction-validation-failure")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:error, {:github_api_status, 422}} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: RestrictionValidationFailureClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    refute log =~ "Push restrictions unavailable"
   end
 
   test "run/0 uses the current directory when no opts are passed" do

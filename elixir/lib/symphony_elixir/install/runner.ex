@@ -399,8 +399,12 @@ defmodule SymphonyElixir.Install.Runner do
         info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
         :ok
 
+      {:error, {:github_api_status, 422, body}} ->
+        maybe_retry_without_restrictions(client, repo_ctx, branch, desired, body, action, info)
+
       {:error, {:github_api_status, 422}} ->
-        maybe_retry_without_restrictions(client, repo_ctx, branch, desired, action, info)
+        info.("   ! Branch protection on #{branch} — #{action} failed ({:github_api_status, 422})")
+        {:error, {:github_api_status, 422}}
 
       {:error, reason} ->
         info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
@@ -408,26 +412,43 @@ defmodule SymphonyElixir.Install.Runner do
     end
   end
 
-  defp maybe_retry_without_restrictions(client, repo_ctx, branch, %{"restrictions" => r} = desired, action, info)
+  defp maybe_retry_without_restrictions(client, repo_ctx, branch, %{"restrictions" => r} = desired, body, action, info)
        when r != nil do
-    fallback = Map.put(desired, "restrictions", nil)
+    if personal_repo_push_restrictions_unsupported?(body) do
+      fallback = Map.put(desired, "restrictions", nil)
 
-    case client.put_branch_protection(repo_ctx, branch, fallback) do
-      :ok ->
-        info.("   ! Push restrictions unavailable — personal account repos cannot restrict who pushes to protected branches")
-        info.("     Any collaborator with write access can push directly to #{branch}, bypassing pull request reviews")
-        info.("     To enable push restrictions, migrate this repository to a GitHub Organization")
-        :ok
+      case client.put_branch_protection(repo_ctx, branch, fallback) do
+        :ok ->
+          info.("   ! Push restrictions unavailable — personal account repos cannot restrict who pushes to protected branches")
+          info.("     Any collaborator with write access can push directly to #{branch}, bypassing pull request reviews")
+          info.("     To enable push restrictions, migrate this repository to a GitHub Organization")
+          :ok
 
-      {:error, reason} ->
-        info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
-        {:error, reason}
+        {:error, reason} ->
+          info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
+          {:error, reason}
+      end
+    else
+      info.("   ! Branch protection on #{branch} — #{action} failed ({:github_api_status, 422})")
+      {:error, {:github_api_status, 422}}
     end
   end
 
-  defp maybe_retry_without_restrictions(_client, _repo_ctx, branch, _desired, action, info) do
+  defp maybe_retry_without_restrictions(_client, _repo_ctx, branch, _desired, _body, action, info) do
     info.("   ! Branch protection on #{branch} — #{action} failed ({:github_api_status, 422})")
     {:error, {:github_api_status, 422}}
+  end
+
+  defp personal_repo_push_restrictions_unsupported?(body) do
+    message =
+      case body do
+        %{"message" => msg} when is_binary(msg) -> String.downcase(msg)
+        _ -> ""
+      end
+
+    String.contains?(message, "push restrictions") and
+      (String.contains?(message, "organization-owned repositories") or
+         String.contains?(message, "organization"))
   end
 
   defp branch_protection_matches?(current, desired) do
