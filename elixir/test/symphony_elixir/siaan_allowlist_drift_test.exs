@@ -53,6 +53,51 @@ defmodule SymphonyElixir.SiaanAllowlistDriftTest do
     assert result["workflow_allowlist"] == ["alice", "bob"]
   end
 
+  test "drift helper falls back to the tracked workflow example when WORKFLOW.md is absent" do
+    repo_root = tmp_dir!("siaan-allowlist-drift-example")
+    security_path = Path.join([repo_root, ".github", "siaan-security.yml"])
+    workflow_path = Path.join([repo_root, "elixir", "WORKFLOW.github.example.md"])
+
+    File.mkdir_p!(Path.dirname(security_path))
+    File.mkdir_p!(Path.dirname(workflow_path))
+
+    File.write!(
+      security_path,
+      """
+      maintainers:
+        - alice
+      setup:
+        labels: true
+        issue_restriction: collaborators_only
+        branch_protection: true
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ---
+      security:
+        dispatch_allowlist:
+          - "@Alice"
+      ---
+      """
+    )
+
+    {output, 0} =
+      System.cmd(
+        "ruby",
+        [@script, "--repo-root", repo_root, "--format", "json"],
+        stderr_to_stdout: true
+      )
+
+    result = Jason.decode!(output)
+
+    assert result["status"] == "ok"
+    assert result["workflow_path"] == "elixir/WORKFLOW.github.example.md"
+    assert result["workflow_allowlist"] == ["alice"]
+  end
+
   test "drift helper warns instead of crashing on valid non-map security yaml" do
     repo_root = tmp_dir!("siaan-allowlist-drift-non-map")
     security_path = Path.join([repo_root, ".github", "siaan-security.yml"])

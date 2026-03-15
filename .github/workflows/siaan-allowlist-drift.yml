@@ -7,6 +7,7 @@ on:
       - ".github/siaan-security.yml"
       - "WORKFLOW.md"
       - "elixir/WORKFLOW.md"
+      - "elixir/WORKFLOW.github.example.md"
       - "elixir/lib/mix/tasks/siaan.install.ex"
       - "elixir/lib/symphony_elixir/install/**"
       - "elixir/lib/symphony_elixir/config.ex"
@@ -43,7 +44,12 @@ jobs:
             const repo = headRepo?.name || context.repo.repo;
             const ref = context.payload.pull_request.head.sha;
             const targetDir = process.env.TARGET_DIR;
-            const files = [".github/siaan-security.yml", "WORKFLOW.md", "elixir/WORKFLOW.md"];
+            const files = [
+              ".github/siaan-security.yml",
+              "WORKFLOW.md",
+              "elixir/WORKFLOW.md",
+              "elixir/WORKFLOW.github.example.md"
+            ];
 
             fs.rmSync(targetDir, { recursive: true, force: true });
 

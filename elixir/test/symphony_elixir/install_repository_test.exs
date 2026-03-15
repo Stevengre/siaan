@@ -19,7 +19,7 @@ defmodule SymphonyElixir.Install.RepositoryTest do
     assert Repository.repo_root(nested) == repo_root
   end
 
-  test "repo_root/0 uses the current directory and workflow_paths/1 lists both workflow locations" do
+  test "repo_root/0 uses the current directory and workflow_paths/1 lists workflow candidates" do
     repo_root = make_tmp_dir!("install-repository-default-root")
     File.mkdir_p!(Path.join(repo_root, ".git"))
 
@@ -29,7 +29,8 @@ defmodule SymphonyElixir.Install.RepositoryTest do
 
     assert Repository.workflow_paths(repo_root) == [
              Path.join(repo_root, "WORKFLOW.md"),
-             Path.join([repo_root, "elixir", "WORKFLOW.md"])
+             Path.join([repo_root, "elixir", "WORKFLOW.md"]),
+             Path.join([repo_root, "elixir", "WORKFLOW.github.example.md"])
            ]
   end
 

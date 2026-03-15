@@ -103,7 +103,8 @@ repo_root = File.expand_path(options[:repo_root])
 security_path = File.join(repo_root, ".github", "siaan-security.yml")
 workflow_candidates = [
   File.join(repo_root, "WORKFLOW.md"),
-  File.join(repo_root, "elixir", "WORKFLOW.md")
+  File.join(repo_root, "elixir", "WORKFLOW.md"),
+  File.join(repo_root, "elixir", "WORKFLOW.github.example.md")
 ]
 workflow_path = workflow_candidates.find { |candidate| File.file?(candidate) }
 
@@ -134,7 +135,7 @@ result =
   elsif !workflow[:exists]
     {
       "status" => "ok",
-      "summary" => "No WORKFLOW.md file is present yet, so the allowlist consistency check is skipped.",
+      "summary" => "No tracked workflow file is present yet, so the allowlist consistency check is skipped.",
       "details" => [],
       "security_path" => relative_path(repo_root, security_path),
       "workflow_path" => nil

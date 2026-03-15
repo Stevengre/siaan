@@ -15,7 +15,11 @@ defmodule SymphonyElixir.Install.Repository do
 
   @spec workflow_paths(Path.t()) :: [Path.t()]
   def workflow_paths(repo_root) do
-    [Path.join(repo_root, "WORKFLOW.md"), Path.join([repo_root, "elixir", "WORKFLOW.md"])]
+    [
+      Path.join(repo_root, "WORKFLOW.md"),
+      Path.join([repo_root, "elixir", "WORKFLOW.md"]),
+      Path.join([repo_root, "elixir", "WORKFLOW.github.example.md"])
+    ]
   end
 
   @spec github_repo(Path.t(), keyword()) :: {:ok, %{owner: String.t(), repo: String.t()}} | {:error, term()}
