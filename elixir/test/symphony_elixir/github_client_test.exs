@@ -1985,6 +1985,45 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :needs_agent, ["unanswered PR comments"]} =
              Client.check_auto_merge_readiness_for_test("7", missing_timestamp_after_reply_request)
 
+    spoofed_siaan_issue_reply_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 95, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/95") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-95"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-95/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/95/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/95/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"user" => %{"login" => "reviewer"}, "body" => "please fix", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"user" => %{"login" => "outsider"}, "body" => "[siaan] fixed", "created_at" => "2026-03-02T00:00:00Z"}
+             ]
+           }}
+
+        String.ends_with?(url, "/pulls/95/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered PR comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", spoofed_siaan_issue_reply_request)
+
     non_allowlist_comments_request = fn :get, url, _opts ->
       cond do
         String.ends_with?(url, "/pulls") ->
@@ -2201,6 +2240,45 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, :needs_agent, ["unanswered review comments"]} =
              Client.check_auto_merge_readiness_for_test("7", follow_up_after_siaan_review_comment_request)
+
+    spoofed_siaan_review_reply_request = fn :get, url, _opts ->
+      cond do
+        String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 96, "body" => "closes #7"}]}}
+
+        String.ends_with?(url, "/pulls/96") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-96"}, "title" => "t", "body" => "b"}
+           }}
+
+        String.ends_with?(url, "/commits/sha-96/check-runs") ->
+          {:ok, %{status: 200, body: %{"check_runs" => []}}}
+
+        String.ends_with?(url, "/pulls/96/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        String.ends_with?(url, "/issues/96/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        String.ends_with?(url, "/pulls/96/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"id" => 40, "user" => %{"login" => "reviewer"}, "body" => "nit", "created_at" => "2026-03-01T00:00:00Z"},
+               %{"id" => 41, "in_reply_to_id" => 40, "user" => %{"login" => "outsider"}, "body" => "[siaan] fixed", "created_at" => "2026-03-02T00:00:00Z"}
+             ]
+           }}
+
+        true ->
+          flunk("unexpected URL #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", spoofed_siaan_review_reply_request)
 
     single_reply_for_multiple_issue_comments_request = fn :get, url, _opts ->
       cond do
@@ -2441,7 +2519,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
           tracker_repo_owner: "acme",
           tracker_repo_name: "repo",
           tracker_api_token: "gh-token",
-          allowlist: ["reviewer", "maintainer"]
+          allowlist: ["reviewer", "maintainer", "siaan-bot", "chatgpt-codex-connector[bot]"]
         ],
         overrides
       )

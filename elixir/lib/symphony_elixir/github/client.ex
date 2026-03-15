@@ -1005,7 +1005,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
     reply_times =
       comments
-      |> Enum.filter(&siaan_reply_comment?/1)
+      |> Enum.filter(&trusted_siaan_reply_comment?(&1, allowlist_set))
       |> Enum.map(&comment_time/1)
       |> Enum.reject(&is_nil/1)
 
@@ -1054,8 +1054,7 @@ defmodule SymphonyElixir.GitHub.Client do
         thread_comments
         |> Enum.with_index()
         |> Enum.filter(fn {comment, _index} ->
-          body = (comment["body"] || "") |> String.trim()
-          String.starts_with?(body, @reply_prefix)
+          trusted_siaan_reply_comment?(comment, allowlist_set)
         end)
         |> Enum.map(&elem(&1, 1))
         |> Enum.max(fn -> nil end)
@@ -1077,9 +1076,13 @@ defmodule SymphonyElixir.GitHub.Client do
       not String.starts_with?(body, "## Codex Review")
   end
 
-  defp siaan_reply_comment?(comment) do
+  defp trusted_siaan_reply_comment?(comment, allowlist_set) do
     body = (comment["body"] || "") |> String.trim()
-    String.starts_with?(body, @reply_prefix)
+    login = get_in(comment, ["user", "login"])
+    normalized_login = if is_binary(login), do: String.downcase(login), else: ""
+
+    String.starts_with?(body, @reply_prefix) and
+      MapSet.member?(allowlist_set, normalized_login)
   end
 
   defp comment_time(comment), do: comment["created_at"] || comment["updated_at"]
