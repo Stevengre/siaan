@@ -609,6 +609,59 @@ defmodule SymphonyElixir.Install.RunnerTest do
     refute log =~ "Done. Run mix siaan.install again anytime."
   end
 
+  defmodule PersonalRepoRestrictionFallbackClient do
+    def build_repo_context(owner, repo, token) do
+      {:ok, %{repo_owner: owner, repo_name: repo, api_key: token || "token"}}
+    end
+
+    def get_default_branch(_repo), do: {:ok, "main"}
+    def list_collaborators(_repo), do: {:ok, ["alice"]}
+
+    def list_labels(_repo) do
+      {:ok,
+       Enum.map(Runner.desired_labels(), fn label ->
+         %{"name" => label.name}
+       end)}
+    end
+
+    def create_label(_repo, _attrs), do: raise("labels should not be created when already present")
+    def get_branch_protection(_repo, _branch), do: {:ok, nil}
+
+    def put_branch_protection(_repo, _branch, payload) do
+      if payload["restrictions"] != nil do
+        {:error, {:github_api_status, 422}}
+      else
+        send(self(), {:personal_repo_fallback_payload, payload})
+        :ok
+      end
+    end
+  end
+
+  test "run/1 falls back to null restrictions for personal repos and warns about push access" do
+    repo_root = tmp_dir!("siaan-install-personal-repo-fallback")
+    messages = Agent.start_link(fn -> [] end) |> elem(1)
+
+    assert {:ok, _result} =
+             Runner.run(
+               cwd: repo_root,
+               repo_owner: "Stevengre",
+               repo_name: "siaan",
+               api_key: "token",
+               yes: true,
+               client: PersonalRepoRestrictionFallbackClient,
+               info: fn line -> Agent.update(messages, &[line | &1]) end
+             )
+
+    assert_received {:personal_repo_fallback_payload, payload}
+    assert payload["restrictions"] == nil
+    assert payload["required_pull_request_reviews"]["dismiss_stale_reviews"] == true
+
+    log = Agent.get(messages, &Enum.reverse/1) |> Enum.join("\n")
+    assert log =~ "Push restrictions unavailable"
+    assert log =~ "Any collaborator with write access can push directly to main"
+    assert log =~ "GitHub Organization"
+  end
+
   test "run/0 uses the current directory when no opts are passed" do
     repo_root = tmp_dir!("siaan-install-default-run")
     previous_github_repository = System.get_env("GITHUB_REPOSITORY")

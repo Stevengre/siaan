@@ -9,7 +9,6 @@ defmodule SymphonyElixir.Install.Runner do
     %{name: "status:ready", color: "d73a4a", description: "Ready for agent execution"},
     %{name: "status:in-progress", color: "fbca04", description: "Actively being implemented"},
     %{name: "status:review", color: "0e8a16", description: "Waiting for human review"},
-    %{name: "status:approval", color: "5319e7", description: "Approved and ready to land"},
     %{name: "type:feature", color: "0e8a16", description: "Feature request"},
     %{name: "type:bug", color: "b60205", description: "Bug fix"},
     %{name: "type:chore", color: "1d76db", description: "Maintenance task"},
@@ -400,10 +399,35 @@ defmodule SymphonyElixir.Install.Runner do
         info.("   ~ Branch protection on #{branch} — skipped (admin permission required)")
         :ok
 
+      {:error, {:github_api_status, 422}} ->
+        maybe_retry_without_restrictions(client, repo_ctx, branch, desired, action, info)
+
       {:error, reason} ->
         info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
         {:error, reason}
     end
+  end
+
+  defp maybe_retry_without_restrictions(client, repo_ctx, branch, %{"restrictions" => r} = desired, action, info)
+       when r != nil do
+    fallback = Map.put(desired, "restrictions", nil)
+
+    case client.put_branch_protection(repo_ctx, branch, fallback) do
+      :ok ->
+        info.("   ! Push restrictions unavailable — personal account repos cannot restrict who pushes to protected branches")
+        info.("     Any collaborator with write access can push directly to #{branch}, bypassing pull request reviews")
+        info.("     To enable push restrictions, migrate this repository to a GitHub Organization")
+        :ok
+
+      {:error, reason} ->
+        info.("   ! Branch protection on #{branch} — #{action} failed (#{inspect(reason)})")
+        {:error, reason}
+    end
+  end
+
+  defp maybe_retry_without_restrictions(_client, _repo_ctx, branch, _desired, action, info) do
+    info.("   ! Branch protection on #{branch} — #{action} failed ({:github_api_status, 422})")
+    {:error, {:github_api_status, 422}}
   end
 
   defp branch_protection_matches?(current, desired) do

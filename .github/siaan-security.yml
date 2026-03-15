@@ -1,6 +1,8 @@
 # Maintainer usernames allowed to administer and merge changes for this repository.
 maintainers:
   - stevengre
+  - chatgpt-codex-connector[bot]
+  - siaan-bot
 
 setup:
   # Ensure the issue lifecycle label taxonomy exists and stays current.
