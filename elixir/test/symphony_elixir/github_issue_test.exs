@@ -10,17 +10,6 @@ defmodule SymphonyElixir.GitHub.IssueTest do
     assert Issue.status_label(issue) == "status:ready"
   end
 
-  test "extract_blocker_numbers parses Blocked by #N from body" do
-    issue = %Issue{body: "## Dependencies\n\n- Blocked by #1 (`GitHub.Client`)\n- blocked by #5"}
-    assert Issue.extract_blocker_numbers(issue) == [1, 5]
-
-    assert Issue.extract_blocker_numbers(%Issue{body: "No blockers here"}) == []
-    assert Issue.extract_blocker_numbers(%Issue{body: nil}) == []
-
-    # word boundary: "unblocked by #12" should NOT match
-    assert Issue.extract_blocker_numbers(%Issue{body: "unblocked by #12"}) == []
-  end
-
   test "to_tracker_issue accepts resolved blocked_by list" do
     issue = %Issue{id: "10", number: 10, labels: ["status:ready"], assignees: []}
     blockers = [%{id: "1", identifier: "GH-1", state: "status:in-progress"}]
@@ -30,7 +19,7 @@ defmodule SymphonyElixir.GitHub.IssueTest do
   end
 
   test "to_tracker_issue defaults to empty blocked_by" do
-    issue = %Issue{id: "10", number: 10, labels: ["status:ready"], assignees: []}
+    issue = %Issue{id: "10", number: 10, labels: ["status:ready"], assignees: [], blocked_by: []}
     converted = Issue.to_tracker_issue(issue)
     assert converted.blocked_by == []
   end

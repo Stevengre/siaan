@@ -5,8 +5,6 @@ defmodule SymphonyElixir.GitHub.Issue do
 
   alias SymphonyElixir.Linear.Issue, as: TrackerIssue
 
-  @blocker_pattern ~r/\b[Bb]locked\s+by\s+#(\d+)/
-
   defstruct [
     :id,
     :number,
@@ -16,6 +14,7 @@ defmodule SymphonyElixir.GitHub.Issue do
     :url,
     labels: [],
     assignees: [],
+    blocked_by: [],
     created_at: nil,
     updated_at: nil
   ]
@@ -29,6 +28,7 @@ defmodule SymphonyElixir.GitHub.Issue do
           url: String.t() | nil,
           labels: [String.t()],
           assignees: [String.t()],
+          blocked_by: [map()],
           created_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
@@ -46,16 +46,6 @@ defmodule SymphonyElixir.GitHub.Issue do
     |> label_names()
     |> Enum.find(&String.starts_with?(&1, "status:"))
   end
-
-  @spec extract_blocker_numbers(t()) :: [non_neg_integer()]
-  def extract_blocker_numbers(%__MODULE__{body: body}) when is_binary(body) do
-    @blocker_pattern
-    |> Regex.scan(body)
-    |> Enum.map(fn [_, num] -> String.to_integer(num) end)
-    |> Enum.uniq()
-  end
-
-  def extract_blocker_numbers(%__MODULE__{}), do: []
 
   @spec to_tracker_issue(t(), [map()]) :: TrackerIssue.t()
   def to_tracker_issue(%__MODULE__{} = issue, blocked_by \\ []) do

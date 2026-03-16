@@ -142,6 +142,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
+    workspace_root = tmp_dir!("session-stats-workspace")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      codex_command: "codex --model gpt-5.2-codex app-server"
+    )
 
     issue = %Issue{
       id: issue_id,
@@ -181,6 +187,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       codex_last_reported_input_tokens: 0,
       codex_last_reported_output_tokens: 0,
       codex_last_reported_total_tokens: 0,
+      siaan_version: "0.1.0",
+      codex_model: "gpt-5.2-codex",
       started_at: started_at
     }
 
@@ -223,6 +231,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.codex_app_server_pid == "4242"
+    assert snapshot_entry.codex_model == "gpt-5.2-codex"
+    assert snapshot_entry.siaan_version == "0.1.0"
+    assert snapshot_entry.cost_estimate_available == true
+    assert snapshot_entry.estimated_cost_usd == 0.000055
     assert snapshot_entry.codex_input_tokens == 12
     assert snapshot_entry.codex_output_tokens == 4
     assert snapshot_entry.codex_total_tokens == 16
@@ -236,6 +248,81 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.output_tokens == 4
     assert completed_state.codex_totals.total_tokens == 16
     assert is_integer(completed_state.codex_totals.seconds_running)
+    assert [completed_run | _] = completed_state.completed_runs
+    assert completed_run["issue_identifier"] == "MT-201"
+    assert completed_run["model"] == "gpt-5.2-codex"
+    assert completed_run["cost"]["cost_estimate_available"] == true
+  end
+
+  test "orchestrator keeps the newest completed history entries after restart" do
+    issue_id = "issue-history-window"
+    workspace_root = tmp_dir!("session-stats-history-window")
+    history_limit = SymphonyElixir.SessionStats.recent_history_limit()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      codex_command: "codex --model gpt-5.2-codex app-server"
+    )
+
+    for index <- 1..history_limit do
+      assert :ok =
+               SymphonyElixir.SessionStats.append_history_record(%{
+                 "issue_id" => "history-#{index}",
+                 "issue_identifier" => "MT-HISTORY-#{index}",
+                 "session_id" => "thread-history-#{index}",
+                 "result" => "completed"
+               })
+    end
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-NEWEST",
+      title: "History window test",
+      description: "Ensure restart keeps the newest history rows",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-NEWEST"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :HistoryWindowOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: "thread-newest",
+      turn_count: 1,
+      codex_model: "gpt-5.2-codex",
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    completed_state = :sys.get_state(pid)
+
+    assert length(completed_state.completed_runs) == history_limit
+    assert [%{"issue_identifier" => "MT-NEWEST"} | _] = completed_state.completed_runs
+    refute Enum.any?(completed_state.completed_runs, &(&1["issue_identifier"] == "MT-HISTORY-1"))
+
+    assert Enum.any?(
+             completed_state.completed_runs,
+             &(&1["issue_identifier"] == "MT-HISTORY-#{history_limit}")
+           )
   end
 
   test "orchestrator snapshot tracks turn completed usage when present" do

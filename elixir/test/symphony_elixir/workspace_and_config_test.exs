@@ -559,6 +559,26 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "in-progress issue with non-terminal blocker is not dispatch-eligible" do
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "blocked-1b",
+      identifier: "MT-1001B",
+      title: "Blocked in progress work",
+      state: "status:in-progress",
+      blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
   test "issue assigned to another worker is not dispatch-eligible" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_assignee: "dev@example.com")
 
@@ -625,6 +645,32 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert skipped_issue.identifier == "MT-1005"
     assert skipped_issue.blocked_by == [%{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}]
+  end
+
+  test "dispatch revalidation skips stale in-progress issue once a non-terminal blocker appears" do
+    stale_issue = %Issue{
+      id: "blocked-2b",
+      identifier: "MT-1005B",
+      title: "Stale blocked in-progress work",
+      state: "status:in-progress",
+      blocked_by: []
+    }
+
+    refreshed_issue = %Issue{
+      id: "blocked-2b",
+      identifier: "MT-1005B",
+      title: "Stale blocked in-progress work",
+      state: "status:in-progress",
+      blocked_by: [%{id: "blocker-4", identifier: "MT-1006B", state: "In Progress"}]
+    }
+
+    fetcher = fn ["blocked-2b"] -> {:ok, [refreshed_issue]} end
+
+    assert {:skip, %Issue{} = skipped_issue} =
+             Orchestrator.revalidate_issue_for_dispatch_for_test(stale_issue, fetcher)
+
+    assert skipped_issue.identifier == "MT-1005B"
+    assert skipped_issue.blocked_by == [%{id: "blocker-4", identifier: "MT-1006B", state: "In Progress"}]
   end
 
   test "workspace remove returns error information for missing directory" do

@@ -258,6 +258,7 @@ defmodule SymphonyElixir.GitHub.Client do
       tracker.active_states
       |> normalize_state_names()
       |> do_fetch_candidate_issues_by_states(tracker, request_fun)
+      |> hydrate_issue_blockers(tracker, request_fun)
     end
   end
 
@@ -294,6 +295,7 @@ defmodule SymphonyElixir.GitHub.Client do
       state_names
       |> normalize_state_names()
       |> do_fetch_issues_by_states(tracker, request_fun)
+      |> hydrate_issue_blockers(tracker, request_fun)
     end
   end
 
@@ -331,6 +333,7 @@ defmodule SymphonyElixir.GitHub.Client do
       |> Enum.map(&to_string/1)
       |> Enum.uniq()
       |> do_fetch_issue_states_by_ids(tracker, request_fun, [])
+      |> hydrate_issue_blockers(tracker, request_fun)
     end
   end
 
@@ -544,6 +547,7 @@ defmodule SymphonyElixir.GitHub.Client do
       url: raw_issue["html_url"],
       labels: labels,
       assignees: extract_assignees(raw_issue),
+      blocked_by: [],
       created_at: parse_datetime(raw_issue["created_at"]),
       updated_at: parse_datetime(raw_issue["updated_at"])
     }
@@ -601,6 +605,157 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp extract_assignees(_raw_issue), do: []
+
+  defp hydrate_issue_blockers({:ok, issues}, tracker, request_fun)
+       when is_list(issues) and is_map(tracker) and is_function(request_fun, 3) do
+    case fetch_blockers_by_issue_number(tracker, issues, request_fun) do
+      {:ok, blockers_by_number} ->
+        {:ok, Enum.map(issues, &attach_blockers(&1, blockers_by_number))}
+
+      {:error, reason} ->
+        Logger.warning("GitHub blocker hydration failed; continuing without blockers: #{inspect(reason)}")
+        {:ok, Enum.map(issues, &attach_blockers(&1, %{}))}
+    end
+  end
+
+  defp hydrate_issue_blockers(result, _tracker, _request_fun), do: result
+
+  defp attach_blockers(%Issue{number: number} = issue, blockers_by_number) when is_integer(number) do
+    %{issue | blocked_by: Map.get(blockers_by_number, number, [])}
+  end
+
+  defp attach_blockers(%Issue{} = issue, _blockers_by_number), do: %{issue | blocked_by: []}
+
+  defp fetch_blockers_by_issue_number(_tracker, issues, _request_fun) when issues == [], do: {:ok, %{}}
+
+  defp fetch_blockers_by_issue_number(tracker, issues, request_fun)
+       when is_map(tracker) and is_list(issues) and is_function(request_fun, 3) do
+    issue_numbers =
+      issues
+      |> Enum.flat_map(fn
+        %Issue{number: number} when is_integer(number) -> [number]
+        _ -> []
+      end)
+      |> Enum.uniq()
+
+    issue_numbers
+    |> Enum.chunk_every(25)
+    |> Enum.reduce_while({:ok, %{}}, fn chunk, {:ok, acc} ->
+      case fetch_blocker_chunk(tracker, chunk, request_fun) do
+        {:ok, blockers} -> {:cont, {:ok, Map.merge(acc, blockers)}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp fetch_blocker_chunk(tracker, issue_numbers, request_fun)
+       when is_map(tracker) and is_list(issue_numbers) and is_function(request_fun, 3) do
+    query = blockers_query(issue_numbers)
+    variables = %{"owner" => tracker.repo_owner, "repo" => tracker.repo_name}
+
+    with {:ok, body} <- graphql(query, variables, request_fun: request_fun),
+         {:ok, repository} <- fetch_graphql_map(body, ["data", "repository"]) do
+      {:ok,
+       issue_numbers
+       |> Enum.reduce(%{}, fn number, acc ->
+         Map.put(acc, number, extract_blockers_from_graphql(repository, number))
+       end)}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp blockers_query(issue_numbers) when is_list(issue_numbers) do
+    issue_fields =
+      Enum.map_join(issue_numbers, "\n", fn number ->
+        """
+        issue_#{number}: issue(number: #{number}) {
+          number
+          blockedBy(first: 100) {
+            nodes {
+              number
+              state
+              labels(first: 20) {
+                nodes {
+                  name
+                }
+              }
+            }
+          }
+        }
+        """
+      end)
+
+    """
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        #{issue_fields}
+      }
+    }
+    """
+  end
+
+  defp extract_blockers_from_graphql(repository, number) when is_map(repository) and is_integer(number) do
+    repository
+    |> Map.get("issue_#{number}")
+    |> case do
+      %{"blockedBy" => %{"nodes" => blockers}} when is_list(blockers) ->
+        Enum.map(blockers, &normalize_blocker/1)
+        |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp normalize_blocker(%{"number" => number} = blocker) when is_integer(number) do
+    labels =
+      blocker
+      |> get_in(["labels", "nodes"])
+      |> case do
+        nodes when is_list(nodes) ->
+          nodes
+          |> Enum.map(fn
+            %{"name" => name} -> normalize_label(name)
+            _ -> nil
+          end)
+          |> Enum.reject(&is_nil/1)
+
+        _ ->
+          []
+      end
+
+    %{
+      id: Integer.to_string(number),
+      identifier: "GH-#{number}",
+      state: graphql_blocker_state(blocker, labels)
+    }
+  end
+
+  defp normalize_blocker(_blocker), do: nil
+
+  defp graphql_blocker_state(%{"state" => "CLOSED"}, _labels), do: "closed"
+
+  defp graphql_blocker_state(_blocker, labels) when is_list(labels) do
+    Enum.find(labels, &String.starts_with?(&1, "status:")) || "open"
+  end
+
+  defp fetch_graphql_map(%{"errors" => errors}, _path) when is_list(errors),
+    do: {:error, {:github_graphql_errors, errors}}
+
+  defp fetch_graphql_map(body, [key]) when is_map(body) and is_binary(key) do
+    case Map.get(body, key) do
+      value when is_map(value) -> {:ok, value}
+      _ -> {:error, :github_graphql_malformed}
+    end
+  end
+
+  defp fetch_graphql_map(body, [key | rest]) when is_map(body) and is_binary(key) do
+    case Map.get(body, key) do
+      value when is_map(value) -> fetch_graphql_map(value, rest)
+      _ -> {:error, :github_graphql_malformed}
+    end
+  end
 
   defp parse_datetime(nil), do: nil
 

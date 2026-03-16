@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, SessionStats, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -35,6 +35,7 @@ defmodule SymphonyElixir.Orchestrator do
       :tick_token,
       running: %{},
       completed: MapSet.new(),
+      completed_runs: [],
       claimed: MapSet.new(),
       retry_attempts: %{},
       codex_totals: nil,
@@ -62,6 +63,9 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
+      completed_runs:
+        SessionStats.load_recent_history()
+        |> Enum.reverse(),
       codex_totals: @empty_codex_totals,
       codex_rate_limits: nil
     }
@@ -128,7 +132,8 @@ defmodule SymphonyElixir.Orchestrator do
 
       issue_id ->
         {running_entry, state} = pop_running_entry(state, issue_id)
-        state = record_session_completion_totals(state, running_entry)
+        result = if reason == :normal, do: "completed", else: "agent_exit"
+        state = record_session_completion_totals(state, running_entry, result)
         session_id = running_entry_session_id(running_entry)
 
         state =
@@ -555,7 +560,7 @@ defmodule SymphonyElixir.Orchestrator do
         release_issue_claim(state, issue_id)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
-        state = record_session_completion_totals(state, running_entry)
+        state = record_session_completion_totals(state, running_entry, "terminated")
         worker_host = Map.get(running_entry, :worker_host)
 
         if cleanup_workspace do
@@ -711,7 +716,7 @@ defmodule SymphonyElixir.Orchestrator do
          terminal_states
        ) do
     candidate_issue?(issue, active_states, terminal_states) and
-      !todo_issue_blocked_by_non_terminal?(issue, terminal_states) and
+      !issue_blocked_by_non_terminal?(issue, terminal_states) and
       !MapSet.member?(claimed, issue.id) and
       !Map.has_key?(running, issue.id) and
       available_slots(state) > 0 and
@@ -765,26 +770,18 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp issue_routable_to_worker?(_issue), do: true
 
-  defp todo_issue_blocked_by_non_terminal?(
-         %Issue{state: issue_state, blocked_by: blockers},
-         terminal_states
-       )
-       when is_binary(issue_state) and is_list(blockers) do
-    pre_execution_state?(issue_state) and
-      Enum.any?(blockers, fn
-        %{state: blocker_state} when is_binary(blocker_state) ->
-          !terminal_issue_state?(blocker_state, terminal_states)
+  defp issue_blocked_by_non_terminal?(%Issue{blocked_by: blockers}, terminal_states)
+       when is_list(blockers) do
+    Enum.any?(blockers, fn
+      %{state: blocker_state} when is_binary(blocker_state) ->
+        !terminal_issue_state?(blocker_state, terminal_states)
 
-        _ ->
-          true
-      end)
+      _ ->
+        true
+    end)
   end
 
-  defp todo_issue_blocked_by_non_terminal?(_issue, _terminal_states), do: false
-
-  defp pre_execution_state?(issue_state) when is_binary(issue_state) do
-    normalize_issue_state(issue_state) in ["todo", "status:ready"]
-  end
+  defp issue_blocked_by_non_terminal?(_issue, _terminal_states), do: false
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     MapSet.member?(terminal_states, normalize_issue_state(state_name))
@@ -867,6 +864,7 @@ defmodule SymphonyElixir.Orchestrator do
 
         running =
           Map.put(state.running, issue.id, %{
+            issue_id: issue.id,
             pid: pid,
             ref: ref,
             identifier: issue.identifier,
@@ -886,6 +884,8 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
+            siaan_version: SessionStats.app_version(),
+            codex_model: SessionStats.configured_model(),
             started_at: DateTime.utc_now()
           })
 
@@ -1298,6 +1298,8 @@ defmodule SymphonyElixir.Orchestrator do
     running =
       state.running
       |> Enum.map(fn {issue_id, metadata} ->
+        stats = SessionStats.build_running_summary(metadata)
+
         %{
           issue_id: issue_id,
           identifier: metadata.identifier,
@@ -1305,6 +1307,16 @@ defmodule SymphonyElixir.Orchestrator do
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: metadata.session_id,
+          siaan_version: stats.siaan_version,
+          codex_model: stats.model,
+          repo_head_sha: stats.repo_head_sha,
+          repo_branch: stats.repo_branch,
+          pricing_model: stats.pricing_model,
+          pricing_source: stats.pricing_source,
+          estimated_cost_usd: stats.estimated_cost_usd,
+          estimated_input_cost_usd: stats.estimated_input_cost_usd,
+          estimated_output_cost_usd: stats.estimated_output_cost_usd,
+          cost_estimate_available: stats.cost_estimate_available,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
           codex_output_tokens: metadata.codex_output_tokens,
@@ -1335,6 +1347,7 @@ defmodule SymphonyElixir.Orchestrator do
     {:reply,
      %{
        running: running,
+       completed_runs: state.completed_runs,
        retrying: retrying,
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
@@ -1466,8 +1479,9 @@ defmodule SymphonyElixir.Orchestrator do
     {Map.get(state.running, issue_id), %{state | running: Map.delete(state.running, issue_id)}}
   end
 
-  defp record_session_completion_totals(state, running_entry) when is_map(running_entry) do
+  defp record_session_completion_totals(state, running_entry, result) when is_map(running_entry) do
     runtime_seconds = running_seconds(running_entry.started_at, DateTime.utc_now())
+    completed_record = SessionStats.build_completed_record(running_entry, result)
 
     codex_totals =
       apply_token_delta(
@@ -1480,10 +1494,21 @@ defmodule SymphonyElixir.Orchestrator do
         }
       )
 
-    %{state | codex_totals: codex_totals}
+    case SessionStats.append_history_record(completed_record) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("Failed to persist session stats: #{inspect(reason)}")
+    end
+
+    %{
+      state
+      | codex_totals: codex_totals,
+        completed_runs:
+          [completed_record | Map.get(state, :completed_runs, [])]
+          |> Enum.take(SessionStats.recent_history_limit())
+    }
   end
 
-  defp record_session_completion_totals(state, _running_entry), do: state
+  defp record_session_completion_totals(state, _running_entry, _result), do: state
 
   defp refresh_runtime_config(%State{} = state) do
     config = Config.settings!()
@@ -1497,7 +1522,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp retry_candidate_issue?(%Issue{} = issue, terminal_states) do
     candidate_issue?(issue, active_state_set(), terminal_states) and
-      !todo_issue_blocked_by_non_terminal?(issue, terminal_states)
+      !issue_blocked_by_non_terminal?(issue, terminal_states)
   end
 
   defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do

@@ -379,9 +379,16 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
-             "counts" => %{"running" => 1, "retrying" => 1},
+             "runtime" => %{"configured_model" => nil, "siaan_version" => "0.1.0"},
+             "counts" => %{"running" => 1, "retrying" => 1, "completed_runs" => 0},
              "running" => [
                %{
+                 "siaan_version" => nil,
+                 "model" => nil,
+                 "repo_head_sha" => nil,
+                 "repo_branch" => nil,
+                 "pricing_model" => nil,
+                 "pricing_source" => nil,
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
@@ -393,9 +400,16 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
-                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+                 "cost" => %{
+                   "estimated_cost_usd" => nil,
+                   "estimated_input_cost_usd" => nil,
+                   "estimated_output_cost_usd" => nil,
+                   "cost_estimate_available" => false
+                 }
                }
              ],
+             "completed_runs" => [],
              "retrying" => [
                %{
                  "issue_id" => "issue-retry",
@@ -432,17 +446,30 @@ defmodule SymphonyElixir.ExtensionsTest do
                "worker_host" => nil,
                "workspace_path" => nil,
                "session_id" => "thread-http",
+               "siaan_version" => nil,
+               "model" => nil,
+               "repo_head_sha" => nil,
+               "repo_branch" => nil,
+               "pricing_model" => nil,
+               "pricing_source" => nil,
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
-               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+               "cost" => %{
+                 "estimated_cost_usd" => nil,
+                 "estimated_input_cost_usd" => nil,
+                 "estimated_output_cost_usd" => nil,
+                 "cost_estimate_available" => false
+               }
              },
              "retry" => nil,
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
+             "recent_runs" => [],
              "last_error" => nil,
              "tracked" => %{}
            }
@@ -462,6 +489,116 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert %{"queued" => true, "coalesced" => false, "operations" => ["poll", "reconcile"]} =
              json_response(conn, 202)
+  end
+
+  test "phoenix observability api preserves issue_id for completed-only issue payloads" do
+    snapshot = %{
+      running: [],
+      retrying: [],
+      completed_runs: [
+        %{
+          "issue_id" => "issue-completed",
+          "issue_identifier" => "MT-COMPLETE",
+          "session_id" => "thread-complete",
+          "result" => "completed",
+          "model" => "gpt-5.2-codex"
+        }
+      ],
+      codex_totals: %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        seconds_running: 0
+      },
+      rate_limits: nil
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :CompletedIssueOnlyOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: %{
+          queued: false,
+          coalesced: false,
+          requested_at: DateTime.utc_now(),
+          operations: []
+        }
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    conn = get(build_conn(), "/api/v1/MT-COMPLETE")
+    issue_payload = json_response(conn, 200)
+
+    assert issue_payload["issue_identifier"] == "MT-COMPLETE"
+    assert issue_payload["issue_id"] == "issue-completed"
+    assert issue_payload["status"] == "completed"
+
+    assert issue_payload["recent_runs"] == [
+             %{
+               "issue_id" => "issue-completed",
+               "issue_identifier" => "MT-COMPLETE",
+               "session_id" => "thread-complete",
+               "result" => "completed",
+               "model" => "gpt-5.2-codex"
+             }
+           ]
+  end
+
+  test "phoenix observability api ignores non-map completed history rows" do
+    snapshot = %{
+      running: [],
+      retrying: [],
+      completed_runs: [
+        42,
+        ["unexpected"],
+        %{
+          "issue_id" => "issue-completed",
+          "issue_identifier" => "MT-COMPLETE",
+          "session_id" => "thread-complete",
+          "result" => "completed"
+        }
+      ],
+      codex_totals: %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        seconds_running: 0
+      },
+      rate_limits: nil
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :CompletedIssueMixedHistoryOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: %{
+          queued: false,
+          coalesced: false,
+          requested_at: DateTime.utc_now(),
+          operations: []
+        }
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    conn = get(build_conn(), "/api/v1/MT-COMPLETE")
+    issue_payload = json_response(conn, 200)
+
+    assert issue_payload["issue_id"] == "issue-completed"
+
+    assert issue_payload["recent_runs"] == [
+             %{
+               "issue_id" => "issue-completed",
+               "issue_identifier" => "MT-COMPLETE",
+               "session_id" => "thread-complete",
+               "result" => "completed"
+             }
+           ]
   end
 
   test "phoenix observability api preserves 405, 404, and unavailable behavior" do
@@ -678,7 +815,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
     assert response.status == 200
-    assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
+    assert response.body["counts"] == %{"running" => 1, "retrying" => 1, "completed_runs" => 0}
 
     dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
     assert dashboard_css.status == 200
