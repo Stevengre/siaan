@@ -497,7 +497,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       end
     end
 
-    assert {:error, {:github_graphql_errors, [%{"message" => "boom"}]}} =
+    assert {:ok, [%Issue{id: "38", blocked_by: []}]} =
              Client.fetch_candidate_issues_for_test(graphql_error_request)
 
     malformed_repository_request = fn method, url, _opts ->
@@ -510,7 +510,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       end
     end
 
-    assert {:error, :github_graphql_malformed} =
+    assert {:ok, [%Issue{id: "38", blocked_by: []}]} =
              Client.fetch_candidate_issues_for_test(malformed_repository_request)
 
     malformed_data_request = fn method, url, _opts ->
@@ -523,7 +523,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       end
     end
 
-    assert {:error, :github_graphql_malformed} =
+    assert {:ok, [%Issue{id: "38", blocked_by: []}]} =
              Client.fetch_candidate_issues_for_test(malformed_data_request)
   end
 

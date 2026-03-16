@@ -608,8 +608,13 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp hydrate_issue_blockers({:ok, issues}, tracker, request_fun)
        when is_list(issues) and is_map(tracker) and is_function(request_fun, 3) do
-    with {:ok, blockers_by_number} <- fetch_blockers_by_issue_number(tracker, issues, request_fun) do
-      {:ok, Enum.map(issues, &attach_blockers(&1, blockers_by_number))}
+    case fetch_blockers_by_issue_number(tracker, issues, request_fun) do
+      {:ok, blockers_by_number} ->
+        {:ok, Enum.map(issues, &attach_blockers(&1, blockers_by_number))}
+
+      {:error, reason} ->
+        Logger.warning("GitHub blocker hydration failed; continuing without blockers: #{inspect(reason)}")
+        {:ok, Enum.map(issues, &attach_blockers(&1, %{}))}
     end
   end
 

@@ -109,6 +109,24 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.recent_history_limit() == 100
   end
 
+  test "load_recent_history applies the limit after decoding valid rows" do
+    workspace_root = tmp_dir!("session-stats-limit-after-decode")
+    history_path = Path.join(workspace_root, ".siaan/session-stats.ndjson")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    File.mkdir_p!(Path.dirname(history_path))
+
+    File.write!(
+      history_path,
+      "{\"issue_identifier\":\"MT-1\"}\n{\"issue_identifier\":\"MT-2\"}\nnot-json\n"
+    )
+
+    assert SessionStats.load_recent_history(2) == [
+             %{"issue_identifier" => "MT-1"},
+             %{"issue_identifier" => "MT-2"}
+           ]
+  end
+
   test "load_recent_history skips malformed ndjson lines" do
     workspace_root = tmp_dir!("session-stats-malformed")
     history_path = Path.join(workspace_root, ".siaan/session-stats.ndjson")

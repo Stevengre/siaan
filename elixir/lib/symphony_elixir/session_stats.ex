@@ -43,8 +43,8 @@ defmodule SymphonyElixir.SessionStats do
       {:ok, contents} ->
         contents
         |> String.split("\n", trim: true)
-        |> Enum.take(-limit)
         |> Enum.flat_map(&decode_history_line/1)
+        |> Enum.take(-limit)
 
       {:error, :enoent} ->
         []
