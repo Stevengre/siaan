@@ -185,12 +185,7 @@ defmodule Mix.Tasks.PrBody.Check do
         errors
 
       section ->
-        table_rows =
-          section
-          |> String.split("\n")
-          |> Enum.count(&String.starts_with?(String.trim_leading(&1), "|"))
-
-        if table_rows >= 3 do
+        if valid_markdown_table?(section) do
           errors
         else
           errors ++ ["Section must include a markdown table with at least one data row: #{heading}"]
@@ -224,7 +219,7 @@ defmodule Mix.Tasks.PrBody.Check do
           trimmed == "No design decision introduced in this PR." ->
             errors
 
-          Enum.all?(@decision_record_fields, &String.contains?(trimmed, &1)) ->
+          valid_decision_record_entries?(trimmed) ->
             errors
 
           true ->
@@ -264,6 +259,67 @@ defmodule Mix.Tasks.PrBody.Check do
     section
     |> String.replace(~r/\n?<\/details>\s*\z/s, "")
     |> String.trim()
+  end
+
+  defp valid_markdown_table?(section) do
+    sanitized = strip_fenced_code_blocks(section)
+
+    sanitized
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.chunk_by(&(&1 == ""))
+    |> Enum.reject(fn chunk -> chunk == [""] end)
+    |> Enum.any?(&table_block?/1)
+  end
+
+  defp table_block?([header, separator | rest]) do
+    table_header_row?(header) and table_separator_row?(separator) and Enum.any?(rest, &table_data_row?/1)
+  end
+
+  defp table_block?(_chunk), do: false
+
+  defp table_header_row?(line) do
+    String.starts_with?(line, "|") and String.ends_with?(line, "|") and cell_count(line) >= 2
+  end
+
+  defp table_separator_row?(line) do
+    line
+    |> parse_table_cells()
+    |> Enum.all?(&Regex.match?(~r/^:?-{3,}:?$/, &1))
+  end
+
+  defp table_data_row?(line) do
+    String.starts_with?(line, "|") and String.ends_with?(line, "|") and cell_count(line) >= 2
+  end
+
+  defp cell_count(line) do
+    line
+    |> parse_table_cells()
+    |> length()
+  end
+
+  defp parse_table_cells(line) do
+    line
+    |> String.trim("|")
+    |> String.split("|")
+    |> Enum.map(&String.trim/1)
+  end
+
+  defp valid_decision_record_entries?(section) do
+    entries =
+      section
+      |> strip_fenced_code_blocks()
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(&String.starts_with?(&1, "- "))
+
+    Enum.all?(@decision_record_fields, fn field ->
+      Enum.any?(entries, &String.starts_with?(&1, "- #{field}"))
+    end)
+  end
+
+  defp strip_fenced_code_blocks(section) do
+    Regex.replace(~r/```.*?```/s, section, "")
   end
 
   defp heading_position(body, heading) do
