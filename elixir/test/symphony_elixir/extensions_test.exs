@@ -487,6 +487,62 @@ defmodule SymphonyElixir.ExtensionsTest do
              json_response(conn, 202)
   end
 
+  test "phoenix observability api preserves issue_id for completed-only issue payloads" do
+    snapshot = %{
+      running: [],
+      retrying: [],
+      completed_runs: [
+        %{
+          "issue_id" => "issue-completed",
+          "issue_identifier" => "MT-COMPLETE",
+          "session_id" => "thread-complete",
+          "result" => "completed",
+          "model" => "gpt-5.2-codex"
+        }
+      ],
+      codex_totals: %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        seconds_running: 0
+      },
+      rate_limits: nil
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :CompletedIssueOnlyOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: %{
+          queued: false,
+          coalesced: false,
+          requested_at: DateTime.utc_now(),
+          operations: []
+        }
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    conn = get(build_conn(), "/api/v1/MT-COMPLETE")
+    issue_payload = json_response(conn, 200)
+
+    assert issue_payload["issue_identifier"] == "MT-COMPLETE"
+    assert issue_payload["issue_id"] == "issue-completed"
+    assert issue_payload["status"] == "completed"
+
+    assert issue_payload["recent_runs"] == [
+             %{
+               "issue_id" => "issue-completed",
+               "issue_identifier" => "MT-COMPLETE",
+               "session_id" => "thread-complete",
+               "result" => "completed",
+               "model" => "gpt-5.2-codex"
+             }
+           ]
+  end
+
   test "phoenix observability api preserves 405, 404, and unavailable behavior" do
     unavailable_orchestrator = Module.concat(__MODULE__, :UnavailableOrchestrator)
     start_test_endpoint(orchestrator: unavailable_orchestrator, snapshot_timeout_ms: 5)

@@ -74,7 +74,7 @@ defmodule SymphonyElixirWeb.Presenter do
   defp issue_payload_body(issue_identifier, running, retry, completed_runs) do
     %{
       issue_identifier: issue_identifier,
-      issue_id: issue_id_from_entries(running, retry),
+      issue_id: issue_id_from_entries(running, retry, completed_runs),
       status: issue_status(running, retry, completed_runs),
       workspace: %{
         path: workspace_path(issue_identifier, running, retry),
@@ -96,8 +96,14 @@ defmodule SymphonyElixirWeb.Presenter do
     }
   end
 
-  defp issue_id_from_entries(running, retry),
-    do: (running && running.issue_id) || (retry && retry.issue_id)
+  defp issue_id_from_entries(running, retry, completed_runs),
+    do:
+      (running && running.issue_id) ||
+        (retry && retry.issue_id) ||
+        completed_issue_id(completed_runs)
+
+  defp completed_issue_id([%{"issue_id" => issue_id} | _]) when is_binary(issue_id), do: issue_id
+  defp completed_issue_id(_completed_runs), do: nil
 
   defp restart_count(retry), do: max(retry_attempt(retry) - 1, 0)
   defp retry_attempt(nil), do: 0
