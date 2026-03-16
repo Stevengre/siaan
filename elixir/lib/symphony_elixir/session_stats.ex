@@ -177,12 +177,7 @@ defmodule SymphonyElixir.SessionStats do
 
   defp expand_home_path("~"), do: System.user_home() || "~"
 
-  defp expand_home_path("~/" <> rest) do
-    case System.user_home() do
-      nil -> "~/" <> rest
-      home -> Path.join(home, rest)
-    end
-  end
+  defp expand_home_path("~/" <> rest), do: Path.join(System.user_home() || "~", rest)
 
   defp expand_home_path(path), do: path
 

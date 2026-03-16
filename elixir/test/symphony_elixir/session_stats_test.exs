@@ -45,6 +45,14 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert estimate.pricing_source == nil
   end
 
+  test "estimate_cost leaves nil models unpriced" do
+    estimate = SessionStats.estimate_cost(nil, 123, 456)
+
+    assert estimate.cost_estimate_available == false
+    assert estimate.pricing_model == nil
+    assert estimate.estimated_cost_usd == nil
+  end
+
   test "recent history starts empty and appends records under the workflow workspace" do
     workspace_root = tmp_dir!("session-stats-history")
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
@@ -90,6 +98,17 @@ defmodule SymphonyElixir.SessionStatsTest do
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-34"})
+    assert File.exists?(history_path)
+  end
+
+  test "append_history_record expands a bare tilde workspace root" do
+    home = System.user_home() || "~"
+    history_path = Path.join(home, ".siaan/session-stats.ndjson")
+
+    File.rm_rf(Path.join(home, ".siaan"))
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: "~")
+
+    assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-35"})
     assert File.exists?(history_path)
   end
 
@@ -178,6 +197,31 @@ defmodule SymphonyElixir.SessionStatsTest do
              "input_tokens" => 0,
              "output_tokens" => 0,
              "total_tokens" => 0
+           }
+  end
+
+  test "build_completed_record includes pricing metadata for known models" do
+    record =
+      SessionStats.build_completed_record(
+        %{
+          identifier: "MT-3",
+          codex_input_tokens: 12,
+          codex_output_tokens: 4,
+          codex_total_tokens: 16,
+          codex_model: "gpt-5.2-codex"
+        },
+        "completed"
+      )
+
+    assert record["model"] == "gpt-5.2-codex"
+    assert record["pricing_model"] == "gpt-5.2-codex"
+    assert record["pricing_source"] =~ "OpenAI API pricing snapshot"
+
+    assert record["cost"] == %{
+             "estimated_cost_usd" => 0.000055,
+             "estimated_input_cost_usd" => 0.000015,
+             "estimated_output_cost_usd" => 0.00004,
+             "cost_estimate_available" => true
            }
   end
 
