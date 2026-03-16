@@ -21,6 +21,45 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     send(pid, :stop)
   end
 
+  test "ready issues transition to in-progress before normal dispatch" do
+    issue = %Issue{
+      id: "issue-ready-dispatch",
+      identifier: "GH-500",
+      title: "Dispatch transition test",
+      description: "Ensure ready issues are retargeted before dispatch",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-500"
+    }
+
+    assert {:ok, transitioned_issue} =
+             Orchestrator.transition_issue_for_dispatch_for_test(issue, fn issue_id, state_name ->
+               send(self(), {:update_issue_state_called, issue_id, state_name})
+               :ok
+             end)
+
+    assert_receive {:update_issue_state_called, "issue-ready-dispatch", "status:in-progress"}
+    assert transitioned_issue.state == "status:in-progress"
+  end
+
+  test "ready issues are not dispatched when the transition to in-progress fails" do
+    issue = %Issue{
+      id: "issue-ready-dispatch-error",
+      identifier: "GH-501",
+      title: "Dispatch transition failure test",
+      description: "Do not dispatch when ready->in-progress fails",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-501"
+    }
+
+    assert {:error, :boom} =
+             Orchestrator.transition_issue_for_dispatch_for_test(issue, fn issue_id, state_name ->
+               send(self(), {:update_issue_state_called, issue_id, state_name})
+               {:error, :boom}
+             end)
+
+    assert_receive {:update_issue_state_called, "issue-ready-dispatch-error", "status:in-progress"}
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
