@@ -549,6 +549,85 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "fails when architecture trace summary is outside the details wrapper" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body = """
+      ### Behavior Delta
+
+      | | Before | After |
+      |---|---|---|
+      | Trigger | Manual PR authoring | Agent-generated PR descriptions from issue + diff |
+      | Observable effect | Reviewers infer correctness from prose | Reviewers get explicit behavior delta, invariants, evidence, and rollback notes |
+      | Affected inputs | Any PR body with the legacy headings | PR bodies matching the Change Proof + Architecture Trace template |
+
+      ### Invariants / Non-goals
+
+      - **Must still hold**: PR descriptions remain markdown-only and GitHub-renderable.
+      - **Explicitly unchanged**: The validator still runs through `mix pr_body.check`.
+      - **Out of scope**: Auto-linking evidence artifacts that do not already exist in the PR.
+
+      ### Validation
+
+      | Risk point | Evidence | Link |
+      |---|---|---|
+      | Missing Change Proof sections | test: `mix test test/mix/tasks/pr_body_check_test.exs` | N/A (local command) |
+
+      ### Risk / Blast Radius / Rollback
+
+      - **Most likely failure**: A PR body copies the headings but omits real evidence.
+      - **Blast radius**: PR authoring guidance, local PR body linting, and PR-description CI.
+      - **How to detect**: `mix pr_body.check` or the `validate-pr-description` GitHub check fails.
+      - **How to rollback**: Revert the template + validator changes.
+
+      ### Review Focus
+
+      1. Confirm the lint task enforces the new approval-oriented structure.
+
+      <details>
+      <summary><b>Unrelated Details</b></summary>
+
+      Not the architecture trace appendix.
+
+      </details>
+
+      <summary><b>Architecture Trace</b></summary>
+
+      ### Context (C4-L1)
+
+      No L1 change - this PR only changes repository automation/tooling guidance and validation.
+
+      ### Container (C4-L2)
+
+      Single-container change within the repository automation/tooling path.
+
+      ### Component (C4-L3)
+
+      The PR template, PR-body validator, and agent skills now align on the same reviewer-facing structure.
+
+      ### Code Trace (C4-L4)
+
+      - PR body validator -> `Mix.Tasks.PrBody.Check` -> `/elixir/lib/mix/tasks/pr_body.check.ex`
+
+      ### Decision Record
+
+      No design decision introduced in this PR.
+      """
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Architecture Trace appendix must be wrapped in <details>."
+    end)
+  end
+
   test "fails when decision record omits alternatives and trade-offs" do
     in_temp_repo(fn ->
       write_template!(@template)

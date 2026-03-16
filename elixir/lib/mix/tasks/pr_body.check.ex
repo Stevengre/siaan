@@ -20,6 +20,7 @@ defmodule Mix.Tasks.PrBody.Check do
   ]
 
   @architecture_trace_summary "<summary><b>Architecture Trace</b></summary>"
+  @architecture_trace_details_regex ~r/<details>\s*#{Regex.escape(@architecture_trace_summary)}.*?<\/details>/s
   @decision_record_heading "### Decision Record"
   @decision_record_fields [
     "**Decision**:",
@@ -166,13 +167,16 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp check_architecture_trace_wrapper(errors, body) do
-    errors
-    |> maybe_append(not String.contains?(body, "<details>"), "Architecture Trace appendix must be wrapped in <details>.")
-    |> maybe_append(
-      not String.contains?(body, @architecture_trace_summary),
-      "Architecture Trace appendix must use the required summary heading."
-    )
-    |> maybe_append(not String.contains?(body, "</details>"), "Architecture Trace appendix must close with </details>.")
+    cond do
+      Regex.match?(@architecture_trace_details_regex, body) ->
+        errors
+
+      not String.contains?(body, @architecture_trace_summary) ->
+        errors ++ ["Architecture Trace appendix must use the required summary heading."]
+
+      true ->
+        errors ++ ["Architecture Trace appendix must be wrapped in <details>."]
+    end
   end
 
   defp check_table_section(errors, body, headings, heading) do
@@ -251,9 +255,6 @@ defmodule Mix.Tasks.PrBody.Check do
       errors
     end
   end
-
-  defp maybe_append(errors, true, message), do: errors ++ [message]
-  defp maybe_append(errors, false, _message), do: errors
 
   defp decision_record_without_bullets?(heading, body_section) do
     heading == @decision_record_heading and normalize_decision_record_section(body_section) == "No design decision introduced in this PR."
