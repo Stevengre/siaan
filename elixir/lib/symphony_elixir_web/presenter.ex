@@ -47,7 +47,7 @@ defmodule SymphonyElixirWeb.Presenter do
         completed_runs =
           snapshot
           |> Map.get(:completed_runs, [])
-          |> Enum.filter(&(&1["issue_identifier"] == issue_identifier))
+          |> Enum.filter(&completed_run_for_issue?(&1, issue_identifier))
 
         if is_nil(running) and is_nil(retry) and completed_runs == [] do
           {:error, :issue_not_found}
@@ -104,6 +104,11 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp completed_issue_id([%{"issue_id" => issue_id} | _]) when is_binary(issue_id), do: issue_id
   defp completed_issue_id(_completed_runs), do: nil
+
+  defp completed_run_for_issue?(%{"issue_identifier" => completed_issue_identifier}, issue_identifier),
+    do: completed_issue_identifier == issue_identifier
+
+  defp completed_run_for_issue?(_completed_run, _issue_identifier), do: false
 
   defp restart_count(retry), do: max(retry_attempt(retry) - 1, 0)
   defp retry_attempt(nil), do: 0
