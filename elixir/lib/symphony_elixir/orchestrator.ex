@@ -388,9 +388,33 @@ defmodule SymphonyElixir.Orchestrator do
   defp watched_issue_merge_candidate?(_issue), do: false
 
   defp dispatch_watched_issue(issue, reasons) do
-    case Tracker.update_issue_state(issue.id, "status:in-progress") do
+    dispatch_watched_issue(
+      issue,
+      reasons,
+      &Tracker.update_issue_state/2,
+      &SessionStats.mark_pending_transition/3
+    )
+  end
+
+  defp dispatch_watched_issue(
+         issue,
+         reasons,
+         update_issue_state_fun,
+         mark_pending_transition_fun
+       )
+       when is_function(update_issue_state_fun, 2) and is_function(mark_pending_transition_fun, 3) do
+    case update_issue_state_fun.(issue.id, "status:in-progress") do
       :ok ->
-        :ok = SessionStats.mark_pending_transition(issue.id, issue.identifier, "review_to_in_progress")
+        case mark_pending_transition_fun.(issue.id, issue.identifier, "review_to_in_progress") do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Unable to persist pending transition for #{issue_context(issue)} transition=review_to_in_progress: #{inspect(reason)}")
+
+            :ok
+        end
+
         Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress (#{Enum.join(reasons, ", ")})")
 
       {:error, err} ->
@@ -490,6 +514,24 @@ defmodule SymphonyElixir.Orchestrator do
   def persist_issue_session_for_test(running_entry, %Issue{} = issue, worker_host, dispatch_profile)
       when is_map(running_entry) and (is_map(dispatch_profile) or is_nil(dispatch_profile)) do
     record_issue_session(running_entry, issue, worker_host, dispatch_profile)
+  end
+
+  @doc false
+  @spec dispatch_watched_issue_for_test(
+          Issue.t(),
+          [String.t()],
+          (String.t(), String.t() -> term()),
+          (String.t(), String.t() | nil, String.t() -> term())
+        ) :: :ok | {:error, term()}
+  def dispatch_watched_issue_for_test(
+        %Issue{} = issue,
+        reasons,
+        update_issue_state_fun,
+        mark_pending_transition_fun
+      )
+      when is_list(reasons) and is_function(update_issue_state_fun, 2) and
+             is_function(mark_pending_transition_fun, 3) do
+    dispatch_watched_issue(issue, reasons, update_issue_state_fun, mark_pending_transition_fun)
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state

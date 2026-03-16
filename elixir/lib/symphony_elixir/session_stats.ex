@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.SessionStats do
   @moduledoc false
+  require Logger
 
   alias SymphonyElixir.Config
 
@@ -116,20 +117,48 @@ defmodule SymphonyElixir.SessionStats do
 
   @spec consume_pending_transition(String.t()) :: String.t() | nil
   def consume_pending_transition(issue_id) when is_binary(issue_id) do
-    issue_session = load_issue_session(issue_id)
+    consume_pending_transition(issue_id, &load_issue_session/1, &save_issue_session/1)
+  end
+
+  def consume_pending_transition(_issue_id), do: nil
+
+  @doc false
+  @spec consume_pending_transition_for_test(
+          String.t(),
+          (String.t() -> map() | nil),
+          (map() -> :ok | {:error, term()})
+        ) :: String.t() | nil
+  def consume_pending_transition_for_test(issue_id, load_issue_session_fun, save_issue_session_fun)
+      when is_binary(issue_id) and is_function(load_issue_session_fun, 1) and
+             is_function(save_issue_session_fun, 1) do
+    consume_pending_transition(issue_id, load_issue_session_fun, save_issue_session_fun)
+  end
+
+  defp consume_pending_transition(issue_id, load_issue_session_fun, save_issue_session_fun)
+       when is_binary(issue_id) and is_function(load_issue_session_fun, 1) and
+              is_function(save_issue_session_fun, 1) do
+    issue_session = load_issue_session_fun.(issue_id)
 
     case issue_session do
       %{"pending_transition" => transition} = record when is_binary(transition) ->
         updated_record = Map.delete(record, "pending_transition")
-        :ok = save_issue_session(updated_record)
+
+        case save_issue_session_fun.(updated_record) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Unable to clear pending transition for issue_id=#{issue_id}: #{inspect(reason)}")
+
+            :ok
+        end
+
         transition
 
       _ ->
         nil
     end
   end
-
-  def consume_pending_transition(_issue_id), do: nil
 
   @spec mark_pending_transition(String.t(), String.t() | nil, String.t()) :: :ok | {:error, term()}
   def mark_pending_transition(issue_id, issue_identifier, transition)

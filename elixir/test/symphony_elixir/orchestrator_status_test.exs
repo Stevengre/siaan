@@ -161,6 +161,41 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.physical_session_count == 0
   end
 
+  test "watched review re-entry keeps running when pending-transition persistence fails" do
+    issue = %Issue{
+      id: "issue-watch-persist-warning",
+      identifier: "GH-503AA",
+      title: "Watch transition warning",
+      description: "Do not crash watch-state re-entry when pending-transition persistence fails",
+      state: "status:review",
+      url: "https://example.org/issues/GH-503AA"
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 Orchestrator.dispatch_watched_issue_for_test(
+                   issue,
+                   ["ci failed"],
+                   fn issue_id, state_name ->
+                     send(self(), {:update_issue_state_called, issue_id, state_name})
+                     :ok
+                   end,
+                   fn issue_id, identifier, transition ->
+                     send(self(), {:mark_pending_transition_called, issue_id, identifier, transition})
+                     {:error, :disk_full}
+                   end
+                 )
+      end)
+
+    assert_receive {:update_issue_state_called, "issue-watch-persist-warning", "status:in-progress"}
+
+    assert_receive {:mark_pending_transition_called, "issue-watch-persist-warning", "GH-503AA", "review_to_in_progress"}
+
+    assert log =~ "Unable to persist pending transition for issue_id=issue-watch-persist-warning issue_identifier=GH-503AA"
+    assert log =~ "Watch state transition complete: issue_id=issue-watch-persist-warning issue_identifier=GH-503AA -> status:in-progress"
+  end
+
   test "dispatch keeps running when issue-session persistence fails" do
     workspace_root = tmp_dir!("orchestrator-issue-session-persist-failure")
     blocking_path = Path.join(workspace_root, "not-a-directory")

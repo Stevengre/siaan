@@ -85,7 +85,7 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       execution_profiles: %{
         " Review_To_In_Progress " => %{
-          "session_reuse" => "reuse_issue_session",
+          "session_reuse" => " reuse_issue_session ",
           "codex_command" => "codex --model gpt-5.3-spark app-server"
         }
       }
@@ -141,6 +141,19 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       execution_profiles: %{
         "ready_to_in_progress" => %{"session_reuse" => "invalid"}
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "session_reuse"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => %{
+          "session_reuse" => "   ",
+          "codex_command" => "codex app-server"
+        }
       }
     )
 

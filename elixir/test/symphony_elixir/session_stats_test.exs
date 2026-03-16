@@ -300,6 +300,30 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.consume_pending_transition(:invalid) == nil
   end
 
+  test "consume_pending_transition logs and returns the transition when clearing it fails" do
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert SessionStats.consume_pending_transition_for_test(
+                 "issue-4",
+                 fn "issue-4" ->
+                   %{
+                     "issue_id" => "issue-4",
+                     "issue_identifier" => "GH-43",
+                     "pending_transition" => "review_to_in_progress"
+                   }
+                 end,
+                 fn updated_record ->
+                   send(self(), {:save_issue_session_called, updated_record})
+                   {:error, :disk_full}
+                 end
+               ) == "review_to_in_progress"
+      end)
+
+    assert_receive {:save_issue_session_called, %{"issue_id" => "issue-4", "issue_identifier" => "GH-43"}}
+
+    assert log =~ "Unable to clear pending transition for issue_id=issue-4: :disk_full"
+  end
+
   test "build_running_summary and completed_record include issue-session observability fields" do
     started_at = DateTime.utc_now() |> DateTime.add(-30, :second)
 
