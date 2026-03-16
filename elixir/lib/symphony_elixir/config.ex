@@ -26,6 +26,12 @@ defmodule SymphonyElixir.Config do
           turn_sandbox_policy: map()
         }
 
+  @type execution_profile :: %{
+          name: String.t(),
+          session_reuse: String.t(),
+          codex_command: String.t()
+        }
+
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
     case Workflow.current() do
@@ -112,6 +118,22 @@ defmodule SymphonyElixir.Config do
          }}
       end
     end
+  end
+
+  @spec execution_profile(String.t()) :: execution_profile()
+  def execution_profile(name) when is_binary(name) do
+    settings = settings!()
+    normalized_name = String.downcase(String.trim(name))
+
+    profile =
+      settings.agent.execution_profiles
+      |> Map.get(normalized_name, %{})
+
+    %{
+      name: normalized_name,
+      session_reuse: Map.get(profile, "session_reuse", "new_issue_session"),
+      codex_command: Map.get(profile, "codex_command") || settings.codex.command
+    }
   end
 
   defp validate_semantics(settings) do

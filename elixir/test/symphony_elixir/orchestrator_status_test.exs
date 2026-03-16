@@ -60,6 +60,128 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert_receive {:update_issue_state_called, "issue-ready-dispatch-error", "status:in-progress"}
   end
 
+  test "dispatch profile defaults start new issue sessions for ready transitions" do
+    configure_execution_profile_workspace!()
+
+    issue = %Issue{
+      id: "issue-ready-profile",
+      identifier: "GH-502",
+      title: "Ready profile selection",
+      description: "Create a new issue session",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-502"
+    }
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "ready_to_in_progress")
+
+    assert profile.profile_name == "ready_to_in_progress"
+    assert profile.session_reuse_policy == "new_issue_session"
+    assert profile.session_reuse_decision == "started_new_issue_session"
+    assert profile.issue_turn_count == 0
+    assert profile.physical_session_count == 0
+    assert profile.codex_command == "codex app-server"
+    assert is_binary(profile.issue_session_id)
+    assert profile.issue_session_id != "existing-issue-session"
+  end
+
+  test "review re-entry dispatch profile reuses the existing issue session and command override" do
+    configure_execution_profile_workspace!(
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    issue = %Issue{
+      id: "issue-review-profile",
+      identifier: "GH-503",
+      title: "Review profile selection",
+      description: "Reuse the issue session on re-entry",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.save_issue_session(%{
+               "issue_id" => issue.id,
+               "issue_identifier" => issue.identifier,
+               "issue_session_id" => "existing-issue-session",
+               "execution_profile" => "ready_to_in_progress",
+               "execution_transition" => "ready_to_in_progress",
+               "session_reuse_policy" => "new_issue_session",
+               "session_reuse_decision" => "started_new_issue_session",
+               "codex_command" => "codex app-server",
+               "model" => "gpt-5.3-codex",
+               "issue_session_turn_count" => 3,
+               "physical_session_count" => 1,
+               "physical_session_id" => "thread-existing"
+             })
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "review_to_in_progress")
+
+    assert profile.profile_name == "review_to_in_progress"
+    assert profile.session_reuse_policy == "reuse_issue_session"
+    assert profile.session_reuse_decision == "reused_issue_session"
+    assert profile.issue_session_id == "existing-issue-session"
+    assert profile.issue_turn_count == 3
+    assert profile.physical_session_count == 1
+    assert profile.codex_thread_id == "thread-existing"
+    assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
+  end
+
+  test "retry and stall continuity inherit the persisted issue-session profile" do
+    configure_execution_profile_workspace!(
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    issue = %Issue{
+      id: "issue-retry-profile",
+      identifier: "GH-504",
+      title: "Retry profile continuity",
+      description: "Keep the same lifecycle profile across retries",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-504"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.save_issue_session(%{
+               "issue_id" => issue.id,
+               "issue_identifier" => issue.identifier,
+               "issue_session_id" => "issue-session-retry",
+               "execution_profile" => "review_to_in_progress",
+               "execution_transition" => "review_to_in_progress",
+               "session_reuse_policy" => "reuse_issue_session",
+               "session_reuse_decision" => "reused_issue_session",
+               "codex_command" => "codex --model gpt-5.3-spark app-server",
+               "model" => "gpt-5.3-spark",
+               "issue_session_turn_count" => 4,
+               "physical_session_count" => 2,
+               "physical_session_id" => "thread-review"
+             })
+
+    retry_profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "retry_continuation")
+    stall_profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "stall_recovery")
+
+    assert retry_profile.profile_name == "review_to_in_progress"
+    assert retry_profile.issue_session_id == "issue-session-retry"
+    assert retry_profile.session_reuse_decision == "reused_issue_session"
+    assert retry_profile.issue_turn_count == 4
+    assert retry_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+
+    assert stall_profile.profile_name == "review_to_in_progress"
+    assert stall_profile.issue_session_id == "issue-session-retry"
+    assert stall_profile.session_reuse_decision == "reused_issue_session"
+    assert stall_profile.issue_turn_count == 4
+    assert stall_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
@@ -1726,5 +1848,21 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp configure_execution_profile_workspace!(overrides \\ []) do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-orchestrator-execution-profiles-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(workspace_root)
+    on_exit(fn -> File.rm_rf(workspace_root) end)
+
+    write_workflow_file!(
+      SymphonyElixir.Workflow.workflow_file_path(),
+      Keyword.merge([workspace_root: workspace_root], overrides)
+    )
   end
 end

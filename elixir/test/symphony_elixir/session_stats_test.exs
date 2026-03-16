@@ -45,6 +45,10 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.configured_model() == nil
   end
 
+  test "configured_model returns nil for non-binary commands" do
+    assert SessionStats.configured_model(nil) == nil
+  end
+
   test "estimate_cost returns API billing estimate for priced models" do
     estimate = SessionStats.estimate_cost("gpt-5.2-codex", 1_000_000, 500_000)
 
@@ -184,6 +188,160 @@ defmodule SymphonyElixir.SessionStatsTest do
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
 
     assert {:error, _reason} = SessionStats.append_history_record(%{"issue_identifier" => "GH-36"})
+  end
+
+  test "issue sessions persist and can be replaced in the workflow workspace" do
+    workspace_root = tmp_dir!("session-stats-issue-sessions")
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+    assert SessionStats.load_issue_session("issue-1") == nil
+
+    assert :ok =
+             SessionStats.save_issue_session(%{
+               "issue_id" => "issue-1",
+               "issue_identifier" => "GH-38",
+               "issue_session_id" => "issue-session-1",
+               "execution_profile" => "ready_to_in_progress"
+             })
+
+    assert SessionStats.load_issue_session("issue-1") == %{
+             "issue_id" => "issue-1",
+             "issue_identifier" => "GH-38",
+             "issue_session_id" => "issue-session-1",
+             "execution_profile" => "ready_to_in_progress"
+           }
+
+    assert :ok =
+             SessionStats.save_issue_session(%{
+               "issue_id" => "issue-1",
+               "issue_identifier" => "GH-38",
+               "issue_session_id" => "issue-session-2",
+               "execution_profile" => "review_to_in_progress"
+             })
+
+    assert SessionStats.load_issue_session("issue-1")["issue_session_id"] == "issue-session-2"
+  end
+
+  test "issue-session helpers handle malformed data and deletions" do
+    workspace_root = tmp_dir!("session-stats-issue-session-errors")
+    issue_sessions_path = Path.join(workspace_root, ".siaan/issue-sessions.json")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    File.mkdir_p!(Path.dirname(issue_sessions_path))
+    File.write!(issue_sessions_path, "not-json")
+
+    assert SessionStats.load_issue_sessions() == %{}
+    assert SessionStats.load_issue_session(:invalid) == nil
+    assert {:error, :invalid_issue_session_record} = SessionStats.save_issue_session(%{})
+    assert {:error, :invalid_issue_id} = SessionStats.delete_issue_session(nil)
+
+    assert :ok =
+             SessionStats.save_issue_session(%{
+               "issue_id" => "issue-delete",
+               "issue_identifier" => "GH-40"
+             })
+
+    assert :ok = SessionStats.delete_issue_session("issue-delete")
+    assert SessionStats.load_issue_session("issue-delete") == nil
+  end
+
+  test "load_issue_sessions returns an empty map for non-file read errors" do
+    workspace_root = tmp_dir!("session-stats-issue-session-read-error")
+    issue_sessions_path = Path.join(workspace_root, ".siaan/issue-sessions.json")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    File.mkdir_p!(issue_sessions_path)
+
+    assert SessionStats.load_issue_sessions() == %{}
+  end
+
+  test "pending transitions are consumed once for issue-session re-entry routing" do
+    workspace_root = tmp_dir!("session-stats-pending-transition")
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+    assert :ok =
+             SessionStats.mark_pending_transition(
+               "issue-2",
+               "GH-39",
+               "review_to_in_progress"
+             )
+
+    assert SessionStats.consume_pending_transition("issue-2") == "review_to_in_progress"
+    assert SessionStats.consume_pending_transition("issue-2") == nil
+
+    assert %{
+             "issue_id" => "issue-2",
+             "issue_identifier" => "GH-39",
+             "updated_at" => updated_at
+           } = SessionStats.load_issue_session("issue-2")
+
+    assert is_binary(updated_at)
+  end
+
+  test "pending transition helpers reuse existing issue-session records and ignore invalid ids" do
+    workspace_root = tmp_dir!("session-stats-pending-transition-existing")
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+    assert :ok =
+             SessionStats.save_issue_session(%{
+               "issue_id" => "issue-3",
+               "issue_identifier" => "GH-42",
+               "issue_session_id" => "issue-session-3"
+             })
+
+    assert :ok =
+             SessionStats.mark_pending_transition(
+               "issue-3",
+               "GH-42",
+               "review_to_in_progress"
+             )
+
+    assert SessionStats.load_issue_session("issue-3")["issue_session_id"] == "issue-session-3"
+    assert SessionStats.consume_pending_transition(:invalid) == nil
+  end
+
+  test "build_running_summary and completed_record include issue-session observability fields" do
+    started_at = DateTime.utc_now() |> DateTime.add(-30, :second)
+
+    running_entry = %{
+      issue_id: "issue-observability",
+      identifier: "GH-41",
+      session_id: "thread-1-turn-1",
+      issue_session_id: "issue-session-41",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "retry_continuation",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "reused_issue_session",
+      codex_thread_id: "thread-1",
+      physical_session_count: 2,
+      issue_session_turn_count: 5,
+      codex_model: "gpt-5.2-codex",
+      codex_input_tokens: 20,
+      codex_output_tokens: 10,
+      codex_total_tokens: 30,
+      started_at: started_at
+    }
+
+    summary = SessionStats.build_running_summary(running_entry)
+    record = SessionStats.build_completed_record(running_entry, "completed")
+
+    assert summary.issue_session_id == "issue-session-41"
+    assert summary.execution_profile == "review_to_in_progress"
+    assert summary.execution_transition == "retry_continuation"
+    assert summary.session_reuse_policy == "reuse_issue_session"
+    assert summary.session_reuse_decision == "reused_issue_session"
+    assert summary.physical_session_id == "thread-1"
+    assert summary.physical_session_count == 2
+    assert summary.issue_session_turn_count == 5
+
+    assert record["issue_session_id"] == "issue-session-41"
+    assert record["execution_profile"] == "review_to_in_progress"
+    assert record["execution_transition"] == "retry_continuation"
+    assert record["session_reuse_policy"] == "reuse_issue_session"
+    assert record["session_reuse_decision"] == "reused_issue_session"
+    assert record["physical_session_id"] == "thread-1"
+    assert record["physical_session_count"] == 2
+    assert record["issue_session_turn_count"] == 5
   end
 
   test "build_running_summary includes known model pricing and version metadata" do

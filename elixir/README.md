@@ -138,6 +138,12 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
+  execution_profiles:
+    ready_to_in_progress:
+      session_reuse: new_issue_session
+    review_to_in_progress:
+      session_reuse: reuse_issue_session
+      codex_command: codex --model gpt-5.3-spark app-server
 codex:
   command: codex app-server
 ---
@@ -161,6 +167,11 @@ Notes:
   Symphony validation.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+- `agent.execution_profiles` lets you route `ready -> in-progress` and `review -> in-progress`
+  through different session-reuse policies and Codex commands. By default, ready-starts create a
+  new issue session, while review re-entry reuses the existing issue session when one is available.
+- The persisted issue-session turn count continues across review re-entry for observability and
+  prompt routing, but `agent.max_turns` still applies per physical agent invocation.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run

@@ -28,12 +28,17 @@ defmodule SymphonyElixir.SessionStats do
 
   @spec configured_model() :: String.t() | nil
   def configured_model do
-    command = Config.settings!().codex.command
+    configured_model(Config.settings!().codex.command)
+  end
 
+  @spec configured_model(String.t() | nil) :: String.t() | nil
+  def configured_model(command) when is_binary(command) do
     command
     |> OptionParser.split()
     |> configured_model_from_args()
   end
+
+  def configured_model(_command), do: nil
 
   @spec load_recent_history(non_neg_integer()) :: [map()]
   def load_recent_history(limit \\ @recent_history_limit) when is_integer(limit) and limit >= 0 do
@@ -64,6 +69,87 @@ defmodule SymphonyElixir.SessionStats do
     end
   end
 
+  @spec load_issue_session(String.t()) :: map() | nil
+  def load_issue_session(issue_id) when is_binary(issue_id) do
+    load_issue_sessions()
+    |> Map.get(issue_id)
+  end
+
+  def load_issue_session(_issue_id), do: nil
+
+  @spec load_issue_sessions() :: map()
+  def load_issue_sessions do
+    issue_sessions_path()
+    |> File.read()
+    |> case do
+      {:ok, contents} ->
+        case Jason.decode(contents) do
+          {:ok, decoded} when is_map(decoded) -> decoded
+          _ -> %{}
+        end
+
+      {:error, :enoent} ->
+        %{}
+
+      {:error, _reason} ->
+        %{}
+    end
+  end
+
+  @spec save_issue_session(map()) :: :ok | {:error, term()}
+  def save_issue_session(%{"issue_id" => issue_id} = record) when is_binary(issue_id) do
+    update_issue_sessions(fn sessions ->
+      Map.put(sessions, issue_id, record)
+    end)
+  end
+
+  def save_issue_session(_record), do: {:error, :invalid_issue_session_record}
+
+  @spec delete_issue_session(String.t()) :: :ok | {:error, term()}
+  def delete_issue_session(issue_id) when is_binary(issue_id) do
+    update_issue_sessions(fn sessions ->
+      Map.delete(sessions, issue_id)
+    end)
+  end
+
+  def delete_issue_session(_issue_id), do: {:error, :invalid_issue_id}
+
+  @spec consume_pending_transition(String.t()) :: String.t() | nil
+  def consume_pending_transition(issue_id) when is_binary(issue_id) do
+    issue_session = load_issue_session(issue_id)
+
+    case issue_session do
+      %{"pending_transition" => transition} = record when is_binary(transition) ->
+        updated_record = Map.delete(record, "pending_transition")
+        :ok = save_issue_session(updated_record)
+        transition
+
+      _ ->
+        nil
+    end
+  end
+
+  def consume_pending_transition(_issue_id), do: nil
+
+  @spec mark_pending_transition(String.t(), String.t() | nil, String.t()) :: :ok | {:error, term()}
+  def mark_pending_transition(issue_id, issue_identifier, transition)
+      when is_binary(issue_id) and is_binary(transition) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+    record =
+      load_issue_session(issue_id) ||
+        %{
+          "issue_id" => issue_id,
+          "issue_identifier" => issue_identifier
+        }
+
+    record
+    |> Map.put("issue_identifier", issue_identifier || record["issue_identifier"])
+    |> Map.put("pending_transition", transition)
+    |> Map.put("updated_at", now)
+    |> save_issue_session()
+  end
+
   @spec build_running_summary(map()) :: map()
   def build_running_summary(running_entry) when is_map(running_entry) do
     input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
@@ -82,7 +168,15 @@ defmodule SymphonyElixir.SessionStats do
       estimated_cost_usd: cost.estimated_cost_usd,
       estimated_input_cost_usd: cost.estimated_input_cost_usd,
       estimated_output_cost_usd: cost.estimated_output_cost_usd,
-      cost_estimate_available: cost.cost_estimate_available
+      cost_estimate_available: cost.cost_estimate_available,
+      issue_session_id: Map.get(running_entry, :issue_session_id),
+      execution_profile: Map.get(running_entry, :execution_profile),
+      execution_transition: Map.get(running_entry, :execution_transition),
+      session_reuse_policy: Map.get(running_entry, :session_reuse_policy),
+      session_reuse_decision: Map.get(running_entry, :session_reuse_decision),
+      physical_session_id: Map.get(running_entry, :codex_thread_id),
+      physical_session_count: Map.get(running_entry, :physical_session_count, 0),
+      issue_session_turn_count: Map.get(running_entry, :issue_session_turn_count, 0)
     }
   end
 
@@ -101,14 +195,22 @@ defmodule SymphonyElixir.SessionStats do
       "issue_id" => Map.get(running_entry, :issue_id),
       "issue_identifier" => Map.get(running_entry, :identifier),
       "session_id" => Map.get(running_entry, :session_id),
+      "issue_session_id" => Map.get(running_entry, :issue_session_id),
       "result" => result,
       "siaan_version" => Map.get(running_entry, :siaan_version, app_version()),
       "model" => model,
+      "execution_profile" => Map.get(running_entry, :execution_profile),
+      "execution_transition" => Map.get(running_entry, :execution_transition),
+      "session_reuse_policy" => Map.get(running_entry, :session_reuse_policy),
+      "session_reuse_decision" => Map.get(running_entry, :session_reuse_decision),
+      "physical_session_id" => Map.get(running_entry, :codex_thread_id),
+      "physical_session_count" => Map.get(running_entry, :physical_session_count, 0),
       "repo_head_sha" => git.repo_head_sha,
       "repo_branch" => git.repo_branch,
       "pricing_model" => cost.pricing_model,
       "pricing_source" => cost.pricing_source,
       "turn_count" => Map.get(running_entry, :turn_count, 0),
+      "issue_session_turn_count" => Map.get(running_entry, :issue_session_turn_count, 0),
       "started_at" => iso8601(started_at),
       "completed_at" => DateTime.to_iso8601(completed_at),
       "runtime_seconds" => running_seconds(started_at, completed_at),
@@ -186,6 +288,15 @@ defmodule SymphonyElixir.SessionStats do
     Path.join(workspace_root, ".siaan/session-stats.ndjson")
   end
 
+  defp issue_sessions_path do
+    workspace_root =
+      Config.settings!().workspace.root
+      |> expand_home_path()
+      |> Path.expand()
+
+    Path.join(workspace_root, ".siaan/issue-sessions.json")
+  end
+
   defp running_seconds(%DateTime{} = started_at, %DateTime{} = completed_at) do
     max(0, DateTime.diff(completed_at, started_at, :second))
   end
@@ -230,6 +341,16 @@ defmodule SymphonyElixir.SessionStats do
     case Jason.decode(line) do
       {:ok, decoded} -> [decoded]
       {:error, _reason} -> []
+    end
+  end
+
+  defp update_issue_sessions(update_fun) when is_function(update_fun, 1) do
+    path = issue_sessions_path()
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         current <- load_issue_sessions(),
+         {:ok, encoded} <- Jason.encode(update_fun.(current)) do
+      File.write(path, encoded)
     end
   end
 
