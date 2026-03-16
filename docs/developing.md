@@ -38,9 +38,15 @@ GIT_AUTHOR_NAME=siaan-bot
 GIT_AUTHOR_EMAIL=siaan-bot@users.noreply.github.com
 EOF
 
-docker compose up -d --build
-docker compose logs -f siaan
+./start-siaan-docker.sh --follow-logs
 ```
+
+`start-siaan-docker.sh` will:
+
+- fetch the latest `origin/main`
+- rebase the current branch onto `origin/main`
+- start `siaan` with `docker compose up -d --build`
+- persist runtime logs under `./.runtime/logs`
 
 The `docker-compose.yml` in this repo is pre-configured to point at `Stevengre/siaan` itself (self-hosting).
 

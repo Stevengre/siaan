@@ -6,6 +6,7 @@ services:
       target: runtime
     volumes:
       - ./elixir/WORKFLOW.md:/app/WORKFLOW.md:ro
+      - ./.runtime:/app/.runtime
       - ~/code/workspaces/siaan:/root/code/workspaces/siaan
       - ${HOME}/.codex:/root/.codex:ro
     ports:
@@ -22,6 +23,8 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL-}
     command:
       - "--i-understand-that-this-will-be-running-without-the-usual-guardrails"
+      - "--logs-root"
+      - "/app/.runtime/logs"
       - "--port"
       - "4000"
       - "/app/WORKFLOW.md"
