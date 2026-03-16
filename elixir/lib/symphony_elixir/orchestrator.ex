@@ -509,6 +509,11 @@ defmodule SymphonyElixir.Orchestrator do
     resolve_dispatch_profile(issue, transition_name)
   end
 
+  @spec resolve_dispatch_transition_for_test(Issue.t(), String.t() | nil) :: String.t()
+  def resolve_dispatch_transition_for_test(%Issue{} = issue, transition_name) do
+    resolve_dispatch_transition(issue, transition_name)
+  end
+
   @doc false
   @spec persist_issue_session_for_test(map(), Issue.t(), String.t() | nil, map() | nil) :: :ok
   def persist_issue_session_for_test(running_entry, %Issue{} = issue, worker_host, dispatch_profile)
@@ -1010,11 +1015,11 @@ defmodule SymphonyElixir.Orchestrator do
   defp resolve_dispatch_transition(%Issue{state: issue_state} = issue, explicit_transition)
        when is_binary(issue_state) do
     cond do
-      is_binary(explicit_transition) and String.trim(explicit_transition) != "" ->
-        explicit_transition
-
       normalize_issue_state(issue_state) == "status:ready" ->
         "ready_to_in_progress"
+
+      is_binary(explicit_transition) and String.trim(explicit_transition) != "" ->
+        String.trim(explicit_transition)
 
       true ->
         SessionStats.consume_pending_transition(issue.id) || "resume_in_progress"

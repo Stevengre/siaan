@@ -84,6 +84,23 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.issue_session_id != "existing-issue-session"
   end
 
+  test "ready-state dispatch transition overrides queued retry metadata" do
+    issue = %Issue{
+      id: "issue-ready-retry-override",
+      identifier: "GH-502A",
+      title: "Ready transition precedence",
+      description: "Fresh ready cycles must win over stale retry metadata",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-502A"
+    }
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, "retry_continuation") ==
+             "ready_to_in_progress"
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, "stall_recovery") ==
+             "ready_to_in_progress"
+  end
+
   test "review re-entry dispatch profile reuses the existing issue session and command override" do
     configure_execution_profile_workspace!(
       execution_profiles: %{
