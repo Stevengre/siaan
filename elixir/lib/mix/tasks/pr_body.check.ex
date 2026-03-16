@@ -277,7 +277,7 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp valid_markdown_table?(section) do
-    sanitized = strip_fenced_code_blocks(section)
+    sanitized = strip_code_blocks(section)
 
     sanitized
     |> String.split("\n")
@@ -288,7 +288,11 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp table_block?([header, separator | rest]) do
-    table_header_row?(header) and table_separator_row?(separator) and Enum.any?(rest, &table_data_row?/1)
+    header_cell_count = cell_count(header)
+
+    table_header_row?(header) and
+      table_separator_row?(separator, header_cell_count) and
+      Enum.any?(rest, &table_data_row?(&1, header_cell_count))
   end
 
   defp table_block?(_chunk), do: false
@@ -297,14 +301,19 @@ defmodule Mix.Tasks.PrBody.Check do
     String.starts_with?(line, "|") and String.ends_with?(line, "|") and cell_count(line) >= 2
   end
 
-  defp table_separator_row?(line) do
-    line
-    |> parse_table_cells()
-    |> Enum.all?(&Regex.match?(~r/^:?-{3,}:?$/, &1))
+  defp table_separator_row?(line, header_cell_count) do
+    String.starts_with?(line, "|") and
+      String.ends_with?(line, "|") and
+      cell_count(line) == header_cell_count and
+      header_cell_count >= 2 and
+      line
+      |> parse_table_cells()
+      |> Enum.all?(&Regex.match?(~r/^:?-{3,}:?$/, &1))
   end
 
-  defp table_data_row?(line) do
-    String.starts_with?(line, "|") and String.ends_with?(line, "|") and cell_count(line) >= 2
+  defp table_data_row?(line, header_cell_count) do
+    valid_pipe_row = String.starts_with?(line, "|") and String.ends_with?(line, "|")
+    valid_pipe_row and cell_count(line) == header_cell_count and header_cell_count >= 2
   end
 
   defp cell_count(line) do
@@ -323,7 +332,7 @@ defmodule Mix.Tasks.PrBody.Check do
   defp valid_decision_record_entries?(section) do
     entries =
       section
-      |> strip_fenced_code_blocks()
+      |> strip_code_blocks()
       |> String.split("\n")
       |> Enum.map(&String.trim/1)
       |> Enum.filter(&String.starts_with?(&1, "- "))
@@ -333,10 +342,11 @@ defmodule Mix.Tasks.PrBody.Check do
     end)
   end
 
-  defp strip_fenced_code_blocks(section) do
+  defp strip_code_blocks(section) do
     section
     |> then(&Regex.replace(~r/```.*?```/s, &1, ""))
     |> then(&Regex.replace(~r/~~~.*?~~~/s, &1, ""))
+    |> then(&Regex.replace(~r/(?:^|\n)(?: {4}|\t).*(?:\n(?: {4}|\t).*)*/m, &1, "\n"))
   end
 
   defp architecture_trace_markers_outside_appendix?(body, appendix_block) do

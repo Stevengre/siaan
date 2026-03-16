@@ -474,6 +474,54 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "fails when an indented code block mimics the behavior delta table" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body =
+        String.replace(
+          @valid_body,
+          "| | Before | After |\n|---|---|---|\n| Trigger | Manual PR authoring | Agent-generated PR descriptions from issue + diff |\n| Observable effect | Reviewers infer correctness from prose | Reviewers get explicit behavior delta, invariants, evidence, and rollback notes |\n| Affected inputs | Any PR body with the legacy headings | PR bodies matching the Change Proof + Architecture Trace template |",
+          "    | fake | table |\n    | --- | --- |\n    | fake | row |"
+        )
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Section must include a markdown table with at least one data row: ### Behavior Delta"
+    end)
+  end
+
+  test "fails when a non-table separator row is used in behavior delta" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body =
+        String.replace(
+          @valid_body,
+          "| | Before | After |\n|---|---|---|\n| Trigger | Manual PR authoring | Agent-generated PR descriptions from issue + diff |\n| Observable effect | Reviewers infer correctness from prose | Reviewers get explicit behavior delta, invariants, evidence, and rollback notes |\n| Affected inputs | Any PR body with the legacy headings | PR bodies matching the Change Proof + Architecture Trace template |",
+          "| Col A | Col B |\n----\n| data | row |"
+        )
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Section must include a markdown table with at least one data row: ### Behavior Delta"
+    end)
+  end
+
   test "fails when template bullet requirements are not met" do
     in_temp_repo(fn ->
       template = """
@@ -796,6 +844,31 @@ defmodule Mix.Tasks.PrBody.CheckTest do
           @valid_body,
           "- **Decision**: Make `mix pr_body.check` enforce the approval-oriented sections directly.\n- **Alternatives considered**: Keep the validator generic and rely on template-only guidance.\n- **Trade-offs**: Slightly more code in the lint task, but stronger reviewer-confidence guarantees.\n- **Why chosen**: The ticket requires the check to reference the new sections, not just arbitrary headings.\n- **Implementation links**: `/elixir/lib/mix/tasks/pr_body.check.ex`, `/.github/PULL_REQUEST_TEMPLATE.md`",
           "- Placeholder rationale.\n\n~~~text\n**Decision**:\n**Alternatives considered**:\n**Trade-offs**:\n**Why chosen**:\n**Implementation links**:\n~~~"
+        )
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~
+               "Decision Record must either say `No design decision introduced in this PR.` or include Decision, Alternatives considered, Trade-offs, Why chosen, and Implementation links."
+    end)
+  end
+
+  test "fails when decision record labels only appear inside an indented code block" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body =
+        String.replace(
+          @valid_body,
+          "- **Decision**: Make `mix pr_body.check` enforce the approval-oriented sections directly.\n- **Alternatives considered**: Keep the validator generic and rely on template-only guidance.\n- **Trade-offs**: Slightly more code in the lint task, but stronger reviewer-confidence guarantees.\n- **Why chosen**: The ticket requires the check to reference the new sections, not just arbitrary headings.\n- **Implementation links**: `/elixir/lib/mix/tasks/pr_body.check.ex`, `/.github/PULL_REQUEST_TEMPLATE.md`",
+          "- Placeholder rationale.\n\n    - **Decision**: fake\n    - **Alternatives considered**: fake\n    - **Trade-offs**: fake\n    - **Why chosen**: fake\n    - **Implementation links**: fake"
         )
 
       File.write!("body.md", invalid_body)
