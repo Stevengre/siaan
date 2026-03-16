@@ -155,7 +155,12 @@ defmodule SymphonyElixir.SessionStats do
   end
 
   defp history_path do
-    Path.join(Config.settings!().workspace.root, ".siaan/session-stats.ndjson")
+    workspace_root =
+      Config.settings!().workspace.root
+      |> expand_home_path()
+      |> Path.expand()
+
+    Path.join(workspace_root, ".siaan/session-stats.ndjson")
   end
 
   defp running_seconds(%DateTime{} = started_at, %DateTime{} = completed_at) do
@@ -169,6 +174,17 @@ defmodule SymphonyElixir.SessionStats do
 
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(value), do: to_string(value)
+
+  defp expand_home_path("~"), do: System.user_home() || "~"
+
+  defp expand_home_path("~/" <> rest) do
+    case System.user_home() do
+      nil -> "~/" <> rest
+      home -> Path.join(home, rest)
+    end
+  end
+
+  defp expand_home_path(path), do: path
 
   defp usd(value) when is_number(value) do
     value

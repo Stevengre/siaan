@@ -81,6 +81,18 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.load_recent_history() == []
   end
 
+  test "append_history_record expands workspace roots that start with tilde" do
+    relative_root = "session-stats-home-#{System.unique_integer([:positive])}"
+    workspace_root = Path.join("~", relative_root)
+    history_path = Path.join(System.user_home() || "", "#{relative_root}/.siaan/session-stats.ndjson")
+
+    File.rm_rf(Path.join(System.user_home() || "", relative_root))
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+    assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-34"})
+    assert File.exists?(history_path)
+  end
+
   test "build_running_summary includes known model pricing and version metadata" do
     summary =
       SessionStats.build_running_summary(%{
