@@ -205,7 +205,7 @@ defmodule SymphonyElixir.Config.Schema do
     defp normalize_execution_profile(%{} = profile_map) do
       %{
         "session_reuse" => normalize_session_reuse(profile_map["session_reuse"] || profile_map[:session_reuse]),
-        "codex_command" => profile_map["codex_command"] || profile_map[:codex_command]
+        "codex_command" => normalize_codex_command(profile_map["codex_command"] || profile_map[:codex_command])
       }
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
       |> Enum.into(%{})
@@ -263,6 +263,15 @@ defmodule SymphonyElixir.Config.Schema do
     end
 
     defp normalize_session_reuse(_value), do: nil
+
+    defp normalize_codex_command(value) when is_binary(value) do
+      case String.trim(value) do
+        "" -> nil
+        trimmed -> trimmed
+      end
+    end
+
+    defp normalize_codex_command(value), do: value
 
     defp valid_session_reuse_policy?(policy) when is_binary(policy),
       do: String.trim(policy) in @session_reuse_policies

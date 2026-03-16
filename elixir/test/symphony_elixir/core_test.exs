@@ -97,6 +97,21 @@ defmodule SymphonyElixir.CoreTest do
              codex_command: "codex --model gpt-5.3-spark app-server"
            }
 
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "   "
+        }
+      }
+    )
+
+    assert Config.execution_profile("review_to_in_progress") == %{
+             name: "review_to_in_progress",
+             session_reuse: "reuse_issue_session",
+             codex_command: "codex app-server"
+           }
+
     write_workflow_file!(Workflow.workflow_file_path(), execution_profiles: nil)
 
     assert Config.execution_profile("ready_to_in_progress") == %{

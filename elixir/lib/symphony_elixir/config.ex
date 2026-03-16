@@ -129,10 +129,15 @@ defmodule SymphonyElixir.Config do
       settings.agent.execution_profiles
       |> Map.get(normalized_name, %{})
 
+    codex_command =
+      profile
+      |> Map.get("codex_command")
+      |> normalized_optional_command()
+
     %{
       name: normalized_name,
       session_reuse: Map.get(profile, "session_reuse", "new_issue_session"),
-      codex_command: Map.get(profile, "codex_command") || settings.codex.command
+      codex_command: codex_command || settings.codex.command
     }
   end
 
@@ -174,6 +179,15 @@ defmodule SymphonyElixir.Config do
 
   defp present_binary?(value) when is_binary(value), do: String.trim(value) != ""
   defp present_binary?(_value), do: false
+
+  defp normalized_optional_command(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalized_optional_command(_value), do: nil
 
   defp format_config_error(reason) do
     case reason do

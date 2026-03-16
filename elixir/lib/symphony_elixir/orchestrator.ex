@@ -517,6 +517,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
+  @spec record_session_completion_totals_for_test(State.t(), map(), String.t()) :: State.t()
+  def record_session_completion_totals_for_test(%State{} = state, running_entry, result)
+      when is_map(running_entry) and is_binary(result) do
+    record_session_completion_totals(state, running_entry, result)
+  end
+
+  @doc false
   @spec dispatch_watched_issue_for_test(
           Issue.t(),
           [String.t()],
@@ -1159,7 +1166,7 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp persist_issue_session(running_entry, issue, worker_host, dispatch_profile \\ nil) do
+  defp persist_issue_session(running_entry, issue, worker_host, dispatch_profile) do
     issue_session =
       if is_map(dispatch_profile) do
         dispatch_profile.issue_session
@@ -1835,7 +1842,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_session_completion_totals(state, running_entry, result) when is_map(running_entry) do
     runtime_seconds = running_seconds(running_entry.started_at, DateTime.utc_now())
     completed_record = SessionStats.build_completed_record(running_entry, result)
-    _ = persist_issue_session(running_entry, Map.get(running_entry, :issue), Map.get(running_entry, :worker_host))
+
+    :ok =
+      record_issue_session(
+        running_entry,
+        Map.get(running_entry, :issue),
+        Map.get(running_entry, :worker_host),
+        nil
+      )
 
     codex_totals =
       apply_token_delta(

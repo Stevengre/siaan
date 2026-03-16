@@ -297,6 +297,74 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert stall_profile.codex_command == "codex --model gpt-5.3-spark app-server"
   end
 
+  test "completion-time issue-session persistence failures log warnings without aborting completion totals" do
+    workspace_root = tmp_dir!("orchestrator-completion-issue-session-persist-failure")
+    blocking_path = Path.join(workspace_root, "not-a-directory")
+
+    File.mkdir_p!(workspace_root)
+    File.write!(blocking_path, "file")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+
+    issue = %Issue{
+      id: "issue-completion-persist-warning",
+      identifier: "GH-504B",
+      title: "Completion persist failure warning",
+      description: "Do not drop completion persistence warnings",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-504B"
+    }
+
+    started_at = DateTime.utc_now() |> DateTime.add(-5, :second)
+
+    running_entry = %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      issue: issue,
+      worker_host: nil,
+      session_id: "thread-504b-turn-1",
+      issue_session_id: "issue-session-504b",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "review_to_in_progress",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "reused_issue_session",
+      codex_command: "codex app-server",
+      codex_model: "gpt-5.3-codex",
+      codex_thread_id: "thread-504b",
+      physical_session_count: 1,
+      issue_session_turn_count: 2,
+      started_at: started_at,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0
+    }
+
+    state = %Orchestrator.State{
+      codex_totals: %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        seconds_running: 0
+      },
+      completed_runs: []
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        updated_state =
+          Orchestrator.record_session_completion_totals_for_test(
+            state,
+            running_entry,
+            "completed"
+          )
+
+        assert length(updated_state.completed_runs) == 1
+      end)
+
+    assert log =~
+             "Unable to persist issue session for issue_id=issue-completion-persist-warning issue_identifier=GH-504B"
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
