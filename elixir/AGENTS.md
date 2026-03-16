@@ -48,7 +48,7 @@ mix specs.check
 
 ## PR Requirements
 
-- PR body must follow `../.github/pull_request_template.md` exactly.
+- PR body must follow [`../.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md) exactly.
 - Validate PR body locally when needed:
 
 ```bash

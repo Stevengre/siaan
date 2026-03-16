@@ -22,7 +22,7 @@ jobs:
           cache: true
           working_directory: elixir
 
-      - name: Validate PR description format
+      - name: Validate Change Proof and Architecture Trace sections
         env:
           PR_BODY_JSON: ${{ toJson(github.event.pull_request.body) }}
         run: |

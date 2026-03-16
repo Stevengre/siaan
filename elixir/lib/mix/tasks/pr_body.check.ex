@@ -13,8 +13,28 @@ defmodule Mix.Tasks.PrBody.Check do
   """
 
   @template_paths [
+    ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/pull_request_template.md",
+    "../.github/PULL_REQUEST_TEMPLATE.md",
     "../.github/pull_request_template.md"
+  ]
+
+  @architecture_trace_summary "<summary><b>Architecture Trace</b></summary>"
+  @architecture_trace_details_regex ~r/<details>\s*#{Regex.escape(@architecture_trace_summary)}.*?<\/details>/s
+  @architecture_trace_headings [
+    "### Context (C4-L1)",
+    "### Container (C4-L2)",
+    "### Component (C4-L3)",
+    "### Code Trace (C4-L4)",
+    "### Decision Record"
+  ]
+  @decision_record_heading "### Decision Record"
+  @decision_record_fields [
+    "**Decision**:",
+    "**Alternatives considered**:",
+    "**Trade-offs**:",
+    "**Why chosen**:",
+    "**Implementation links**:"
   ]
 
   @impl Mix.Task
@@ -76,7 +96,7 @@ defmodule Mix.Tasks.PrBody.Check do
 
   defp extract_template_headings(template, template_path) do
     headings =
-      Regex.scan(~r/^\#{4,6}\s+.+$/m, template)
+      Regex.scan(~r/^\#{3,6}\s+.+$/m, template)
       |> Enum.map(&hd/1)
 
     if headings == [] do
@@ -104,6 +124,11 @@ defmodule Mix.Tasks.PrBody.Check do
     |> check_order(body, headings)
     |> check_no_placeholders(body)
     |> check_sections_from_template(template, body, headings)
+    |> check_architecture_trace_wrapper(body)
+    |> check_table_section(body, headings, "### Behavior Delta")
+    |> check_table_section(body, headings, "### Validation")
+    |> check_numbered_section(body, headings, "### Review Focus")
+    |> check_decision_record(body, headings)
   end
 
   defp check_required_headings(errors, body, headings) do
@@ -131,27 +156,85 @@ defmodule Mix.Tasks.PrBody.Check do
   defp check_sections_from_template(errors, template, body, headings) do
     Enum.reduce(headings, errors, fn heading, acc ->
       template_section = capture_heading_section(template, heading, headings)
-      body_section = capture_heading_section(body, heading, headings)
+      body_sections = capture_heading_sections(body, heading, headings)
 
-      cond do
-        is_nil(body_section) ->
-          acc
+      Enum.reduce(body_sections, acc, &validate_template_section(&2, heading, template_section, &1))
+    end)
+  end
 
-        String.trim(body_section) == "" ->
-          acc ++ ["Section cannot be empty: #{heading}"]
+  defp check_architecture_trace_wrapper(errors, body) do
+    matches = Regex.scan(@architecture_trace_details_regex, body)
 
-        true ->
-          acc
-          |> maybe_require_bullets(heading, template_section, body_section)
-          |> maybe_require_checkboxes(heading, template_section, body_section)
+    cond do
+      matches == [] and not String.contains?(body, @architecture_trace_summary) ->
+        errors ++ ["Architecture Trace appendix must use the required summary heading."]
+
+      matches == [] ->
+        errors ++ ["Architecture Trace appendix must be wrapped in <details>."]
+
+      length(matches) > 1 ->
+        errors ++ ["Architecture Trace appendix must appear exactly once."]
+
+      architecture_trace_markers_outside_appendix?(body, hd(hd(matches))) ->
+        errors ++ ["Architecture Trace appendix content must appear only inside the single appendix block."]
+
+      true ->
+        errors
+    end
+  end
+
+  defp check_table_section(errors, body, headings, heading) do
+    body
+    |> capture_heading_sections(heading, headings)
+    |> Enum.reduce(errors, fn section, acc ->
+      if valid_markdown_table?(section) do
+        acc
+      else
+        acc ++ ["Section must include a markdown table with at least one data row: #{heading}"]
       end
     end)
+  end
+
+  defp check_numbered_section(errors, body, headings, heading) do
+    body
+    |> capture_heading_sections(heading, headings)
+    |> Enum.reduce(errors, fn section, acc ->
+      if valid_numbered_list?(section) do
+        acc
+      else
+        acc ++ ["Section must include a numbered list: #{heading}"]
+      end
+    end)
+  end
+
+  defp check_decision_record(errors, body, headings) do
+    case capture_heading_section(body, @decision_record_heading, headings) do
+      nil ->
+        errors
+
+      section ->
+        trimmed = normalize_decision_record_section(section)
+
+        cond do
+          trimmed == "No design decision introduced in this PR." ->
+            errors
+
+          valid_decision_record_entries?(trimmed) ->
+            errors
+
+          true ->
+            errors ++
+              [
+                "Decision Record must either say `No design decision introduced in this PR.` or include Decision, Alternatives considered, Trade-offs, Why chosen, and Implementation links."
+              ]
+        end
+    end
   end
 
   defp maybe_require_bullets(errors, heading, template_section, body_section) do
     requires_bullets = Regex.match?(~r/^- /m, template_section || "")
 
-    if requires_bullets and not Regex.match?(~r/^- /m, body_section) do
+    if requires_bullets and not decision_record_without_bullets?(heading, body_section) and not Regex.match?(~r/^- /m, body_section) do
       errors ++ ["Section must include at least one bullet item: #{heading}"]
     else
       errors
@@ -168,6 +251,112 @@ defmodule Mix.Tasks.PrBody.Check do
     end
   end
 
+  defp validate_template_section(errors, heading, template_section, body_section) do
+    if String.trim(body_section) == "" do
+      errors ++ ["Section cannot be empty: #{heading}"]
+    else
+      errors
+      |> maybe_require_bullets(heading, template_section, body_section)
+      |> maybe_require_checkboxes(heading, template_section, body_section)
+    end
+  end
+
+  defp decision_record_without_bullets?(heading, body_section) do
+    heading == @decision_record_heading and normalize_decision_record_section(body_section) == "No design decision introduced in this PR."
+  end
+
+  defp normalize_decision_record_section(section) do
+    section
+    |> String.replace(~r/\n?<\/details>\s*\z/s, "")
+    |> String.trim()
+  end
+
+  defp valid_markdown_table?(section) do
+    sanitized = strip_code_blocks(section)
+
+    sanitized
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.chunk_by(&(&1 == ""))
+    |> Enum.reject(fn chunk -> chunk == [""] end)
+    |> Enum.any?(&table_block?/1)
+  end
+
+  defp table_block?([header, separator | rest]) do
+    header_cell_count = cell_count(header)
+
+    table_header_row?(header) and
+      table_separator_row?(separator, header_cell_count) and
+      Enum.any?(rest, &table_data_row?(&1, header_cell_count))
+  end
+
+  defp table_block?(_chunk), do: false
+
+  defp table_header_row?(line) do
+    String.starts_with?(line, "|") and String.ends_with?(line, "|") and cell_count(line) >= 2
+  end
+
+  defp table_separator_row?(line, header_cell_count) do
+    String.starts_with?(line, "|") and
+      String.ends_with?(line, "|") and
+      cell_count(line) == header_cell_count and
+      header_cell_count >= 2 and
+      line
+      |> parse_table_cells()
+      |> Enum.all?(&Regex.match?(~r/^:?-{3,}:?$/, &1))
+  end
+
+  defp table_data_row?(line, header_cell_count) do
+    valid_pipe_row = String.starts_with?(line, "|") and String.ends_with?(line, "|")
+    valid_pipe_row and cell_count(line) == header_cell_count and header_cell_count >= 2
+  end
+
+  defp cell_count(line) do
+    line
+    |> parse_table_cells()
+    |> length()
+  end
+
+  defp parse_table_cells(line) do
+    line
+    |> String.trim("|")
+    |> String.split("|")
+    |> Enum.map(&String.trim/1)
+  end
+
+  defp valid_decision_record_entries?(section) do
+    entries =
+      section
+      |> strip_code_blocks()
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.filter(&String.starts_with?(&1, "- "))
+
+    Enum.all?(@decision_record_fields, fn field ->
+      Enum.any?(entries, &String.starts_with?(&1, "- #{field}"))
+    end)
+  end
+
+  defp valid_numbered_list?(section) do
+    section
+    |> strip_code_blocks()
+    |> String.split("\n")
+    |> Enum.any?(&Regex.match?(~r/^(?: {0,3})\d+\. /, &1))
+  end
+
+  defp strip_code_blocks(section) do
+    section
+    |> then(&Regex.replace(~r/```.*?```/s, &1, ""))
+    |> then(&Regex.replace(~r/~~~.*?~~~/s, &1, ""))
+    |> then(&Regex.replace(~r/(?:^|\n)(?: {4}|\t).*(?:\n(?: {4}|\t).*)*/m, &1, "\n"))
+  end
+
+  defp architecture_trace_markers_outside_appendix?(body, appendix_block) do
+    remainder = String.replace(body, appendix_block, "", global: false)
+
+    Enum.any?([@architecture_trace_summary | @architecture_trace_headings], &String.contains?(remainder, &1))
+  end
+
   defp heading_position(body, heading) do
     case :binary.match(body, heading) do
       {idx, _len} -> idx
@@ -176,41 +365,43 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp capture_heading_section(doc, heading, headings) do
-    with {heading_idx, _} <- :binary.match(doc, heading),
-         section_start <- heading_idx + byte_size(heading),
-         true <- section_start + 2 <= byte_size(doc),
-         "\n\n" <- binary_part(doc, section_start, 2) do
-      extract_section_content(doc, section_start + 2, heading, headings)
-    else
-      :nomatch -> nil
-      false -> ""
-      _ -> nil
-    end
+    doc
+    |> capture_heading_sections(heading, headings)
+    |> List.first()
   end
 
-  defp extract_section_content(doc, content_start, heading, headings) do
-    content = binary_part(doc, content_start, byte_size(doc) - content_start)
-
-    case next_heading_offset(content, heading, headings) do
-      nil -> content
-      offset -> binary_part(content, 0, offset)
-    end
+  defp capture_heading_sections(doc, heading, headings) do
+    doc
+    |> parse_sections(headings)
+    |> Enum.filter(fn {section_heading, _content} -> section_heading == heading end)
+    |> Enum.map(fn {_section_heading, content} -> content end)
   end
 
-  defp next_heading_offset(content, heading, headings) do
-    headings_after(heading, headings)
-    |> Enum.map(fn marker -> :binary.match(content, marker) end)
-    |> Enum.filter(&(&1 != :nomatch))
-    |> Enum.map(fn {idx, _} -> idx end)
-    |> case do
-      [] -> nil
-      indexes -> Enum.min(indexes)
-    end
+  defp parse_sections(doc, headings) do
+    {sections, current_heading, current_content} =
+      doc
+      |> String.split("\n", trim: false)
+      |> Enum.reduce({[], nil, []}, &parse_section_line(&1, &2, headings))
+
+    append_section(sections, current_heading, current_content)
   end
 
-  defp headings_after(current_heading, headings) do
-    headings
-    |> Enum.filter(&(&1 != current_heading))
-    |> Enum.map(&("\n" <> &1))
+  defp append_section(sections, nil, _current_content), do: sections
+
+  defp append_section(sections, current_heading, current_content) do
+    sections ++ [{current_heading, current_content |> Enum.reverse() |> Enum.join("\n")}]
+  end
+
+  defp parse_section_line(line, {sections, current_heading, current_content}, headings) do
+    cond do
+      line in headings ->
+        {append_section(sections, current_heading, current_content), line, []}
+
+      is_nil(current_heading) ->
+        {sections, current_heading, current_content}
+
+      true ->
+        {sections, current_heading, [line | current_content]}
+    end
   end
 end

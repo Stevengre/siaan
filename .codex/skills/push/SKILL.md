@@ -22,6 +22,8 @@ description:
 
 - `pull`: use this when push is rejected or sync is not clean (non-fast-forward,
   merge conflict risk, or stale branch).
+- `pr-description`: use this to draft or refresh the PR body from the issue
+  context, diff, and collected validation evidence.
 
 ## Steps
 
@@ -44,7 +46,8 @@ description:
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
-6. Write/update PR body explicitly using `.github/pull_request_template.md`:
+6. Write/update PR body explicitly using `.github/PULL_REQUEST_TEMPLATE.md`:
+   - Use the `pr-description` skill to draft the body before editing the PR.
    - Fill every section with concrete content for this change.
    - Replace all placeholder comments (`<!-- ... -->`).
    - Keep bullets/checkboxes where template expects them.
@@ -93,7 +96,7 @@ else
   gh pr edit --title "$pr_title"
 fi
 
-# Write/edit PR body to match .github/pull_request_template.md before validation.
+# Write/edit PR body to match .github/PULL_REQUEST_TEMPLATE.md before validation.
 # Example workflow:
 # 1) open the template and draft body content for this PR
 # 2) gh pr edit --body-file /tmp/pr_body.md
