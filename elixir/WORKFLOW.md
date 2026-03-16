@@ -217,9 +217,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-    - Request `@codex` review exactly once by posting this PR comment:
-      `@codex please review the changes in this PR against the base branch \`{base_branch}\` and the original specification in {issue_url}.`
-    - Move issue to `status:review` immediately after requesting review. Do not wait for the review result.
+    - Move issue to `status:review` after the review handoff checks above are complete.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `status:review` with the blocker brief and explicit unblock actions.
 13. For `status:ready` tickets that already had a PR attached at kickoff:
     - Ensure all existing actionable PR feedback from `{{ allowlist }}`, including inline review comments, was reviewed and resolved.
@@ -244,7 +242,6 @@ When dispatched for an issue that already has a PR and workpad (e.g., after orch
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
-- `@codex` review has been requested on the current PR revision.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
 - Required PR metadata is present (`siaan` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.

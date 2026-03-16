@@ -142,6 +142,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
+    workspace_root = tmp_dir!("session-stats-workspace")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      codex_command: "codex --model gpt-5.2-codex app-server"
+    )
 
     issue = %Issue{
       id: issue_id,
@@ -181,6 +187,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       codex_last_reported_input_tokens: 0,
       codex_last_reported_output_tokens: 0,
       codex_last_reported_total_tokens: 0,
+      siaan_version: "0.1.0",
+      codex_model: "gpt-5.2-codex",
       started_at: started_at
     }
 
@@ -223,6 +231,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.codex_app_server_pid == "4242"
+    assert snapshot_entry.codex_model == "gpt-5.2-codex"
+    assert snapshot_entry.siaan_version == "0.1.0"
+    assert snapshot_entry.cost_estimate_available == true
+    assert snapshot_entry.estimated_cost_usd == 0.000055
     assert snapshot_entry.codex_input_tokens == 12
     assert snapshot_entry.codex_output_tokens == 4
     assert snapshot_entry.codex_total_tokens == 16
@@ -236,6 +248,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.output_tokens == 4
     assert completed_state.codex_totals.total_tokens == 16
     assert is_integer(completed_state.codex_totals.seconds_running)
+    assert [completed_run | _] = completed_state.completed_runs
+    assert completed_run["issue_identifier"] == "MT-201"
+    assert completed_run["model"] == "gpt-5.2-codex"
+    assert completed_run["cost"]["cost_estimate_available"] == true
   end
 
   test "orchestrator snapshot tracks turn completed usage when present" do

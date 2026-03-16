@@ -379,9 +379,14 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
-             "counts" => %{"running" => 1, "retrying" => 1},
+             "runtime" => %{"configured_model" => nil, "siaan_version" => "0.1.0"},
+             "counts" => %{"running" => 1, "retrying" => 1, "completed_runs" => 0},
              "running" => [
                %{
+                 "siaan_version" => nil,
+                 "model" => nil,
+                 "pricing_model" => nil,
+                 "pricing_source" => nil,
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
@@ -393,9 +398,16 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
-                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+                 "cost" => %{
+                   "estimated_cost_usd" => nil,
+                   "estimated_input_cost_usd" => nil,
+                   "estimated_output_cost_usd" => nil,
+                   "cost_estimate_available" => false
+                 }
                }
              ],
+             "completed_runs" => [],
              "retrying" => [
                %{
                  "issue_id" => "issue-retry",
@@ -432,17 +444,28 @@ defmodule SymphonyElixir.ExtensionsTest do
                "worker_host" => nil,
                "workspace_path" => nil,
                "session_id" => "thread-http",
+               "siaan_version" => nil,
+               "model" => nil,
+               "pricing_model" => nil,
+               "pricing_source" => nil,
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
-               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+               "cost" => %{
+                 "estimated_cost_usd" => nil,
+                 "estimated_input_cost_usd" => nil,
+                 "estimated_output_cost_usd" => nil,
+                 "cost_estimate_available" => false
+               }
              },
              "retry" => nil,
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
+             "recent_runs" => [],
              "last_error" => nil,
              "tracked" => %{}
            }
@@ -678,7 +701,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
     assert response.status == 200
-    assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
+    assert response.body["counts"] == %{"running" => 1, "retrying" => 1, "completed_runs" => 0}
 
     dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
     assert dashboard_css.status == 200

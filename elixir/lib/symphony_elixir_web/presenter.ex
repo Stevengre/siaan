@@ -13,11 +13,17 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
+          runtime: %{
+            siaan_version: SymphonyElixir.SessionStats.app_version(),
+            configured_model: SymphonyElixir.SessionStats.configured_model()
+          },
           counts: %{
             running: length(snapshot.running),
-            retrying: length(snapshot.retrying)
+            retrying: length(snapshot.retrying),
+            completed_runs: length(Map.get(snapshot, :completed_runs, []))
           },
           running: Enum.map(snapshot.running, &running_entry_payload/1),
+          completed_runs: Map.get(snapshot, :completed_runs, []),
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
           codex_totals: snapshot.codex_totals,
           rate_limits: snapshot.rate_limits
@@ -38,10 +44,15 @@ defmodule SymphonyElixirWeb.Presenter do
         running = Enum.find(snapshot.running, &(&1.identifier == issue_identifier))
         retry = Enum.find(snapshot.retrying, &(&1.identifier == issue_identifier))
 
-        if is_nil(running) and is_nil(retry) do
+        completed_runs =
+          snapshot
+          |> Map.get(:completed_runs, [])
+          |> Enum.filter(&(&1["issue_identifier"] == issue_identifier))
+
+        if is_nil(running) and is_nil(retry) and completed_runs == [] do
           {:error, :issue_not_found}
         else
-          {:ok, issue_payload_body(issue_identifier, running, retry)}
+          {:ok, issue_payload_body(issue_identifier, running, retry, completed_runs)}
         end
 
       _ ->
@@ -60,11 +71,11 @@ defmodule SymphonyElixirWeb.Presenter do
     end
   end
 
-  defp issue_payload_body(issue_identifier, running, retry) do
+  defp issue_payload_body(issue_identifier, running, retry, completed_runs) do
     %{
       issue_identifier: issue_identifier,
       issue_id: issue_id_from_entries(running, retry),
-      status: issue_status(running, retry),
+      status: issue_status(running, retry, completed_runs),
       workspace: %{
         path: workspace_path(issue_identifier, running, retry),
         host: workspace_host(running, retry)
@@ -79,6 +90,7 @@ defmodule SymphonyElixirWeb.Presenter do
         codex_session_logs: []
       },
       recent_events: (running && recent_events_payload(running)) || [],
+      recent_runs: completed_runs,
       last_error: retry && retry.error,
       tracked: %{}
     }
@@ -91,9 +103,10 @@ defmodule SymphonyElixirWeb.Presenter do
   defp retry_attempt(nil), do: 0
   defp retry_attempt(retry), do: retry.attempt || 0
 
-  defp issue_status(_running, nil), do: "running"
-  defp issue_status(nil, _retry), do: "retrying"
-  defp issue_status(_running, _retry), do: "running"
+  defp issue_status(running, _retry, _completed_runs) when not is_nil(running), do: "running"
+  defp issue_status(nil, retry, _completed_runs) when not is_nil(retry), do: "retrying"
+  defp issue_status(nil, nil, completed_runs) when is_list(completed_runs) and completed_runs != [], do: "completed"
+  defp issue_status(_running, _retry, _completed_runs), do: "unknown"
 
   defp running_entry_payload(entry) do
     %{
@@ -103,6 +116,10 @@ defmodule SymphonyElixirWeb.Presenter do
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
       session_id: entry.session_id,
+      siaan_version: Map.get(entry, :siaan_version),
+      model: Map.get(entry, :codex_model),
+      pricing_model: Map.get(entry, :pricing_model),
+      pricing_source: Map.get(entry, :pricing_source),
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
       last_message: summarize_message(entry.last_codex_message),
@@ -112,6 +129,12 @@ defmodule SymphonyElixirWeb.Presenter do
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
         total_tokens: entry.codex_total_tokens
+      },
+      cost: %{
+        estimated_cost_usd: Map.get(entry, :estimated_cost_usd),
+        estimated_input_cost_usd: Map.get(entry, :estimated_input_cost_usd),
+        estimated_output_cost_usd: Map.get(entry, :estimated_output_cost_usd),
+        cost_estimate_available: Map.get(entry, :cost_estimate_available, false)
       }
     }
   end
@@ -133,6 +156,10 @@ defmodule SymphonyElixirWeb.Presenter do
       worker_host: Map.get(running, :worker_host),
       workspace_path: Map.get(running, :workspace_path),
       session_id: running.session_id,
+      siaan_version: Map.get(running, :siaan_version),
+      model: Map.get(running, :codex_model),
+      pricing_model: Map.get(running, :pricing_model),
+      pricing_source: Map.get(running, :pricing_source),
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
       started_at: iso8601(running.started_at),
@@ -143,6 +170,12 @@ defmodule SymphonyElixirWeb.Presenter do
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
         total_tokens: running.codex_total_tokens
+      },
+      cost: %{
+        estimated_cost_usd: Map.get(running, :estimated_cost_usd),
+        estimated_input_cost_usd: Map.get(running, :estimated_input_cost_usd),
+        estimated_output_cost_usd: Map.get(running, :estimated_output_cost_usd),
+        cost_estimate_available: Map.get(running, :cost_estimate_available, false)
       }
     }
   end
