@@ -81,6 +81,24 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.recent_history_limit() == 100
   end
 
+  test "load_recent_history skips malformed ndjson lines" do
+    workspace_root = tmp_dir!("session-stats-malformed")
+    history_path = Path.join(workspace_root, ".siaan/session-stats.ndjson")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    File.mkdir_p!(Path.dirname(history_path))
+
+    File.write!(
+      history_path,
+      "{\"issue_identifier\":\"MT-1\"}\nnot-json\n{\"issue_identifier\":\"MT-2\"}\n"
+    )
+
+    assert SessionStats.load_recent_history() == [
+             %{"issue_identifier" => "MT-1"},
+             %{"issue_identifier" => "MT-2"}
+           ]
+  end
+
   test "load_recent_history returns an empty list for non-file read errors" do
     workspace_root = tmp_dir!("session-stats-read-error")
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
@@ -110,6 +128,16 @@ defmodule SymphonyElixir.SessionStatsTest do
 
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-35"})
     assert File.exists?(history_path)
+  end
+
+  test "append_history_record returns file-system errors without raising" do
+    workspace_root = tmp_dir!("session-stats-write-error")
+    blocking_path = Path.join(workspace_root, "not-a-directory")
+
+    File.write!(blocking_path, "file")
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+
+    assert {:error, _reason} = SessionStats.append_history_record(%{"issue_identifier" => "GH-36"})
   end
 
   test "build_running_summary includes known model pricing and version metadata" do

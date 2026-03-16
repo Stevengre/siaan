@@ -45,7 +45,7 @@ defmodule SymphonyElixir.SessionStats do
         contents
         |> String.split("\n", trim: true)
         |> Enum.take(-limit)
-        |> Enum.map(&Jason.decode!/1)
+        |> Enum.flat_map(&decode_history_line/1)
 
       {:error, :enoent} ->
         []
@@ -58,8 +58,11 @@ defmodule SymphonyElixir.SessionStats do
   @spec append_history_record(map()) :: :ok | {:error, term()}
   def append_history_record(record) when is_map(record) do
     path = history_path()
-    :ok = File.mkdir_p!(Path.dirname(path))
-    File.write(path, Jason.encode!(record) <> "\n", [:append])
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, encoded} <- Jason.encode(record) do
+      File.write(path, encoded <> "\n", [:append])
+    end
   end
 
   @spec build_running_summary(map()) :: map()
@@ -174,6 +177,13 @@ defmodule SymphonyElixir.SessionStats do
 
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(value), do: to_string(value)
+
+  defp decode_history_line(line) do
+    case Jason.decode(line) do
+      {:ok, decoded} -> [decoded]
+      {:error, _reason} -> []
+    end
+  end
 
   defp expand_home_path("~"), do: System.user_home() || "~"
 
