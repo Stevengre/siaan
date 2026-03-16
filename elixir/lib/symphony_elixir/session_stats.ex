@@ -30,10 +30,9 @@ defmodule SymphonyElixir.SessionStats do
   def configured_model do
     command = Config.settings!().codex.command
 
-    case Regex.run(~r/(?:^|\s)--model\s+([^\s]+)/, command, capture: :all_but_first) do
-      [model] -> model
-      _ -> nil
-    end
+    command
+    |> OptionParser.split()
+    |> configured_model_from_args()
   end
 
   @spec load_recent_history(non_neg_integer()) :: [map()]
@@ -71,10 +70,13 @@ defmodule SymphonyElixir.SessionStats do
     output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
     model = Map.get(running_entry, :codex_model)
     cost = estimate_cost(model, input_tokens, output_tokens)
+    git = workspace_git_metadata(Map.get(running_entry, :workspace_path))
 
     %{
       siaan_version: Map.get(running_entry, :siaan_version, app_version()),
       model: model,
+      repo_head_sha: git.repo_head_sha,
+      repo_branch: git.repo_branch,
       pricing_model: cost.pricing_model,
       pricing_source: cost.pricing_source,
       estimated_cost_usd: cost.estimated_cost_usd,
@@ -93,6 +95,7 @@ defmodule SymphonyElixir.SessionStats do
     started_at = Map.get(running_entry, :started_at)
     completed_at = DateTime.utc_now() |> DateTime.truncate(:second)
     cost = estimate_cost(model, input_tokens, output_tokens)
+    git = workspace_git_metadata(Map.get(running_entry, :workspace_path))
 
     %{
       "issue_id" => Map.get(running_entry, :issue_id),
@@ -101,6 +104,8 @@ defmodule SymphonyElixir.SessionStats do
       "result" => result,
       "siaan_version" => Map.get(running_entry, :siaan_version, app_version()),
       "model" => model,
+      "repo_head_sha" => git.repo_head_sha,
+      "repo_branch" => git.repo_branch,
       "pricing_model" => cost.pricing_model,
       "pricing_source" => cost.pricing_source,
       "turn_count" => Map.get(running_entry, :turn_count, 0),
@@ -157,6 +162,21 @@ defmodule SymphonyElixir.SessionStats do
     end
   end
 
+  @spec workspace_git_metadata(Path.t() | nil) :: %{repo_head_sha: String.t() | nil, repo_branch: String.t() | nil}
+  def workspace_git_metadata(workspace_path) when is_binary(workspace_path) and workspace_path != "" do
+    expanded_workspace =
+      workspace_path
+      |> expand_home_path()
+      |> Path.expand()
+
+    %{
+      repo_head_sha: git_output(expanded_workspace, ["rev-parse", "HEAD"]),
+      repo_branch: git_output(expanded_workspace, ["rev-parse", "--abbrev-ref", "HEAD"])
+    }
+  end
+
+  def workspace_git_metadata(_workspace_path), do: %{repo_head_sha: nil, repo_branch: nil}
+
   defp history_path do
     workspace_root =
       Config.settings!().workspace.root
@@ -178,6 +198,34 @@ defmodule SymphonyElixir.SessionStats do
   defp to_string_or_nil(nil), do: nil
   defp to_string_or_nil(value), do: to_string(value)
 
+  defp configured_model_from_args(["--model", model | rest]) do
+    normalize_model(model) || configured_model_from_args(rest)
+  end
+
+  defp configured_model_from_args(["--model=" <> model | rest]) do
+    normalize_model(model) || configured_model_from_args(rest)
+  end
+
+  defp configured_model_from_args([_arg | rest]), do: configured_model_from_args(rest)
+  defp configured_model_from_args([]), do: nil
+
+  defp git_output(workspace_path, args) when is_binary(workspace_path) and is_list(args) do
+    case System.cmd("git", args, cd: workspace_path, stderr_to_stdout: true) do
+      {output, 0} ->
+        output
+        |> String.trim()
+        |> case do
+          "" -> nil
+          value -> value
+        end
+
+      {_output, _status} ->
+        nil
+    end
+  rescue
+    _error -> nil
+  end
+
   defp decode_history_line(line) do
     case Jason.decode(line) do
       {:ok, decoded} -> [decoded]
@@ -190,6 +238,19 @@ defmodule SymphonyElixir.SessionStats do
   defp expand_home_path("~/" <> rest), do: Path.join(System.user_home() || "~", rest)
 
   defp expand_home_path(path), do: path
+
+  defp normalize_model(model) when is_binary(model) do
+    model
+    |> String.trim()
+    |> String.trim_leading("\"")
+    |> String.trim_trailing("\"")
+    |> String.trim_leading("'")
+    |> String.trim_trailing("'")
+    |> case do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
 
   defp usd(value) when is_number(value) do
     value

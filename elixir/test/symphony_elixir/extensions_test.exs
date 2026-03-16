@@ -385,6 +385,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                %{
                  "siaan_version" => nil,
                  "model" => nil,
+                 "repo_head_sha" => nil,
+                 "repo_branch" => nil,
                  "pricing_model" => nil,
                  "pricing_source" => nil,
                  "issue_id" => "issue-http",
@@ -446,6 +448,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                "session_id" => "thread-http",
                "siaan_version" => nil,
                "model" => nil,
+               "repo_head_sha" => nil,
+               "repo_branch" => nil,
                "pricing_model" => nil,
                "pricing_source" => nil,
                "turn_count" => 7,

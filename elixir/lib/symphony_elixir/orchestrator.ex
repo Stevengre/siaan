@@ -63,7 +63,9 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
-      completed_runs: SessionStats.load_recent_history(),
+      completed_runs:
+        SessionStats.load_recent_history()
+        |> Enum.reverse(),
       codex_totals: @empty_codex_totals,
       codex_rate_limits: nil
     }
@@ -1315,6 +1317,8 @@ defmodule SymphonyElixir.Orchestrator do
           session_id: metadata.session_id,
           siaan_version: stats.siaan_version,
           codex_model: stats.model,
+          repo_head_sha: stats.repo_head_sha,
+          repo_branch: stats.repo_branch,
           pricing_model: stats.pricing_model,
           pricing_source: stats.pricing_source,
           estimated_cost_usd: stats.estimated_cost_usd,

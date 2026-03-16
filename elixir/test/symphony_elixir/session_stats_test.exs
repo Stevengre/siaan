@@ -11,6 +11,34 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert SessionStats.configured_model() == "gpt-5.2-codex"
   end
 
+  test "configured_model normalizes quoted model flags" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: ~s(codex --config foo=bar --model "gpt-5.2-codex" app-server)
+    )
+
+    assert SessionStats.configured_model() == "gpt-5.2-codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: ~s(codex --model='gpt-5.3-codex' app-server)
+    )
+
+    assert SessionStats.configured_model() == "gpt-5.3-codex"
+  end
+
+  test "configured_model parses equals form and ignores blank values" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex --model=gpt-5.1-codex app-server"
+    )
+
+    assert SessionStats.configured_model() == "gpt-5.1-codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: ~s(codex --model "" app-server)
+    )
+
+    assert SessionStats.configured_model() == nil
+  end
+
   test "configured_model returns nil when the codex command has no model flag" do
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
 
@@ -141,22 +169,44 @@ defmodule SymphonyElixir.SessionStatsTest do
   end
 
   test "build_running_summary includes known model pricing and version metadata" do
+    workspace_root = tmp_dir!("session-stats-git-running")
+    {head_sha, branch} = init_git_repo!(workspace_root)
+
     summary =
       SessionStats.build_running_summary(%{
         codex_input_tokens: 12,
         codex_output_tokens: 4,
         codex_model: "gpt-5.2-codex",
-        siaan_version: "0.1.0"
+        siaan_version: "0.1.0",
+        workspace_path: workspace_root
       })
 
     assert summary.siaan_version == "0.1.0"
     assert summary.model == "gpt-5.2-codex"
+    assert summary.repo_head_sha == head_sha
+    assert summary.repo_branch == branch
     assert summary.pricing_model == "gpt-5.2-codex"
     assert summary.pricing_source =~ "OpenAI API pricing snapshot"
     assert summary.cost_estimate_available == true
     assert summary.estimated_input_cost_usd == 0.000015
     assert summary.estimated_output_cost_usd == 0.00004
     assert summary.estimated_cost_usd == 0.000055
+  end
+
+  test "build_running_summary leaves repo metadata empty outside git workspaces" do
+    workspace_root = tmp_dir!("session-stats-non-git-running")
+
+    summary =
+      SessionStats.build_running_summary(%{
+        codex_input_tokens: 5,
+        codex_output_tokens: 3,
+        codex_model: "gpt-5.2-codex",
+        workspace_path: workspace_root
+      })
+
+    assert summary.repo_head_sha == nil
+    assert summary.repo_branch == nil
+    assert summary.cost_estimate_available == true
   end
 
   test "build_running_summary falls back to app version and unknown pricing when model is absent" do
@@ -172,6 +222,8 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "build_completed_record captures timing, tokens, and unknown-model fallback" do
     started_at = DateTime.utc_now() |> DateTime.add(-12, :second) |> DateTime.truncate(:second)
+    workspace_root = tmp_dir!("session-stats-git-completed")
+    {head_sha, branch} = init_git_repo!(workspace_root)
 
     record =
       SessionStats.build_completed_record(
@@ -184,7 +236,8 @@ defmodule SymphonyElixir.SessionStatsTest do
           codex_total_tokens: 7,
           codex_model: "unknown-model",
           turn_count: 2,
-          started_at: started_at
+          started_at: started_at,
+          workspace_path: workspace_root
         },
         "completed"
       )
@@ -194,6 +247,8 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert record["session_id"] == "thread-1"
     assert record["result"] == "completed"
     assert record["model"] == "unknown-model"
+    assert record["repo_head_sha"] == head_sha
+    assert record["repo_branch"] == branch
     assert record["turn_count"] == 2
     assert record["started_at"] == DateTime.to_iso8601(started_at)
     assert record["completed_at"] != nil
@@ -210,6 +265,59 @@ defmodule SymphonyElixir.SessionStatsTest do
              "estimated_input_cost_usd" => nil,
              "estimated_output_cost_usd" => nil,
              "cost_estimate_available" => false
+           }
+  end
+
+  test "build_completed_record leaves repo metadata empty outside git workspaces" do
+    record =
+      SessionStats.build_completed_record(
+        %{
+          issue_id: "issue-2",
+          identifier: "MT-2",
+          session_id: "thread-2",
+          codex_input_tokens: 1,
+          codex_output_tokens: 2,
+          codex_total_tokens: 3,
+          codex_model: "gpt-5.2-codex",
+          workspace_path: tmp_dir!("session-stats-non-git-completed")
+        },
+        "completed"
+      )
+
+    assert record["repo_head_sha"] == nil
+    assert record["repo_branch"] == nil
+    assert record["cost"]["cost_estimate_available"] == true
+  end
+
+  test "workspace_git_metadata returns nils when git returns blank output" do
+    workspace_root = tmp_dir!("session-stats-blank-git")
+    fake_bin = tmp_dir!("session-stats-fake-git-bin")
+    fake_git = Path.join(fake_bin, "git")
+    original_path = System.get_env("PATH") || ""
+
+    File.write!(fake_git, "#!/bin/sh\nprintf '\\n'")
+    File.chmod!(fake_git, 0o755)
+    System.put_env("PATH", fake_bin)
+
+    on_exit(fn -> System.put_env("PATH", original_path) end)
+
+    assert SessionStats.workspace_git_metadata(workspace_root) == %{
+             repo_head_sha: nil,
+             repo_branch: nil
+           }
+  end
+
+  test "workspace_git_metadata returns nils when git is unavailable" do
+    workspace_root = tmp_dir!("session-stats-missing-git")
+    fake_bin = tmp_dir!("session-stats-missing-git-bin")
+    original_path = System.get_env("PATH") || ""
+
+    System.put_env("PATH", fake_bin)
+    on_exit(fn -> System.put_env("PATH", original_path) end)
+
+    assert SessionStats.workspace_git_metadata(workspace_root) == %{
+             repo_head_sha: nil,
+             repo_branch: nil
            }
   end
 
@@ -266,5 +374,22 @@ defmodule SymphonyElixir.SessionStatsTest do
       Workflow.set_workflow_file_path(Workflow.workflow_file_path())
       WorkflowStore.force_reload()
     end
+  end
+
+  defp init_git_repo!(workspace_root) do
+    env = [
+      {"GIT_AUTHOR_NAME", "Test User"},
+      {"GIT_AUTHOR_EMAIL", "test@example.com"},
+      {"GIT_COMMITTER_NAME", "Test User"},
+      {"GIT_COMMITTER_EMAIL", "test@example.com"}
+    ]
+
+    File.write!(Path.join(workspace_root, "README.md"), "test\n")
+    {_, 0} = System.cmd("git", ["init", "-b", "main"], cd: workspace_root, env: env, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["add", "README.md"], cd: workspace_root, env: env, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["commit", "-m", "init"], cd: workspace_root, env: env, stderr_to_stdout: true)
+    {head_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: workspace_root, env: env, stderr_to_stdout: true)
+    {branch, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"], cd: workspace_root, env: env, stderr_to_stdout: true)
+    {String.trim(head_sha), String.trim(branch)}
   end
 end
