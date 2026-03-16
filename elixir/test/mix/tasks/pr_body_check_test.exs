@@ -619,6 +619,30 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "fails when review focus is only an indented code block" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body =
+        String.replace(
+          @valid_body,
+          "1. Confirm the lint task enforces the new approval-oriented structure.\n2. Verify the PR template keeps the appendix in `<details>` with all required C4 headings.\n3. Check that the skill instructions handle multi-change PRs and pure refactors.",
+          "    1. Hidden inside a code block."
+        )
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Section must include a numbered list: ### Review Focus"
+    end)
+  end
+
   test "fails when architecture trace details wrapper is missing" do
     in_temp_repo(fn ->
       write_template!(@template)

@@ -199,7 +199,7 @@ defmodule Mix.Tasks.PrBody.Check do
     body
     |> capture_heading_sections(heading, headings)
     |> Enum.reduce(errors, fn section, acc ->
-      if String.trim_leading(section) |> String.starts_with?("1. ") do
+      if valid_numbered_list?(section) do
         acc
       else
         acc ++ ["Section must include a numbered list: #{heading}"]
@@ -335,6 +335,13 @@ defmodule Mix.Tasks.PrBody.Check do
     Enum.all?(@decision_record_fields, fn field ->
       Enum.any?(entries, &String.starts_with?(&1, "- #{field}"))
     end)
+  end
+
+  defp valid_numbered_list?(section) do
+    section
+    |> strip_code_blocks()
+    |> String.split("\n")
+    |> Enum.any?(&Regex.match?(~r/^(?: {0,3})\d+\. /, &1))
   end
 
   defp strip_code_blocks(section) do
