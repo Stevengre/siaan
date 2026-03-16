@@ -94,22 +94,19 @@ If something unexpected comes up during execution:
 
 When all plan items are checked and validation passes:
 
+Use the `pr-description` skill to draft the PR body from the issue context,
+diff, and validation evidence before creating or editing the PR.
+
 ```bash
 git push -u origin HEAD
 gh pr create --title "<concise title>" --body "$(cat <<'EOF'
-closes #<number>
-
-## Summary
-<what changed and why>
-
-## Test plan
-- [ ] `make all` passes
-- [ ] <specific validation items from workpad>
+<full body matching .github/PULL_REQUEST_TEMPLATE.md>
 EOF
 )"
 ```
 
-Use `closes #<number>` to auto-link the PR to the issue.
+Ensure the final body contains `closes #<number>` so the PR auto-links to the
+issue.
 
 ### 7. Check the completion bar
 
