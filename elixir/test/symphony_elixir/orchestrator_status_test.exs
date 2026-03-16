@@ -131,6 +131,86 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
   end
 
+  test "review re-entry initializes placeholder issue sessions with a logical session id" do
+    configure_execution_profile_workspace!()
+
+    issue = %Issue{
+      id: "issue-review-placeholder",
+      identifier: "GH-503A",
+      title: "Review profile placeholder selection",
+      description: "Initialize a logical issue session when only a pending transition exists",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503A"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.mark_pending_transition(
+               issue.id,
+               issue.identifier,
+               "review_to_in_progress"
+             )
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "review_to_in_progress")
+
+    assert profile.profile_name == "review_to_in_progress"
+    assert profile.session_reuse_policy == "reuse_issue_session"
+    assert profile.session_reuse_decision == "started_new_issue_session"
+    assert is_binary(profile.issue_session_id)
+    assert profile.issue_session_id != ""
+    assert profile.issue_turn_count == 0
+    assert profile.physical_session_count == 0
+  end
+
+  test "dispatch keeps running when issue-session persistence fails" do
+    workspace_root = tmp_dir!("orchestrator-issue-session-persist-failure")
+    blocking_path = Path.join(workspace_root, "not-a-directory")
+
+    File.mkdir_p!(workspace_root)
+    File.write!(blocking_path, "file")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+
+    issue = %Issue{
+      id: "issue-persist-warning",
+      identifier: "GH-503B",
+      title: "Persist failure warning",
+      description: "Do not crash dispatch when issue-session persistence fails",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503B"
+    }
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "ready_to_in_progress")
+
+    running_entry = %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      worker_host: nil,
+      issue_session_id: profile.issue_session_id,
+      execution_profile: profile.profile_name,
+      execution_transition: profile.transition_name,
+      session_reuse_policy: profile.session_reuse_policy,
+      session_reuse_decision: profile.session_reuse_decision,
+      codex_command: profile.codex_command,
+      codex_model: SymphonyElixir.SessionStats.configured_model(profile.codex_command),
+      issue_session_turn_count: profile.issue_turn_count,
+      physical_session_count: profile.physical_session_count,
+      codex_thread_id: profile.codex_thread_id
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 Orchestrator.persist_issue_session_for_test(
+                   running_entry,
+                   issue,
+                   nil,
+                   profile
+                 )
+      end)
+
+    assert log =~ "Unable to persist issue session for issue_id=issue-persist-warning issue_identifier=GH-503B"
+  end
+
   test "retry and stall continuity inherit the persisted issue-session profile" do
     configure_execution_profile_workspace!(
       execution_profiles: %{

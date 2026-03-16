@@ -485,6 +485,13 @@ defmodule SymphonyElixir.Orchestrator do
     resolve_dispatch_profile(issue, transition_name)
   end
 
+  @doc false
+  @spec persist_issue_session_for_test(map(), Issue.t(), String.t() | nil, map() | nil) :: :ok
+  def persist_issue_session_for_test(running_entry, %Issue{} = issue, worker_host, dispatch_profile)
+      when is_map(running_entry) and (is_map(dispatch_profile) or is_nil(dispatch_profile)) do
+    record_issue_session(running_entry, issue, worker_host, dispatch_profile)
+  end
+
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
 
   defp reconcile_running_issue_states([issue | rest], state, active_states, terminal_states) do
@@ -926,7 +933,7 @@ defmodule SymphonyElixir.Orchestrator do
           started_at: DateTime.utc_now()
         }
 
-        :ok = persist_issue_session(running_entry, issue, worker_host, dispatch_profile)
+        :ok = record_issue_session(running_entry, issue, worker_host, dispatch_profile)
 
         running =
           Map.put(state.running, issue.id, running_entry)
@@ -1038,15 +1045,11 @@ defmodule SymphonyElixir.Orchestrator do
 
     now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
-    base_session =
+    {base_session, session_reuse_decision} =
       if reuse_existing? do
-        existing_issue_session
+        initialize_issue_session(existing_issue_session, issue.id)
       else
-        %{
-          "issue_session_id" => issue_session_id(issue.id),
-          "issue_session_turn_count" => 0,
-          "physical_session_count" => 0
-        }
+        {new_issue_session(issue.id), "started_new_issue_session"}
       end
 
     Map.merge(base_session, %{
@@ -1055,13 +1058,63 @@ defmodule SymphonyElixir.Orchestrator do
       "execution_profile" => profile_name,
       "execution_transition" => transition_name,
       "session_reuse_policy" => profile.session_reuse,
-      "session_reuse_decision" => if(reuse_existing?, do: "reused_issue_session", else: "started_new_issue_session"),
+      "session_reuse_decision" => session_reuse_decision,
       "codex_command" => profile.codex_command,
       "model" => SessionStats.configured_model(profile.codex_command),
       "updated_at" => now,
       "created_at" => Map.get(base_session, "created_at", now)
     })
     |> Map.delete("pending_transition")
+  end
+
+  defp initialize_issue_session(existing_issue_session, issue_id) when is_map(existing_issue_session) do
+    existing_issue_session_id = normalized_issue_session_id(existing_issue_session["issue_session_id"])
+
+    session_reuse_decision =
+      if is_binary(existing_issue_session_id) do
+        "reused_issue_session"
+      else
+        "started_new_issue_session"
+      end
+
+    issue_session =
+      existing_issue_session
+      |> Map.put("issue_session_id", existing_issue_session_id || issue_session_id(issue_id))
+      |> Map.put_new("issue_session_turn_count", 0)
+      |> Map.put_new("physical_session_count", 0)
+
+    {issue_session, session_reuse_decision}
+  end
+
+  defp new_issue_session(issue_id) when is_binary(issue_id) do
+    %{
+      "issue_session_id" => issue_session_id(issue_id),
+      "issue_session_turn_count" => 0,
+      "physical_session_count" => 0
+    }
+  end
+
+  defp normalized_issue_session_id(issue_session_id) when is_binary(issue_session_id) do
+    case String.trim(issue_session_id) do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  defp normalized_issue_session_id(_issue_session_id), do: nil
+
+  defp record_issue_session(running_entry, issue, worker_host, dispatch_profile) do
+    case persist_issue_session(running_entry, issue, worker_host, dispatch_profile) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Unable to persist issue session for #{issue_context(issue)} transition=#{Map.get(running_entry, :execution_transition)} worker_host=#{worker_host || Map.get(running_entry, :worker_host) || "local"}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
   end
 
   defp persist_issue_session(running_entry, issue, worker_host, dispatch_profile \\ nil) do
