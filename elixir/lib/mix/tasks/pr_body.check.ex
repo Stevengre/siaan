@@ -13,8 +13,20 @@ defmodule Mix.Tasks.PrBody.Check do
   """
 
   @template_paths [
+    ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/pull_request_template.md",
+    "../.github/PULL_REQUEST_TEMPLATE.md",
     "../.github/pull_request_template.md"
+  ]
+
+  @architecture_trace_summary "<summary><b>Architecture Trace</b></summary>"
+  @decision_record_heading "### Decision Record"
+  @decision_record_fields [
+    "**Decision**:",
+    "**Alternatives considered**:",
+    "**Trade-offs**:",
+    "**Why chosen**:",
+    "**Implementation links**:"
   ]
 
   @impl Mix.Task
@@ -76,7 +88,7 @@ defmodule Mix.Tasks.PrBody.Check do
 
   defp extract_template_headings(template, template_path) do
     headings =
-      Regex.scan(~r/^\#{4,6}\s+.+$/m, template)
+      Regex.scan(~r/^\#{3,6}\s+.+$/m, template)
       |> Enum.map(&hd/1)
 
     if headings == [] do
@@ -104,6 +116,11 @@ defmodule Mix.Tasks.PrBody.Check do
     |> check_order(body, headings)
     |> check_no_placeholders(body)
     |> check_sections_from_template(template, body, headings)
+    |> check_architecture_trace_wrapper(body)
+    |> check_table_section(body, headings, "### Behavior Delta")
+    |> check_table_section(body, headings, "### Validation")
+    |> check_numbered_section(body, headings, "### Review Focus")
+    |> check_decision_record(body, headings)
   end
 
   defp check_required_headings(errors, body, headings) do
@@ -148,10 +165,77 @@ defmodule Mix.Tasks.PrBody.Check do
     end)
   end
 
+  defp check_architecture_trace_wrapper(errors, body) do
+    errors
+    |> maybe_append(not String.contains?(body, "<details>"), "Architecture Trace appendix must be wrapped in <details>.")
+    |> maybe_append(
+      not String.contains?(body, @architecture_trace_summary),
+      "Architecture Trace appendix must use the required summary heading."
+    )
+    |> maybe_append(not String.contains?(body, "</details>"), "Architecture Trace appendix must close with </details>.")
+  end
+
+  defp check_table_section(errors, body, headings, heading) do
+    case capture_heading_section(body, heading, headings) do
+      nil ->
+        errors
+
+      section ->
+        table_rows =
+          section
+          |> String.split("\n")
+          |> Enum.count(&String.starts_with?(String.trim_leading(&1), "|"))
+
+        if table_rows >= 3 do
+          errors
+        else
+          errors ++ ["Section must include a markdown table with at least one data row: #{heading}"]
+        end
+    end
+  end
+
+  defp check_numbered_section(errors, body, headings, heading) do
+    case capture_heading_section(body, heading, headings) do
+      nil ->
+        errors
+
+      section ->
+        if String.trim_leading(section) |> String.starts_with?("1. ") do
+          errors
+        else
+          errors ++ ["Section must include a numbered list: #{heading}"]
+        end
+    end
+  end
+
+  defp check_decision_record(errors, body, headings) do
+    case capture_heading_section(body, @decision_record_heading, headings) do
+      nil ->
+        errors
+
+      section ->
+        trimmed = normalize_decision_record_section(section)
+
+        cond do
+          trimmed == "No design decision introduced in this PR." ->
+            errors
+
+          Enum.all?(@decision_record_fields, &String.contains?(trimmed, &1)) ->
+            errors
+
+          true ->
+            errors ++
+              [
+                "Decision Record must either say `No design decision introduced in this PR.` or include Decision, Alternatives considered, Trade-offs, Why chosen, and Implementation links."
+              ]
+        end
+    end
+  end
+
   defp maybe_require_bullets(errors, heading, template_section, body_section) do
     requires_bullets = Regex.match?(~r/^- /m, template_section || "")
 
-    if requires_bullets and not Regex.match?(~r/^- /m, body_section) do
+    if requires_bullets and not decision_record_without_bullets?(heading, body_section) and not Regex.match?(~r/^- /m, body_section) do
       errors ++ ["Section must include at least one bullet item: #{heading}"]
     else
       errors
@@ -166,6 +250,19 @@ defmodule Mix.Tasks.PrBody.Check do
     else
       errors
     end
+  end
+
+  defp maybe_append(errors, true, message), do: errors ++ [message]
+  defp maybe_append(errors, false, _message), do: errors
+
+  defp decision_record_without_bullets?(heading, body_section) do
+    heading == @decision_record_heading and normalize_decision_record_section(body_section) == "No design decision introduced in this PR."
+  end
+
+  defp normalize_decision_record_section(section) do
+    section
+    |> String.replace(~r/\n?<\/details>\s*\z/s, "")
+    |> String.trim()
   end
 
   defp heading_position(body, heading) do
