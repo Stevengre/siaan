@@ -21,6 +21,13 @@ defmodule Mix.Tasks.PrBody.Check do
 
   @architecture_trace_summary "<summary><b>Architecture Trace</b></summary>"
   @architecture_trace_details_regex ~r/<details>\s*#{Regex.escape(@architecture_trace_summary)}.*?<\/details>/s
+  @architecture_trace_headings [
+    "### Context (C4-L1)",
+    "### Container (C4-L2)",
+    "### Component (C4-L3)",
+    "### Code Trace (C4-L4)",
+    "### Decision Record"
+  ]
   @decision_record_heading "### Decision Record"
   @decision_record_fields [
     "**Decision**:",
@@ -167,15 +174,23 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp check_architecture_trace_wrapper(errors, body) do
-    cond do
-      Regex.match?(@architecture_trace_details_regex, body) ->
-        errors
+    matches = Regex.scan(@architecture_trace_details_regex, body)
 
-      not String.contains?(body, @architecture_trace_summary) ->
+    cond do
+      matches == [] and not String.contains?(body, @architecture_trace_summary) ->
         errors ++ ["Architecture Trace appendix must use the required summary heading."]
 
-      true ->
+      matches == [] ->
         errors ++ ["Architecture Trace appendix must be wrapped in <details>."]
+
+      length(matches) > 1 ->
+        errors ++ ["Architecture Trace appendix must appear exactly once."]
+
+      architecture_trace_markers_outside_appendix?(body, hd(hd(matches))) ->
+        errors ++ ["Architecture Trace appendix content must appear only inside the single appendix block."]
+
+      true ->
+        errors
     end
   end
 
@@ -319,7 +334,15 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp strip_fenced_code_blocks(section) do
-    Regex.replace(~r/```.*?```/s, section, "")
+    section
+    |> then(&Regex.replace(~r/```.*?```/s, &1, ""))
+    |> then(&Regex.replace(~r/~~~.*?~~~/s, &1, ""))
+  end
+
+  defp architecture_trace_markers_outside_appendix?(body, appendix_block) do
+    remainder = String.replace(body, appendix_block, "", global: false)
+
+    Enum.any?([@architecture_trace_summary | @architecture_trace_headings], &String.contains?(remainder, &1))
   end
 
   defp heading_position(body, heading) do
