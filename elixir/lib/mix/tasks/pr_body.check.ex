@@ -156,20 +156,9 @@ defmodule Mix.Tasks.PrBody.Check do
   defp check_sections_from_template(errors, template, body, headings) do
     Enum.reduce(headings, errors, fn heading, acc ->
       template_section = capture_heading_section(template, heading, headings)
-      body_section = capture_heading_section(body, heading, headings)
+      body_sections = capture_heading_sections(body, heading, headings)
 
-      cond do
-        is_nil(body_section) ->
-          acc
-
-        String.trim(body_section) == "" ->
-          acc ++ ["Section cannot be empty: #{heading}"]
-
-        true ->
-          acc
-          |> maybe_require_bullets(heading, template_section, body_section)
-          |> maybe_require_checkboxes(heading, template_section, body_section)
-      end
+      Enum.reduce(body_sections, acc, &validate_template_section(&2, heading, template_section, &1))
     end)
   end
 
@@ -195,31 +184,27 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp check_table_section(errors, body, headings, heading) do
-    case capture_heading_section(body, heading, headings) do
-      nil ->
-        errors
-
-      section ->
-        if valid_markdown_table?(section) do
-          errors
-        else
-          errors ++ ["Section must include a markdown table with at least one data row: #{heading}"]
-        end
-    end
+    body
+    |> capture_heading_sections(heading, headings)
+    |> Enum.reduce(errors, fn section, acc ->
+      if valid_markdown_table?(section) do
+        acc
+      else
+        acc ++ ["Section must include a markdown table with at least one data row: #{heading}"]
+      end
+    end)
   end
 
   defp check_numbered_section(errors, body, headings, heading) do
-    case capture_heading_section(body, heading, headings) do
-      nil ->
-        errors
-
-      section ->
-        if String.trim_leading(section) |> String.starts_with?("1. ") do
-          errors
-        else
-          errors ++ ["Section must include a numbered list: #{heading}"]
-        end
-    end
+    body
+    |> capture_heading_sections(heading, headings)
+    |> Enum.reduce(errors, fn section, acc ->
+      if String.trim_leading(section) |> String.starts_with?("1. ") do
+        acc
+      else
+        acc ++ ["Section must include a numbered list: #{heading}"]
+      end
+    end)
   end
 
   defp check_decision_record(errors, body, headings) do
@@ -263,6 +248,16 @@ defmodule Mix.Tasks.PrBody.Check do
       errors ++ ["Section must include at least one checkbox item: #{heading}"]
     else
       errors
+    end
+  end
+
+  defp validate_template_section(errors, heading, template_section, body_section) do
+    if String.trim(body_section) == "" do
+      errors ++ ["Section cannot be empty: #{heading}"]
+    else
+      errors
+      |> maybe_require_bullets(heading, template_section, body_section)
+      |> maybe_require_checkboxes(heading, template_section, body_section)
     end
   end
 
@@ -363,41 +358,43 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp capture_heading_section(doc, heading, headings) do
-    with {heading_idx, _} <- :binary.match(doc, heading),
-         section_start <- heading_idx + byte_size(heading),
-         true <- section_start + 2 <= byte_size(doc),
-         "\n\n" <- binary_part(doc, section_start, 2) do
-      extract_section_content(doc, section_start + 2, heading, headings)
-    else
-      :nomatch -> nil
-      false -> ""
-      _ -> nil
-    end
+    doc
+    |> capture_heading_sections(heading, headings)
+    |> List.first()
   end
 
-  defp extract_section_content(doc, content_start, heading, headings) do
-    content = binary_part(doc, content_start, byte_size(doc) - content_start)
-
-    case next_heading_offset(content, heading, headings) do
-      nil -> content
-      offset -> binary_part(content, 0, offset)
-    end
+  defp capture_heading_sections(doc, heading, headings) do
+    doc
+    |> parse_sections(headings)
+    |> Enum.filter(fn {section_heading, _content} -> section_heading == heading end)
+    |> Enum.map(fn {_section_heading, content} -> content end)
   end
 
-  defp next_heading_offset(content, heading, headings) do
-    headings_after(heading, headings)
-    |> Enum.map(fn marker -> :binary.match(content, marker) end)
-    |> Enum.filter(&(&1 != :nomatch))
-    |> Enum.map(fn {idx, _} -> idx end)
-    |> case do
-      [] -> nil
-      indexes -> Enum.min(indexes)
-    end
+  defp parse_sections(doc, headings) do
+    {sections, current_heading, current_content} =
+      doc
+      |> String.split("\n", trim: false)
+      |> Enum.reduce({[], nil, []}, &parse_section_line(&1, &2, headings))
+
+    append_section(sections, current_heading, current_content)
   end
 
-  defp headings_after(current_heading, headings) do
-    headings
-    |> Enum.filter(&(&1 != current_heading))
-    |> Enum.map(&("\n" <> &1))
+  defp append_section(sections, nil, _current_content), do: sections
+
+  defp append_section(sections, current_heading, current_content) do
+    sections ++ [{current_heading, current_content |> Enum.reverse() |> Enum.join("\n")}]
+  end
+
+  defp parse_section_line(line, {sections, current_heading, current_content}, headings) do
+    cond do
+      line in headings ->
+        {append_section(sections, current_heading, current_content), line, []}
+
+      is_nil(current_heading) ->
+        {sections, current_heading, current_content}
+
+      true ->
+        {sections, current_heading, [line | current_content]}
+    end
   end
 end

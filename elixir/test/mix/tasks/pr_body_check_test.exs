@@ -236,6 +236,22 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "fails when the body never enters any known section" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+      File.write!("body.md", "Intro text without any required headings.\nStill not in a section.\n")
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Missing required heading: ### Behavior Delta"
+    end)
+  end
+
   test "fails when headings are out of order" do
     in_temp_repo(fn ->
       write_template!(@template)
@@ -885,6 +901,55 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "fails when a later repeated change group omits the required tables" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      invalid_body =
+        append_change_group(
+          @valid_body,
+          """
+          ### Behavior Delta
+
+          No table here.
+
+          ### Invariants / Non-goals
+
+          - **Must still hold**: Second group invariant.
+          - **Explicitly unchanged**: Second group unchanged.
+          - **Out of scope**: Second group scope.
+
+          ### Validation
+
+          - no table here either
+
+          ### Risk / Blast Radius / Rollback
+
+          - **Most likely failure**: Second group failure.
+          - **Blast radius**: Second group blast radius.
+          - **How to detect**: Second group detection.
+          - **How to rollback**: Second group rollback.
+
+          ### Review Focus
+
+          1. Review the second group.
+          """
+        )
+
+      File.write!("body.md", invalid_body)
+
+      error_output =
+        capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/PR body format invalid/, fn ->
+            Check.run(["lint", "--file", "body.md"])
+          end
+        end)
+
+      assert error_output =~ "Section must include a markdown table with at least one data row: ### Behavior Delta"
+      assert error_output =~ "Section must include a markdown table with at least one data row: ### Validation"
+    end)
+  end
+
   test "fails when heading has no content delimiter" do
     in_temp_repo(fn ->
       write_template!(@template)
@@ -928,6 +993,57 @@ defmodule Mix.Tasks.PrBody.CheckTest do
     end)
   end
 
+  test "passes for a valid body with multiple change groups" do
+    in_temp_repo(fn ->
+      write_template!(@template)
+
+      valid_body =
+        append_change_group(
+          @valid_body,
+          """
+          ### Behavior Delta
+
+          | | Before | After |
+          |---|---|---|
+          | Trigger | Single-group template reasoning | Grouped change proof reasoning |
+          | Observable effect | One approval block covers everything | Each independent change gets its own approval block |
+
+          ### Invariants / Non-goals
+
+          - **Must still hold**: The appendix remains a single `Architecture Trace` block.
+          - **Explicitly unchanged**: The validator still runs through `mix pr_body.check`.
+          - **Out of scope**: Auto-splitting diffs into groups without agent judgment.
+
+          ### Validation
+
+          | Risk point | Evidence | Link |
+          |---|---|---|
+          | Later change groups bypass validation | test: `mix test test/mix/tasks/pr_body_check_test.exs` | N/A |
+
+          ### Risk / Blast Radius / Rollback
+
+          - **Most likely failure**: A later group omits the required structure.
+          - **Blast radius**: Multi-group PR descriptions only.
+          - **How to detect**: `mix pr_body.check` fails.
+          - **How to rollback**: Revert the repeated-section validation change.
+
+          ### Review Focus
+
+          1. Confirm repeated Change Proof groups are validated independently.
+          """
+        )
+
+      File.write!("body.md", valid_body)
+
+      output =
+        capture_io(fn ->
+          Check.run(["lint", "--file", "body.md"])
+        end)
+
+      assert output =~ "PR body format OK"
+    end)
+  end
+
   defp in_temp_repo(fun) do
     unique = System.unique_integer([:positive, :monotonic])
     root = Path.join(System.tmp_dir!(), "validate-pr-body-task-test-#{unique}")
@@ -949,5 +1065,9 @@ defmodule Mix.Tasks.PrBody.CheckTest do
   defp write_template!(content) do
     File.mkdir_p!(".github")
     File.write!(".github/PULL_REQUEST_TEMPLATE.md", content)
+  end
+
+  defp append_change_group(body, change_group) do
+    String.replace(body, "\n<details>", "\n\n" <> String.trim(change_group) <> "\n\n<details>")
   end
 end
