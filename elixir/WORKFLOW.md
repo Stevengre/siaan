@@ -3,6 +3,7 @@ tracker:
   kind: github
   repo_owner: "Stevengre"
   repo_name: "siaan"
+  api_key: $GITHUB_TOKEN
   active_states:
     - status:ready
     - status:in-progress
@@ -71,10 +72,6 @@ Instructions:
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
 Work only in the provided repository copy. Do not touch any other path.
-
-## Prerequisite: GitHub MCP or `github_graphql` tool is available
-
-The agent should be able to talk to GitHub, either via a configured GitHub MCP server or injected `github_graphql` tool. If none are present, stop and ask the user to configure GitHub.
 
 ## Default posture
 
@@ -177,9 +174,8 @@ When a ticket has an attached PR, run this protocol before moving to `status:rev
 
 Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
 
-- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-- Do not move to `status:review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `status:review` with a short blocker brief in the workpad that includes:
+- If a required tool or auth path is missing, first try any reasonable in-session fallback before declaring blocked.
+- If required tools/auth are still unavailable, move the ticket to `status:review` with a short blocker brief in the workpad that includes:
   - what is missing,
   - why it blocks required acceptance/validation,
   - exact human action needed to unblock.

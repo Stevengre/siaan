@@ -22,8 +22,15 @@ git config --global user.email \
   "${GIT_AUTHOR_EMAIL:-codex@users.noreply.github.com}"
 
 if [[ -n "${GH_TOKEN:-}" ]] || [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  # GH_TOKEN/GITHUB_TOKEN already provide non-interactive auth for gh.
-  gh auth setup-git >/dev/null || true
+  auth_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+
+  # Materialize a writable gh login so both shell commands and agent fallbacks
+  # can update GitHub state without depending on transient env-only auth.
+  if [[ -n "$auth_token" ]]; then
+    printf '%s' "$auth_token" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 || true
+  fi
+
+  gh auth setup-git >/dev/null 2>&1 || true
 fi
 
 exec ./bin/siaan "$@"
