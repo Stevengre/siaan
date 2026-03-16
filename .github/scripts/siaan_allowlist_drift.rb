@@ -78,11 +78,9 @@ def load_workflow(path)
       YAML.safe_load(front_matter, permitted_classes: [], aliases: false) || {}
     end
 
-  security = config.is_a?(Hash) ? config["security"] : nil
-
   {
     exists: true,
-    allowlist: normalize_list(security.is_a?(Hash) ? security["dispatch_allowlist"] : nil)
+    allowlist: normalize_list(config.is_a?(Hash) ? config["allowlist"] : nil)
   }
 rescue Psych::Exception => error
   {
@@ -143,10 +141,10 @@ result =
   elsif !security[:exists] && !workflow[:allowlist].empty?
     {
       "status" => "warn",
-      "summary" => ".github/siaan-security.yml is missing while #{relative_path(repo_root, workflow_path)} already defines security.dispatch_allowlist.",
+      "summary" => ".github/siaan-security.yml is missing while #{relative_path(repo_root, workflow_path)} already defines allowlist.",
       "details" => [
         "Add .github/siaan-security.yml by running mix siaan.install or by checking in the generated file.",
-        "#{relative_path(repo_root, workflow_path)} security.dispatch_allowlist: #{format_list(workflow[:allowlist])}"
+        "#{relative_path(repo_root, workflow_path)} allowlist: #{format_list(workflow[:allowlist])}"
       ],
       "security_path" => relative_path(repo_root, security_path),
       "workflow_path" => relative_path(repo_root, workflow_path),
@@ -156,10 +154,10 @@ result =
   elsif security[:exists] && workflow[:allowlist].empty?
     {
       "status" => "warn",
-      "summary" => "#{relative_path(repo_root, workflow_path)} is missing security.dispatch_allowlist.",
+      "summary" => "#{relative_path(repo_root, workflow_path)} is missing allowlist.",
       "details" => [
         "#{relative_path(repo_root, security_path)} maintainers: #{format_list(security[:maintainers])}",
-        "Add the same usernames under security.dispatch_allowlist in #{relative_path(repo_root, workflow_path)} once orchestrator allowlist support lands."
+        "Add the same usernames under allowlist in #{relative_path(repo_root, workflow_path)}."
       ],
       "security_path" => relative_path(repo_root, security_path),
       "workflow_path" => relative_path(repo_root, workflow_path),
@@ -172,7 +170,7 @@ result =
       "summary" => "Maintainer allowlists drifted between .github/siaan-security.yml and #{relative_path(repo_root, workflow_path)}.",
       "details" => [
         "#{relative_path(repo_root, security_path)} maintainers: #{format_list(security[:maintainers])}",
-        "#{relative_path(repo_root, workflow_path)} security.dispatch_allowlist: #{format_list(workflow[:allowlist])}",
+        "#{relative_path(repo_root, workflow_path)} allowlist: #{format_list(workflow[:allowlist])}",
         "Update one side so both sorted lists match exactly."
       ],
       "security_path" => relative_path(repo_root, security_path),

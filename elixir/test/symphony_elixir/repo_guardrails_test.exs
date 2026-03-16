@@ -102,9 +102,8 @@ defmodule SymphonyElixir.RepoGuardrailsTest do
       Path.join(temp_repo, "WORKFLOW.md"),
       """
       ---
-      security:
-        dispatch_allowlist:
-          - stevengre
+      allowlist:
+        - stevengre
       ---
       """
     )

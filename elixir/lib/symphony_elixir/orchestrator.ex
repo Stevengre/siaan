@@ -448,6 +448,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
+  @spec transition_issue_for_dispatch_for_test(Issue.t(), (String.t(), String.t() -> term())) ::
+          {:ok, Issue.t()} | {:error, term()}
+  def transition_issue_for_dispatch_for_test(%Issue{} = issue, update_issue_state_fun)
+      when is_function(update_issue_state_fun, 2) do
+    transition_issue_for_dispatch(issue, update_issue_state_fun)
+  end
+
+  @doc false
   @spec retry_delay_for_test(pos_integer(), map()) :: pos_integer()
   def retry_delay_for_test(attempt, metadata)
       when is_integer(attempt) and attempt > 0 and is_map(metadata) do
@@ -811,7 +819,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
     case revalidate_issue_for_dispatch(issue, &Tracker.fetch_issue_states_by_ids/1, terminal_state_set()) do
       {:ok, %Issue{} = refreshed_issue} ->
-        do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host)
+        case transition_issue_for_dispatch(refreshed_issue, &Tracker.update_issue_state/2) do
+          {:ok, %Issue{} = dispatch_issue} ->
+            do_dispatch_issue(state, dispatch_issue, attempt, preferred_worker_host)
+
+          {:error, reason} ->
+            Logger.warning("Skipping dispatch; issue state transition failed for #{issue_context(refreshed_issue)}: #{inspect(reason)}")
+            state
+        end
 
       {:skip, :missing} ->
         Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
@@ -912,6 +927,25 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp revalidate_issue_for_dispatch(issue, _issue_fetcher, _terminal_states), do: {:ok, issue}
+
+  defp transition_issue_for_dispatch(%Issue{state: issue_state} = issue, update_issue_state_fun)
+       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) do
+    case normalize_issue_state(issue_state) do
+      "status:ready" ->
+        case update_issue_state_fun.(issue.id, "status:in-progress") do
+          :ok ->
+            {:ok, %{issue | state: "status:in-progress"}}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      _ ->
+        {:ok, issue}
+    end
+  end
+
+  defp transition_issue_for_dispatch(issue, _update_issue_state_fun), do: {:ok, issue}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{

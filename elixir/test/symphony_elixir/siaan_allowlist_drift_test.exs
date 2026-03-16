@@ -29,10 +29,9 @@ defmodule SymphonyElixir.SiaanAllowlistDriftTest do
       workflow_path,
       """
       ---
-      security:
-        dispatch_allowlist:
-          - alice
-          - "@bob"
+      allowlist:
+        - alice
+        - "@bob"
       ---
 
       Body
@@ -77,9 +76,8 @@ defmodule SymphonyElixir.SiaanAllowlistDriftTest do
       workflow_path,
       """
       ---
-      security:
-        dispatch_allowlist:
-          - "@Alice"
+      allowlist:
+        - "@Alice"
       ---
       """
     )
@@ -117,9 +115,8 @@ defmodule SymphonyElixir.SiaanAllowlistDriftTest do
       workflow_path,
       """
       ---
-      security:
-        dispatch_allowlist:
-          - alice
+      allowlist:
+        - alice
       ---
       """
     )

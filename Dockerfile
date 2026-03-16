@@ -4,6 +4,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       git \
       make \
+      ruby \
       ca-certificates \
       curl \
       gpg \
