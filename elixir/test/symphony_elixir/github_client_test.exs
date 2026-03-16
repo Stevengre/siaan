@@ -58,50 +58,67 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     request_fun = fn method, url, opts ->
       send(self(), {:request, method, url, opts})
 
-      labels = Keyword.get(opts, :params)[:labels]
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          labels = Keyword.get(opts, :params)[:labels]
 
-      {:ok,
-       %{
-         status: 200,
-         body:
-           case labels do
-             "status:ready" ->
-               [
-                 %{
-                   "id" => 111,
-                   "number" => 7,
-                   "title" => "Ready issue",
-                   "body" => "body",
-                   "state" => "open",
-                   "html_url" => "https://github.com/acme/repo/issues/7",
-                   "labels" => [%{"name" => "status:ready"}],
-                   "assignees" => []
-                 },
-                 %{
-                   "id" => 222,
-                   "number" => 8,
-                   "title" => "Pull request",
-                   "pull_request" => %{"url" => "https://api.github.com/repos/acme/repo/pulls/8"},
-                   "labels" => [%{"name" => "status:ready"}],
-                   "assignees" => []
-                 }
-               ]
+          {:ok,
+           %{
+             status: 200,
+             body:
+               case labels do
+                 "status:ready" ->
+                   [
+                     %{
+                       "id" => 111,
+                       "number" => 7,
+                       "title" => "Ready issue",
+                       "body" => "body",
+                       "state" => "open",
+                       "html_url" => "https://github.com/acme/repo/issues/7",
+                       "labels" => [%{"name" => "status:ready"}],
+                       "assignees" => []
+                     },
+                     %{
+                       "id" => 222,
+                       "number" => 8,
+                       "title" => "Pull request",
+                       "pull_request" => %{"url" => "https://api.github.com/repos/acme/repo/pulls/8"},
+                       "labels" => [%{"name" => "status:ready"}],
+                       "assignees" => []
+                     }
+                   ]
 
-             "status:in-progress" ->
-               [
-                 %{
-                   "id" => 333,
-                   "number" => 9,
-                   "title" => "In progress issue",
-                   "body" => "body",
-                   "state" => "open",
-                   "html_url" => "https://github.com/acme/repo/issues/9",
-                   "labels" => [%{"name" => "status:in-progress"}],
-                   "assignees" => []
+                 "status:in-progress" ->
+                   [
+                     %{
+                       "id" => 333,
+                       "number" => 9,
+                       "title" => "In progress issue",
+                       "body" => "body",
+                       "state" => "open",
+                       "html_url" => "https://github.com/acme/repo/issues/9",
+                       "labels" => [%{"name" => "status:in-progress"}],
+                       "assignees" => []
+                     }
+                   ]
+               end
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_7" => %{"blockedBy" => %{"nodes" => []}},
+                   "issue_9" => %{"blockedBy" => %{"nodes" => []}}
                  }
-               ]
-           end
-       }}
+               }
+             }
+           }}
+      end
     end
 
     assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}, %Issue{id: "9", number: 9, state: "status:in-progress"}]} =
@@ -114,6 +131,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert_receive {:request, :get, "https://api.github.com/repos/acme/repo/issues", in_progress_opts}
     assert Keyword.get(in_progress_opts, :params)[:labels] == "status:in-progress"
     assert Keyword.get(in_progress_opts, :params)[:state] == "open"
+    assert_receive {:request, :post, "https://api.github.com/graphql", _graphql_opts}
   end
 
   test "fetch_candidate_issues_for_test handles pagination, malformed entries, and status failures" do
@@ -126,28 +144,39 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_active_states: ["status:ready"]
     )
 
-    paged_request = fn :get, _url, opts ->
-      page = Keyword.fetch!(opts, :params)[:page]
+    paged_request = fn method, url, opts ->
+      case {method, url} do
+        {:get, _issues_url} ->
+          page = Keyword.fetch!(opts, :params)[:page]
 
-      body =
-        if page == 1 do
-          Enum.map(1..100, fn number ->
-            %{
-              "id" => number,
-              "number" => number,
-              "title" => "Issue #{number}",
-              "body" => "Body #{number}",
-              "state" => "open",
-              "html_url" => "https://github.com/acme/repo/issues/#{number}",
-              "labels" => [%{"name" => "status:ready"}],
-              "assignees" => []
-            }
-          end) ++ ["malformed"]
-        else
-          []
-        end
+          body =
+            if page == 1 do
+              Enum.map(1..100, fn number ->
+                %{
+                  "id" => number,
+                  "number" => number,
+                  "title" => "Issue #{number}",
+                  "body" => "Body #{number}",
+                  "state" => "open",
+                  "html_url" => "https://github.com/acme/repo/issues/#{number}",
+                  "labels" => [%{"name" => "status:ready"}],
+                  "assignees" => []
+                }
+              end) ++ ["malformed"]
+            else
+              []
+            end
 
-      {:ok, %{status: 200, body: body}}
+          {:ok, %{status: 200, body: body}}
+
+        {:post, "https://api.github.com/graphql"} ->
+          issue_nodes =
+            for number <- 1..100, into: %{} do
+              {"issue_#{number}", %{"blockedBy" => %{"nodes" => []}}}
+            end
+
+          {:ok, %{status: 200, body: %{"data" => %{"repository" => issue_nodes}}}}
+      end
     end
 
     assert {:ok, issues} = Client.fetch_candidate_issues_for_test(paged_request)
@@ -166,26 +195,32 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_active_states: ["closed", "open"]
     )
 
-    request_fun = fn :get, _url, opts ->
-      params = Keyword.fetch!(opts, :params)
-      send(self(), {:params, params})
+    request_fun = fn method, url, opts ->
+      case {method, url} do
+        {:get, _issues_url} ->
+          params = Keyword.fetch!(opts, :params)
+          send(self(), {:params, params})
 
-      {:ok,
-       %{
-         status: 200,
-         body: [
+          {:ok,
            %{
-             "id" => 444,
-             "number" => 44,
-             "title" => "Open candidate",
-             "body" => "Body",
-             "state" => "open",
-             "html_url" => "https://github.com/acme/repo/issues/44",
-             "labels" => [],
-             "assignees" => []
-           }
-         ]
-       }}
+             status: 200,
+             body: [
+               %{
+                 "id" => 444,
+                 "number" => 44,
+                 "title" => "Open candidate",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/44",
+                 "labels" => [],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok, %{status: 200, body: %{"data" => %{"repository" => %{"issue_44" => %{"blockedBy" => %{"nodes" => []}}}}}}}
+      end
     end
 
     assert {:ok, [%Issue{id: "44", state: "open"}]} = Client.fetch_candidate_issues_for_test(request_fun)
@@ -222,27 +257,274 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_api_token: "gh-token"
     )
 
-    request_fun = fn :get, url, _opts ->
-      number = url |> String.split("/") |> List.last() |> String.to_integer()
+    request_fun = fn method, url, _opts ->
+      case {method, url} do
+        {:get, _issue_url} ->
+          number = url |> String.split("/") |> List.last() |> String.to_integer()
 
-      {:ok,
-       %{
-         status: 200,
-         body: %{
-           "id" => number + 1000,
-           "number" => number,
-           "title" => "Issue #{number}",
-           "body" => "Body #{number}",
-           "state" => "open",
-           "html_url" => "https://github.com/acme/repo/issues/#{number}",
-           "labels" => [%{"name" => if(number == 5, do: "status:review", else: "status:in-progress")}],
-           "assignees" => []
-         }
-       }}
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "id" => number + 1000,
+               "number" => number,
+               "title" => "Issue #{number}",
+               "body" => "Body #{number}",
+               "state" => "open",
+               "html_url" => "https://github.com/acme/repo/issues/#{number}",
+               "labels" => [%{"name" => if(number == 5, do: "status:review", else: "status:in-progress")}],
+               "assignees" => []
+             }
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_5" => %{
+                     "blockedBy" => %{
+                       "nodes" => [
+                         %{
+                           "number" => 2,
+                           "state" => "OPEN",
+                           "labels" => %{"nodes" => [%{"name" => "status:review"}]}
+                         }
+                       ]
+                     }
+                   },
+                   "issue_3" => %{"blockedBy" => %{"nodes" => []}}
+                 }
+               }
+             }
+           }}
+      end
     end
 
-    assert {:ok, [%Issue{id: "5"}, %Issue{id: "3"}]} =
+    assert {:ok, [%Issue{id: "5", blocked_by: [%{identifier: "GH-2", state: "status:review"}]}, %Issue{id: "3", blocked_by: []}]} =
              Client.fetch_issue_states_by_ids_for_test(["5", "3"], request_fun)
+  end
+
+  test "fetch_candidate_issues_for_test reads native GitHub blockedBy dependencies" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_active_states: ["status:in-progress"]
+    )
+
+    request_fun = fn method, url, opts ->
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          send(self(), {:rest_request, Keyword.fetch!(opts, :params)})
+
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{
+                 "id" => 380,
+                 "number" => 38,
+                 "title" => "Blocked issue",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/38",
+                 "labels" => [%{"name" => "status:in-progress"}],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_38" => %{
+                     "blockedBy" => %{
+                       "nodes" => [
+                         %{
+                           "number" => 34,
+                           "state" => "OPEN",
+                           "labels" => %{"nodes" => [%{"name" => "status:review"}]}
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+      end
+    end
+
+    assert {:ok, [%Issue{id: "38", blocked_by: [%{id: "34", identifier: "GH-34", state: "status:review"}]}]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert_receive {:rest_request, params}
+    assert params[:labels] == "status:in-progress"
+  end
+
+  test "fetch_candidate_issues_for_test tolerates missing issue entries and malformed blocker nodes" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_active_states: ["status:in-progress"]
+    )
+
+    request_fun = fn method, url, _opts ->
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{
+                 "id" => 380,
+                 "number" => 38,
+                 "title" => "Blocked issue",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/38",
+                 "labels" => [%{"name" => "status:in-progress"}],
+                 "assignees" => []
+               },
+               %{
+                 "id" => 390,
+                 "number" => 39,
+                 "title" => "Missing dependency issue",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/39",
+                 "labels" => [%{"name" => "status:in-progress"}],
+                 "assignees" => []
+               },
+               %{
+                 "id" => 999,
+                 "number" => "not-a-number",
+                 "title" => "Bad number issue",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/bad",
+                 "labels" => [%{"name" => "status:in-progress"}],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_38" => %{
+                     "blockedBy" => %{
+                       "nodes" => [
+                         %{
+                           "number" => 34,
+                           "state" => "CLOSED",
+                           "labels" => %{"nodes" => [%{"name" => "status:review"}, %{}]}
+                         },
+                         %{
+                           "number" => 35,
+                           "state" => "OPEN",
+                           "labels" => %{"nodes" => "bad"}
+                         },
+                         %{
+                           "state" => "OPEN",
+                           "labels" => %{"nodes" => []}
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+      end
+    end
+
+    assert {:ok, [issue_38, issue_39, bad_number_issue]} =
+             Client.fetch_candidate_issues_for_test(request_fun)
+
+    assert issue_38.blocked_by == [
+             %{id: "34", identifier: "GH-34", state: "closed"},
+             %{id: "35", identifier: "GH-35", state: "open"}
+           ]
+
+    assert issue_39.blocked_by == []
+    assert bad_number_issue.blocked_by == []
+  end
+
+  test "fetch_candidate_issues_for_test surfaces native blocker GraphQL errors and malformed responses" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_active_states: ["status:in-progress"]
+    )
+
+    base_issue = [
+      %{
+        "id" => 380,
+        "number" => 38,
+        "title" => "Blocked issue",
+        "body" => "Body",
+        "state" => "open",
+        "html_url" => "https://github.com/acme/repo/issues/38",
+        "labels" => [%{"name" => "status:in-progress"}],
+        "assignees" => []
+      }
+    ]
+
+    graphql_error_request = fn method, url, _opts ->
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          {:ok, %{status: 200, body: base_issue}}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok, %{status: 200, body: %{"errors" => [%{"message" => "boom"}]}}}
+      end
+    end
+
+    assert {:error, {:github_graphql_errors, [%{"message" => "boom"}]}} =
+             Client.fetch_candidate_issues_for_test(graphql_error_request)
+
+    malformed_repository_request = fn method, url, _opts ->
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          {:ok, %{status: 200, body: base_issue}}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok, %{status: 200, body: %{"data" => %{"repository" => []}}}}
+      end
+    end
+
+    assert {:error, :github_graphql_malformed} =
+             Client.fetch_candidate_issues_for_test(malformed_repository_request)
+
+    malformed_data_request = fn method, url, _opts ->
+      case {method, url} do
+        {:get, "https://api.github.com/repos/acme/repo/issues"} ->
+          {:ok, %{status: 200, body: base_issue}}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok, %{status: 200, body: %{"data" => []}}}
+      end
+    end
+
+    assert {:error, :github_graphql_malformed} =
+             Client.fetch_candidate_issues_for_test(malformed_data_request)
   end
 
   test "graphql/3 uses github auth headers and surfaces status failures" do
@@ -442,22 +724,38 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     request_fun = fn method, url, opts ->
       send(self(), {:request, method, url, opts})
 
-      {:ok,
-       %{
-         status: 200,
-         body: [
+      case {method, url} do
+        {:get, "https://ghe.example.com/api/v3/repos/acme/repo/issues"} ->
+          {:ok,
            %{
-             "id" => 111,
-             "number" => 7,
-             "title" => "Ready issue",
-             "body" => "body",
-             "state" => "open",
-             "html_url" => "https://ghe.example.com/acme/repo/issues/7",
-             "labels" => [%{"name" => "status:ready"}],
-             "assignees" => []
-           }
-         ]
-       }}
+             status: 200,
+             body: [
+               %{
+                 "id" => 111,
+                 "number" => 7,
+                 "title" => "Ready issue",
+                 "body" => "body",
+                 "state" => "open",
+                 "html_url" => "https://ghe.example.com/acme/repo/issues/7",
+                 "labels" => [%{"name" => "status:ready"}],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        {:post, "https://ghe.example.com/api/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_7" => %{"blockedBy" => %{"nodes" => []}}
+                 }
+               }
+             }
+           }}
+      end
     end
 
     assert {:ok, [%Issue{id: "7", number: 7, state: "status:ready"}]} =
@@ -750,25 +1048,41 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, []} = Client.fetch_issues_by_states_for_test([], fn _method, _url, _opts -> flunk("no request expected") end)
 
-    request_fun = fn :get, _url, opts ->
-      state_label = Keyword.fetch!(opts, :params)[:labels]
+    request_fun = fn method, url, opts ->
+      case {method, url} do
+        {:get, _issues_url} ->
+          state_label = Keyword.fetch!(opts, :params)[:labels]
 
-      {:ok,
-       %{
-         status: 200,
-         body: [
+          {:ok,
            %{
-             "id" => 111,
-             "number" => 11,
-             "title" => "Shared issue #{state_label}",
-             "body" => "Body",
-             "state" => "open",
-             "html_url" => "https://github.com/acme/repo/issues/11",
-             "labels" => [%{"name" => "status:in-progress"}],
-             "assignees" => []
-           }
-         ]
-       }}
+             status: 200,
+             body: [
+               %{
+                 "id" => 111,
+                 "number" => 11,
+                 "title" => "Shared issue #{state_label}",
+                 "body" => "Body",
+                 "state" => "open",
+                 "html_url" => "https://github.com/acme/repo/issues/11",
+                 "labels" => [%{"name" => "status:in-progress"}],
+                 "assignees" => []
+               }
+             ]
+           }}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_11" => %{"blockedBy" => %{"nodes" => []}}
+                 }
+               }
+             }
+           }}
+      end
     end
 
     assert {:ok, [%Issue{id: "11"}]} =
@@ -783,42 +1097,59 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_api_token: "gh-token"
     )
 
-    request_fun = fn :get, _url, opts ->
-      params = Keyword.fetch!(opts, :params)
-      send(self(), {:params, params})
+    request_fun = fn method, url, opts ->
+      case {method, url} do
+        {:get, _issues_url} ->
+          params = Keyword.fetch!(opts, :params)
+          send(self(), {:params, params})
 
-      body =
-        case params[:state] do
-          "closed" ->
-            [
-              %{
-                "id" => 222,
-                "number" => 22,
-                "title" => "Closed issue",
-                "body" => "Done",
-                "state" => "closed",
-                "html_url" => "https://github.com/acme/repo/issues/22",
-                "labels" => [%{"name" => "status:in-progress"}],
-                "assignees" => []
-              }
-            ]
+          body =
+            case params[:state] do
+              "closed" ->
+                [
+                  %{
+                    "id" => 222,
+                    "number" => 22,
+                    "title" => "Closed issue",
+                    "body" => "Done",
+                    "state" => "closed",
+                    "html_url" => "https://github.com/acme/repo/issues/22",
+                    "labels" => [%{"name" => "status:in-progress"}],
+                    "assignees" => []
+                  }
+                ]
 
-          "open" ->
-            [
-              %{
-                "id" => 333,
-                "number" => 33,
-                "title" => "Open issue",
-                "body" => "Todo",
-                "state" => "open",
-                "html_url" => "https://github.com/acme/repo/issues/33",
-                "labels" => [],
-                "assignees" => []
-              }
-            ]
-        end
+              "open" ->
+                [
+                  %{
+                    "id" => 333,
+                    "number" => 33,
+                    "title" => "Open issue",
+                    "body" => "Todo",
+                    "state" => "open",
+                    "html_url" => "https://github.com/acme/repo/issues/33",
+                    "labels" => [],
+                    "assignees" => []
+                  }
+                ]
+            end
 
-      {:ok, %{status: 200, body: body}}
+          {:ok, %{status: 200, body: body}}
+
+        {:post, "https://api.github.com/graphql"} ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "issue_22" => %{"blockedBy" => %{"nodes" => []}},
+                   "issue_33" => %{"blockedBy" => %{"nodes" => []}}
+                 }
+               }
+             }
+           }}
+      end
     end
 
     assert {:ok, [%Issue{id: "22", state: "closed"}, %Issue{id: "33", state: "open"}]} =
@@ -867,28 +1198,44 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       tracker_api_token: "gh-token"
     )
 
-    request_fun = fn :get, url, _opts ->
-      number = url |> String.split("/") |> List.last() |> String.to_integer()
+    request_fun = fn method, url, _opts ->
+      case {method, url} do
+        {:get, _issue_url} ->
+          number = url |> String.split("/") |> List.last() |> String.to_integer()
 
-      case number do
-        5 ->
+          case number do
+            5 ->
+              {:ok,
+               %{
+                 status: 200,
+                 body: %{
+                   "id" => 5005,
+                   "number" => 5,
+                   "title" => "Issue 5",
+                   "body" => "Body",
+                   "state" => "open",
+                   "html_url" => "https://github.com/acme/repo/issues/5",
+                   "labels" => [%{"name" => "status:review"}],
+                   "assignees" => []
+                 }
+               }}
+
+            9 ->
+              {:ok, %{status: 404, body: %{}}}
+          end
+
+        {:post, "https://api.github.com/graphql"} ->
           {:ok,
            %{
              status: 200,
              body: %{
-               "id" => 5005,
-               "number" => 5,
-               "title" => "Issue 5",
-               "body" => "Body",
-               "state" => "open",
-               "html_url" => "https://github.com/acme/repo/issues/5",
-               "labels" => [%{"name" => "status:review"}],
-               "assignees" => []
+               "data" => %{
+                 "repository" => %{
+                   "issue_5" => %{"blockedBy" => %{"nodes" => []}}
+                 }
+               }
              }
            }}
-
-        9 ->
-          {:ok, %{status: 404, body: %{}}}
       end
     end
 
