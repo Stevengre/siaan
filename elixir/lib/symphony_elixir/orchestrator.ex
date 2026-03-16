@@ -147,7 +147,8 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 delay_type: :continuation,
                 worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
+                workspace_path: Map.get(running_entry, :workspace_path),
+                transition: "retry_continuation"
               })
 
             _ ->
@@ -159,7 +160,8 @@ defmodule SymphonyElixir.Orchestrator do
                 identifier: running_entry.identifier,
                 error: "agent exited: #{inspect(reason)}",
                 worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
+                workspace_path: Map.get(running_entry, :workspace_path),
+                transition: "retry_continuation"
               })
           end
 
@@ -386,8 +388,33 @@ defmodule SymphonyElixir.Orchestrator do
   defp watched_issue_merge_candidate?(_issue), do: false
 
   defp dispatch_watched_issue(issue, reasons) do
-    case Tracker.update_issue_state(issue.id, "status:in-progress") do
+    dispatch_watched_issue(
+      issue,
+      reasons,
+      &Tracker.update_issue_state/2,
+      &SessionStats.mark_pending_transition/3
+    )
+  end
+
+  defp dispatch_watched_issue(
+         issue,
+         reasons,
+         update_issue_state_fun,
+         mark_pending_transition_fun
+       )
+       when is_function(update_issue_state_fun, 2) and is_function(mark_pending_transition_fun, 3) do
+    case update_issue_state_fun.(issue.id, "status:in-progress") do
       :ok ->
+        case mark_pending_transition_fun.(issue.id, issue.identifier, "review_to_in_progress") do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Unable to persist pending transition for #{issue_context(issue)} transition=review_to_in_progress: #{inspect(reason)}")
+
+            :ok
+        end
+
         Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress (#{Enum.join(reasons, ", ")})")
 
       {:error, err} ->
@@ -473,6 +500,50 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_retry_issue_for_test(%State{} = state, issue_id, attempt, metadata)
       when is_binary(issue_id) and is_integer(attempt) and attempt >= 0 and is_map(metadata) do
     handle_retry_issue(state, issue_id, attempt, metadata)
+  end
+
+  @doc false
+  @spec resolve_dispatch_profile_for_test(Issue.t(), String.t()) :: map()
+  def resolve_dispatch_profile_for_test(%Issue{} = issue, transition_name)
+      when is_binary(transition_name) do
+    resolve_dispatch_profile(issue, transition_name)
+  end
+
+  @spec resolve_dispatch_transition_for_test(Issue.t(), String.t() | nil) :: String.t()
+  def resolve_dispatch_transition_for_test(%Issue{} = issue, transition_name) do
+    resolve_dispatch_transition(issue, transition_name)
+  end
+
+  @doc false
+  @spec persist_issue_session_for_test(map(), Issue.t(), String.t() | nil, map() | nil) :: :ok
+  def persist_issue_session_for_test(running_entry, %Issue{} = issue, worker_host, dispatch_profile)
+      when is_map(running_entry) and (is_map(dispatch_profile) or is_nil(dispatch_profile)) do
+    record_issue_session(running_entry, issue, worker_host, dispatch_profile)
+  end
+
+  @doc false
+  @spec record_session_completion_totals_for_test(State.t(), map(), String.t()) :: State.t()
+  def record_session_completion_totals_for_test(%State{} = state, running_entry, result)
+      when is_map(running_entry) and is_binary(result) do
+    record_session_completion_totals(state, running_entry, result)
+  end
+
+  @doc false
+  @spec dispatch_watched_issue_for_test(
+          Issue.t(),
+          [String.t()],
+          (String.t(), String.t() -> term()),
+          (String.t(), String.t() | nil, String.t() -> term())
+        ) :: :ok | {:error, term()}
+  def dispatch_watched_issue_for_test(
+        %Issue{} = issue,
+        reasons,
+        update_issue_state_fun,
+        mark_pending_transition_fun
+      )
+      when is_list(reasons) and is_function(update_issue_state_fun, 2) and
+             is_function(mark_pending_transition_fun, 3) do
+    dispatch_watched_issue(issue, reasons, update_issue_state_fun, mark_pending_transition_fun)
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
@@ -621,7 +692,8 @@ defmodule SymphonyElixir.Orchestrator do
       |> terminate_running_issue(issue_id, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
-        error: "stalled for #{elapsed_ms}ms without codex activity"
+        error: "stalled for #{elapsed_ms}ms without codex activity",
+        transition: "stall_recovery"
       })
     else
       state
@@ -813,12 +885,20 @@ defmodule SymphonyElixir.Orchestrator do
     |> MapSet.new()
   end
 
-  defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
+  defp dispatch_issue(
+         %State{} = state,
+         issue,
+         attempt \\ nil,
+         preferred_worker_host \\ nil,
+         transition_name \\ nil
+       ) do
     case revalidate_issue_for_dispatch(issue, &Tracker.fetch_issue_states_by_ids/1, terminal_state_set()) do
       {:ok, %Issue{} = refreshed_issue} ->
+        dispatch_transition = resolve_dispatch_transition(refreshed_issue, transition_name)
+
         case transition_issue_for_dispatch(refreshed_issue, &Tracker.update_issue_state/2) do
           {:ok, %Issue{} = dispatch_issue} ->
-            do_dispatch_issue(state, dispatch_issue, attempt, preferred_worker_host)
+            do_dispatch_issue(state, dispatch_issue, attempt, preferred_worker_host, dispatch_transition)
 
           {:error, reason} ->
             Logger.warning("Skipping dispatch; issue state transition failed for #{issue_context(refreshed_issue)}: #{inspect(reason)}")
@@ -840,8 +920,9 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
+  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host, transition_name) do
     recipient = self()
+    dispatch_profile = resolve_dispatch_profile(issue, transition_name)
 
     case select_worker_host(state, preferred_worker_host) do
       :no_worker_capacity ->
@@ -849,45 +930,67 @@ defmodule SymphonyElixir.Orchestrator do
         state
 
       worker_host ->
-        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
+        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host, dispatch_profile)
     end
   end
 
-  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
+  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host, dispatch_profile) do
+    agent_opts = [
+      attempt: attempt,
+      worker_host: worker_host,
+      codex_command: dispatch_profile.codex_command,
+      issue_turn_count: dispatch_profile.issue_turn_count
+    ]
+
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           AgentRunner.run(issue, recipient, agent_opts)
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+        Logger.info(
+          "Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"} execution_profile=#{dispatch_profile.profile_name} transition=#{dispatch_profile.transition_name} reuse=#{dispatch_profile.session_reuse_decision}"
+        )
+
+        running_entry = %{
+          issue_id: issue.id,
+          pid: pid,
+          ref: ref,
+          identifier: issue.identifier,
+          issue: issue,
+          worker_host: worker_host,
+          workspace_path: nil,
+          session_id: nil,
+          issue_session_id: dispatch_profile.issue_session_id,
+          execution_profile: dispatch_profile.profile_name,
+          execution_transition: dispatch_profile.transition_name,
+          session_reuse_policy: dispatch_profile.session_reuse_policy,
+          session_reuse_decision: dispatch_profile.session_reuse_decision,
+          codex_command: dispatch_profile.codex_command,
+          codex_thread_id: dispatch_profile.codex_thread_id,
+          physical_session_count: dispatch_profile.physical_session_count,
+          issue_session_turn_count: dispatch_profile.issue_turn_count,
+          last_codex_message: nil,
+          last_codex_timestamp: nil,
+          last_codex_event: nil,
+          codex_app_server_pid: nil,
+          codex_input_tokens: 0,
+          codex_output_tokens: 0,
+          codex_total_tokens: 0,
+          codex_last_reported_input_tokens: 0,
+          codex_last_reported_output_tokens: 0,
+          codex_last_reported_total_tokens: 0,
+          turn_count: 0,
+          retry_attempt: normalize_retry_attempt(attempt),
+          siaan_version: SessionStats.app_version(),
+          codex_model: SessionStats.configured_model(dispatch_profile.codex_command),
+          started_at: DateTime.utc_now()
+        }
+
+        :ok = record_issue_session(running_entry, issue, worker_host, dispatch_profile)
 
         running =
-          Map.put(state.running, issue.id, %{
-            issue_id: issue.id,
-            pid: pid,
-            ref: ref,
-            identifier: issue.identifier,
-            issue: issue,
-            worker_host: worker_host,
-            workspace_path: nil,
-            session_id: nil,
-            last_codex_message: nil,
-            last_codex_timestamp: nil,
-            last_codex_event: nil,
-            codex_app_server_pid: nil,
-            codex_input_tokens: 0,
-            codex_output_tokens: 0,
-            codex_total_tokens: 0,
-            codex_last_reported_input_tokens: 0,
-            codex_last_reported_output_tokens: 0,
-            codex_last_reported_total_tokens: 0,
-            turn_count: 0,
-            retry_attempt: normalize_retry_attempt(attempt),
-            siaan_version: SessionStats.app_version(),
-            codex_model: SessionStats.configured_model(),
-            started_at: DateTime.utc_now()
-          })
+          Map.put(state.running, issue.id, running_entry)
 
         %{
           state
@@ -903,9 +1006,220 @@ defmodule SymphonyElixir.Orchestrator do
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
           error: "failed to spawn agent: #{inspect(reason)}",
-          worker_host: worker_host
+          worker_host: worker_host,
+          transition: dispatch_profile.transition_name
         })
     end
+  end
+
+  defp resolve_dispatch_transition(%Issue{state: issue_state} = issue, explicit_transition)
+       when is_binary(issue_state) do
+    cond do
+      normalize_issue_state(issue_state) == "status:ready" ->
+        "ready_to_in_progress"
+
+      is_binary(explicit_transition) and String.trim(explicit_transition) != "" ->
+        String.trim(explicit_transition)
+
+      true ->
+        SessionStats.consume_pending_transition(issue.id) || "resume_in_progress"
+    end
+  end
+
+  defp resolve_dispatch_transition(_issue, explicit_transition) when is_binary(explicit_transition) do
+    case String.trim(explicit_transition) do
+      "" -> "resume_in_progress"
+      trimmed -> trimmed
+    end
+  end
+
+  defp resolve_dispatch_transition(_issue, _explicit_transition), do: "resume_in_progress"
+
+  defp resolve_dispatch_profile(%Issue{} = issue, transition_name) do
+    existing_issue_session = SessionStats.load_issue_session(issue.id)
+    default_profile_name = default_profile_name_for_transition(transition_name, existing_issue_session)
+    profile_name = pick_profile_name(existing_issue_session, transition_name, default_profile_name)
+    profile = Config.execution_profile(profile_name)
+
+    issue_session =
+      build_issue_session(
+        issue,
+        existing_issue_session,
+        profile_name,
+        profile,
+        transition_name
+      )
+
+    %{
+      transition_name: transition_name,
+      profile_name: profile_name,
+      session_reuse_policy: profile.session_reuse,
+      session_reuse_decision: issue_session["session_reuse_decision"],
+      issue_session_id: issue_session["issue_session_id"],
+      issue_turn_count: Map.get(issue_session, "issue_session_turn_count", 0),
+      physical_session_count: Map.get(issue_session, "physical_session_count", 0),
+      codex_thread_id: Map.get(issue_session, "physical_session_id"),
+      codex_command: profile.codex_command,
+      issue_session: issue_session
+    }
+  end
+
+  defp default_profile_name_for_transition("review_to_in_progress", _issue_session),
+    do: "review_to_in_progress"
+
+  defp default_profile_name_for_transition(_transition_name, %{"execution_profile" => profile_name})
+       when is_binary(profile_name) and profile_name != "",
+       do: profile_name
+
+  defp default_profile_name_for_transition(_transition_name, _issue_session),
+    do: "ready_to_in_progress"
+
+  defp pick_profile_name(issue_session, transition_name, default_profile_name) do
+    case {transition_name, issue_session} do
+      {"review_to_in_progress", _} ->
+        "review_to_in_progress"
+
+      {"ready_to_in_progress", _} ->
+        "ready_to_in_progress"
+
+      {transition, %{"execution_profile" => profile_name}}
+      when transition in ["retry_continuation", "stall_recovery", "resume_in_progress"] and
+             is_binary(profile_name) and profile_name != "" ->
+        profile_name
+
+      _ ->
+        default_profile_name
+    end
+  end
+
+  defp build_issue_session(issue, existing_issue_session, profile_name, profile, transition_name) do
+    reuse_existing? =
+      profile.session_reuse == "reuse_issue_session" and is_map(existing_issue_session) and
+        transition_name != "ready_to_in_progress"
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+    {base_session, session_reuse_decision} =
+      if reuse_existing? do
+        initialize_issue_session(existing_issue_session, issue.id)
+      else
+        {new_issue_session(issue.id), "started_new_issue_session"}
+      end
+
+    Map.merge(base_session, %{
+      "issue_id" => issue.id,
+      "issue_identifier" => issue.identifier,
+      "execution_profile" => profile_name,
+      "execution_transition" => transition_name,
+      "session_reuse_policy" => profile.session_reuse,
+      "session_reuse_decision" => session_reuse_decision,
+      "codex_command" => profile.codex_command,
+      "model" => SessionStats.configured_model(profile.codex_command),
+      "updated_at" => now,
+      "created_at" => Map.get(base_session, "created_at", now)
+    })
+    |> Map.delete("pending_transition")
+  end
+
+  defp initialize_issue_session(existing_issue_session, issue_id) when is_map(existing_issue_session) do
+    existing_issue_session_id = normalized_issue_session_id(existing_issue_session["issue_session_id"])
+
+    session_reuse_decision =
+      if is_binary(existing_issue_session_id) do
+        "reused_issue_session"
+      else
+        "started_new_issue_session"
+      end
+
+    issue_session =
+      existing_issue_session
+      |> Map.put("issue_session_id", existing_issue_session_id || issue_session_id(issue_id))
+      |> Map.put_new("issue_session_turn_count", 0)
+      |> Map.put_new("physical_session_count", 0)
+
+    {issue_session, session_reuse_decision}
+  end
+
+  defp new_issue_session(issue_id) when is_binary(issue_id) do
+    %{
+      "issue_session_id" => issue_session_id(issue_id),
+      "issue_session_turn_count" => 0,
+      "physical_session_count" => 0
+    }
+  end
+
+  defp normalized_issue_session_id(issue_session_id) when is_binary(issue_session_id) do
+    case String.trim(issue_session_id) do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  defp normalized_issue_session_id(_issue_session_id), do: nil
+
+  defp record_issue_session(running_entry, issue, worker_host, dispatch_profile) do
+    case persist_issue_session(running_entry, issue, worker_host, dispatch_profile) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Unable to persist issue session for #{issue_context(issue)} transition=#{Map.get(running_entry, :execution_transition)} worker_host=#{worker_host || Map.get(running_entry, :worker_host) || "local"}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  defp persist_issue_session(running_entry, issue, worker_host, dispatch_profile) do
+    issue_session =
+      if is_map(dispatch_profile) do
+        dispatch_profile.issue_session
+      else
+        SessionStats.load_issue_session(Map.get(running_entry, :issue_id)) || %{}
+      end
+
+    issue_identifier =
+      case issue do
+        %Issue{identifier: identifier} -> identifier
+        _ -> Map.get(running_entry, :identifier)
+      end
+
+    issue_id =
+      case issue do
+        %Issue{id: issue_id} -> issue_id
+        _ -> Map.get(running_entry, :issue_id)
+      end
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+    issue_session
+    |> Map.merge(%{
+      "issue_id" => issue_id,
+      "issue_identifier" => issue_identifier,
+      "issue_session_id" => Map.get(running_entry, :issue_session_id),
+      "execution_profile" => Map.get(running_entry, :execution_profile),
+      "execution_transition" => Map.get(running_entry, :execution_transition),
+      "session_reuse_policy" => Map.get(running_entry, :session_reuse_policy),
+      "session_reuse_decision" => Map.get(running_entry, :session_reuse_decision),
+      "codex_command" => Map.get(running_entry, :codex_command),
+      "model" => Map.get(running_entry, :codex_model),
+      "issue_session_turn_count" => Map.get(running_entry, :issue_session_turn_count, 0),
+      "physical_session_count" => Map.get(running_entry, :physical_session_count, 0),
+      "physical_session_id" => Map.get(running_entry, :codex_thread_id),
+      "last_session_id" => Map.get(running_entry, :session_id),
+      "last_worker_host" => worker_host || Map.get(running_entry, :worker_host),
+      "last_workspace_path" => Map.get(running_entry, :workspace_path),
+      "updated_at" => now,
+      "created_at" => Map.get(issue_session, "created_at", now)
+    })
+    |> Map.delete("pending_transition")
+    |> SessionStats.save_issue_session()
+  end
+
+  defp issue_session_id(issue_id) do
+    suffix = System.unique_integer([:positive, :monotonic])
+    "issue-session-#{issue_id}-#{suffix}"
   end
 
   defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, terminal_states)
@@ -968,6 +1282,7 @@ defmodule SymphonyElixir.Orchestrator do
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
     delay_type = pick_retry_delay_type(previous_retry, metadata)
+    transition = pick_retry_transition(previous_retry, metadata)
 
     if is_reference(old_timer) do
       Process.cancel_timer(old_timer)
@@ -991,7 +1306,8 @@ defmodule SymphonyElixir.Orchestrator do
             error: error,
             worker_host: worker_host,
             workspace_path: workspace_path,
-            delay_type: delay_type
+            delay_type: delay_type,
+            transition: transition
           })
     }
   end
@@ -1004,7 +1320,8 @@ defmodule SymphonyElixir.Orchestrator do
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
           workspace_path: Map.get(retry_entry, :workspace_path),
-          delay_type: Map.get(retry_entry, :delay_type)
+          delay_type: Map.get(retry_entry, :delay_type),
+          transition: Map.get(retry_entry, :transition)
         }
 
         {:ok, attempt, metadata, %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}}
@@ -1092,7 +1409,7 @@ defmodule SymphonyElixir.Orchestrator do
     if retry_candidate_issue?(issue, terminal_state_set()) and
          dispatch_slots_available?(issue, state) and
          worker_slots_available?(state, metadata[:worker_host]) do
-      {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host])}
+      {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host], metadata[:transition])}
     else
       Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
 
@@ -1154,6 +1471,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pick_retry_delay_type(previous_retry, metadata) do
     metadata[:delay_type] || Map.get(previous_retry, :delay_type)
+  end
+
+  defp pick_retry_transition(previous_retry, metadata) do
+    metadata[:transition] || Map.get(previous_retry, :transition)
   end
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
@@ -1307,6 +1628,14 @@ defmodule SymphonyElixir.Orchestrator do
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: metadata.session_id,
+          issue_session_id: stats.issue_session_id,
+          execution_profile: stats.execution_profile,
+          execution_transition: stats.execution_transition,
+          session_reuse_policy: stats.session_reuse_policy,
+          session_reuse_decision: stats.session_reuse_decision,
+          physical_session_id: stats.physical_session_id,
+          physical_session_count: stats.physical_session_count,
+          issue_session_turn_count: stats.issue_session_turn_count,
           siaan_version: stats.siaan_version,
           codex_model: stats.model,
           repo_head_sha: stats.repo_head_sha,
@@ -1390,6 +1719,7 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_timestamp: timestamp,
         last_codex_message: summarize_codex_update(update),
         session_id: session_id_for_update(running_entry.session_id, update),
+        codex_thread_id: physical_session_id_for_update(Map.get(running_entry, :codex_thread_id), update),
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
@@ -1398,7 +1728,19 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
-        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
+        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
+        issue_session_turn_count:
+          turn_count_for_update(
+            Map.get(running_entry, :issue_session_turn_count, 0),
+            running_entry.session_id,
+            update
+          ),
+        physical_session_count:
+          physical_session_count_for_update(
+            Map.get(running_entry, :physical_session_count, 0),
+            Map.get(running_entry, :codex_thread_id),
+            update
+          )
       }),
       token_delta
     }
@@ -1422,6 +1764,11 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp session_id_for_update(existing, _update), do: existing
 
+  defp physical_session_id_for_update(_existing, %{thread_id: thread_id}) when is_binary(thread_id),
+    do: thread_id
+
+  defp physical_session_id_for_update(existing, _update), do: existing
+
   defp turn_count_for_update(existing_count, existing_session_id, %{
          event: :session_started,
          session_id: session_id
@@ -1439,6 +1786,24 @@ defmodule SymphonyElixir.Orchestrator do
        do: existing_count
 
   defp turn_count_for_update(_existing_count, _existing_session_id, _update), do: 0
+
+  defp physical_session_count_for_update(existing_count, existing_thread_id, %{
+         event: :session_started,
+         thread_id: thread_id
+       })
+       when is_integer(existing_count) and is_binary(thread_id) do
+    if thread_id == existing_thread_id do
+      existing_count
+    else
+      existing_count + 1
+    end
+  end
+
+  defp physical_session_count_for_update(existing_count, _existing_thread_id, _update)
+       when is_integer(existing_count),
+       do: existing_count
+
+  defp physical_session_count_for_update(_existing_count, _existing_thread_id, _update), do: 0
 
   defp summarize_codex_update(update) do
     %{
@@ -1482,6 +1847,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_session_completion_totals(state, running_entry, result) when is_map(running_entry) do
     runtime_seconds = running_seconds(running_entry.started_at, DateTime.utc_now())
     completed_record = SessionStats.build_completed_record(running_entry, result)
+
+    :ok =
+      record_issue_session(
+        running_entry,
+        Map.get(running_entry, :issue),
+        Map.get(running_entry, :worker_host),
+        nil
+      )
 
     codex_totals =
       apply_token_delta(

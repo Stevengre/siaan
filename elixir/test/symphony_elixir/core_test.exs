@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.Schema, as: ConfigSchema
+
   defmodule RetryLookupGitHubClient do
     alias SymphonyElixir.GitHub.Issue
 
@@ -67,6 +69,138 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), max_turns: 5)
     assert Config.settings!().agent.max_turns == 5
+
+    assert Config.execution_profile("ready_to_in_progress") == %{
+             name: "ready_to_in_progress",
+             session_reuse: "new_issue_session",
+             codex_command: "codex app-server"
+           }
+
+    assert Config.execution_profile("review_to_in_progress") == %{
+             name: "review_to_in_progress",
+             session_reuse: "reuse_issue_session",
+             codex_command: "codex app-server"
+           }
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        " Review_To_In_Progress " => %{
+          "session_reuse" => " reuse_issue_session ",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    assert Config.execution_profile("review_to_in_progress") == %{
+             name: "review_to_in_progress",
+             session_reuse: "reuse_issue_session",
+             codex_command: "codex --model gpt-5.3-spark app-server"
+           }
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "   "
+        }
+      }
+    )
+
+    assert Config.execution_profile("review_to_in_progress") == %{
+             name: "review_to_in_progress",
+             session_reuse: "reuse_issue_session",
+             codex_command: "codex app-server"
+           }
+
+    write_workflow_file!(Workflow.workflow_file_path(), execution_profiles: nil)
+
+    assert Config.execution_profile("ready_to_in_progress") == %{
+             name: "ready_to_in_progress",
+             session_reuse: "new_issue_session",
+             codex_command: "codex app-server"
+           }
+
+    assert {:ok, parsed_config} =
+             ConfigSchema.parse(%{
+               "agent" => %{"execution_profiles" => nil}
+             })
+
+    assert parsed_config.agent.execution_profiles["ready_to_in_progress"]["session_reuse"] ==
+             "new_issue_session"
+
+    assert {:ok, parsed_config} =
+             ConfigSchema.parse(%{
+               "agent" => %{
+                 "execution_profiles" => %{
+                   123 => %{"session_reuse" => "new_issue_session"}
+                 }
+               }
+             })
+
+    assert parsed_config.agent.execution_profiles["123"]["session_reuse"] == "new_issue_session"
+
+    write_workflow_file!(Workflow.workflow_file_path(), execution_profiles: "invalid")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => "invalid"
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "profiles must be maps"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => %{"session_reuse" => "invalid"}
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "session_reuse"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => %{
+          "session_reuse" => "   ",
+          "codex_command" => "codex app-server"
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "session_reuse"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => %{
+          "session_reuse" => 123,
+          "codex_command" => "codex app-server"
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "session_reuse"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      execution_profiles: %{
+        "ready_to_in_progress" => %{
+          "session_reuse" => "new_issue_session",
+          "codex_command" => 123
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "execution_profiles"
+    assert message =~ "codex_command"
 
     write_workflow_file!(Workflow.workflow_file_path(), allowlist: ["Stevengre", "chatgpt-codex-connector[bot]"])
     assert Config.settings!().allowlist == ["Stevengre", "chatgpt-codex-connector[bot]"]

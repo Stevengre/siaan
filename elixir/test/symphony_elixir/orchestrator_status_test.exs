@@ -60,6 +60,328 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert_receive {:update_issue_state_called, "issue-ready-dispatch-error", "status:in-progress"}
   end
 
+  test "dispatch profile defaults start new issue sessions for ready transitions" do
+    configure_execution_profile_workspace!()
+
+    issue = %Issue{
+      id: "issue-ready-profile",
+      identifier: "GH-502",
+      title: "Ready profile selection",
+      description: "Create a new issue session",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-502"
+    }
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "ready_to_in_progress")
+
+    assert profile.profile_name == "ready_to_in_progress"
+    assert profile.session_reuse_policy == "new_issue_session"
+    assert profile.session_reuse_decision == "started_new_issue_session"
+    assert profile.issue_turn_count == 0
+    assert profile.physical_session_count == 0
+    assert profile.codex_command == "codex app-server"
+    assert is_binary(profile.issue_session_id)
+    assert profile.issue_session_id != "existing-issue-session"
+  end
+
+  test "ready-state dispatch transition overrides queued retry metadata" do
+    issue = %Issue{
+      id: "issue-ready-retry-override",
+      identifier: "GH-502A",
+      title: "Ready transition precedence",
+      description: "Fresh ready cycles must win over stale retry metadata",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-502A"
+    }
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, "retry_continuation") ==
+             "ready_to_in_progress"
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, "stall_recovery") ==
+             "ready_to_in_progress"
+  end
+
+  test "review re-entry dispatch profile reuses the existing issue session and command override" do
+    configure_execution_profile_workspace!(
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    issue = %Issue{
+      id: "issue-review-profile",
+      identifier: "GH-503",
+      title: "Review profile selection",
+      description: "Reuse the issue session on re-entry",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.save_issue_session(%{
+               "issue_id" => issue.id,
+               "issue_identifier" => issue.identifier,
+               "issue_session_id" => "existing-issue-session",
+               "execution_profile" => "ready_to_in_progress",
+               "execution_transition" => "ready_to_in_progress",
+               "session_reuse_policy" => "new_issue_session",
+               "session_reuse_decision" => "started_new_issue_session",
+               "codex_command" => "codex app-server",
+               "model" => "gpt-5.3-codex",
+               "issue_session_turn_count" => 3,
+               "physical_session_count" => 1,
+               "physical_session_id" => "thread-existing"
+             })
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "review_to_in_progress")
+
+    assert profile.profile_name == "review_to_in_progress"
+    assert profile.session_reuse_policy == "reuse_issue_session"
+    assert profile.session_reuse_decision == "reused_issue_session"
+    assert profile.issue_session_id == "existing-issue-session"
+    assert profile.issue_turn_count == 3
+    assert profile.physical_session_count == 1
+    assert profile.codex_thread_id == "thread-existing"
+    assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
+  end
+
+  test "review re-entry initializes placeholder issue sessions with a logical session id" do
+    configure_execution_profile_workspace!()
+
+    issue = %Issue{
+      id: "issue-review-placeholder",
+      identifier: "GH-503A",
+      title: "Review profile placeholder selection",
+      description: "Initialize a logical issue session when only a pending transition exists",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503A"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.mark_pending_transition(
+               issue.id,
+               issue.identifier,
+               "review_to_in_progress"
+             )
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "review_to_in_progress")
+
+    assert profile.profile_name == "review_to_in_progress"
+    assert profile.session_reuse_policy == "reuse_issue_session"
+    assert profile.session_reuse_decision == "started_new_issue_session"
+    assert is_binary(profile.issue_session_id)
+    assert profile.issue_session_id != ""
+    assert profile.issue_turn_count == 0
+    assert profile.physical_session_count == 0
+  end
+
+  test "watched review re-entry keeps running when pending-transition persistence fails" do
+    issue = %Issue{
+      id: "issue-watch-persist-warning",
+      identifier: "GH-503AA",
+      title: "Watch transition warning",
+      description: "Do not crash watch-state re-entry when pending-transition persistence fails",
+      state: "status:review",
+      url: "https://example.org/issues/GH-503AA"
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 Orchestrator.dispatch_watched_issue_for_test(
+                   issue,
+                   ["ci failed"],
+                   fn issue_id, state_name ->
+                     send(self(), {:update_issue_state_called, issue_id, state_name})
+                     :ok
+                   end,
+                   fn issue_id, identifier, transition ->
+                     send(self(), {:mark_pending_transition_called, issue_id, identifier, transition})
+                     {:error, :disk_full}
+                   end
+                 )
+      end)
+
+    assert_receive {:update_issue_state_called, "issue-watch-persist-warning", "status:in-progress"}
+
+    assert_receive {:mark_pending_transition_called, "issue-watch-persist-warning", "GH-503AA", "review_to_in_progress"}
+
+    assert log =~ "Unable to persist pending transition for issue_id=issue-watch-persist-warning issue_identifier=GH-503AA"
+    assert log =~ "Watch state transition complete: issue_id=issue-watch-persist-warning issue_identifier=GH-503AA -> status:in-progress"
+  end
+
+  test "dispatch keeps running when issue-session persistence fails" do
+    workspace_root = tmp_dir!("orchestrator-issue-session-persist-failure")
+    blocking_path = Path.join(workspace_root, "not-a-directory")
+
+    File.mkdir_p!(workspace_root)
+    File.write!(blocking_path, "file")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+
+    issue = %Issue{
+      id: "issue-persist-warning",
+      identifier: "GH-503B",
+      title: "Persist failure warning",
+      description: "Do not crash dispatch when issue-session persistence fails",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-503B"
+    }
+
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "ready_to_in_progress")
+
+    running_entry = %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      worker_host: nil,
+      issue_session_id: profile.issue_session_id,
+      execution_profile: profile.profile_name,
+      execution_transition: profile.transition_name,
+      session_reuse_policy: profile.session_reuse_policy,
+      session_reuse_decision: profile.session_reuse_decision,
+      codex_command: profile.codex_command,
+      codex_model: SymphonyElixir.SessionStats.configured_model(profile.codex_command),
+      issue_session_turn_count: profile.issue_turn_count,
+      physical_session_count: profile.physical_session_count,
+      codex_thread_id: profile.codex_thread_id
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 Orchestrator.persist_issue_session_for_test(
+                   running_entry,
+                   issue,
+                   nil,
+                   profile
+                 )
+      end)
+
+    assert log =~ "Unable to persist issue session for issue_id=issue-persist-warning issue_identifier=GH-503B"
+  end
+
+  test "retry and stall continuity inherit the persisted issue-session profile" do
+    configure_execution_profile_workspace!(
+      execution_profiles: %{
+        "review_to_in_progress" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    issue = %Issue{
+      id: "issue-retry-profile",
+      identifier: "GH-504",
+      title: "Retry profile continuity",
+      description: "Keep the same lifecycle profile across retries",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-504"
+    }
+
+    assert :ok =
+             SymphonyElixir.SessionStats.save_issue_session(%{
+               "issue_id" => issue.id,
+               "issue_identifier" => issue.identifier,
+               "issue_session_id" => "issue-session-retry",
+               "execution_profile" => "review_to_in_progress",
+               "execution_transition" => "review_to_in_progress",
+               "session_reuse_policy" => "reuse_issue_session",
+               "session_reuse_decision" => "reused_issue_session",
+               "codex_command" => "codex --model gpt-5.3-spark app-server",
+               "model" => "gpt-5.3-spark",
+               "issue_session_turn_count" => 4,
+               "physical_session_count" => 2,
+               "physical_session_id" => "thread-review"
+             })
+
+    retry_profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "retry_continuation")
+    stall_profile = Orchestrator.resolve_dispatch_profile_for_test(issue, "stall_recovery")
+
+    assert retry_profile.profile_name == "review_to_in_progress"
+    assert retry_profile.issue_session_id == "issue-session-retry"
+    assert retry_profile.session_reuse_decision == "reused_issue_session"
+    assert retry_profile.issue_turn_count == 4
+    assert retry_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+
+    assert stall_profile.profile_name == "review_to_in_progress"
+    assert stall_profile.issue_session_id == "issue-session-retry"
+    assert stall_profile.session_reuse_decision == "reused_issue_session"
+    assert stall_profile.issue_turn_count == 4
+    assert stall_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+  end
+
+  test "completion-time issue-session persistence failures log warnings without aborting completion totals" do
+    workspace_root = tmp_dir!("orchestrator-completion-issue-session-persist-failure")
+    blocking_path = Path.join(workspace_root, "not-a-directory")
+
+    File.mkdir_p!(workspace_root)
+    File.write!(blocking_path, "file")
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+
+    issue = %Issue{
+      id: "issue-completion-persist-warning",
+      identifier: "GH-504B",
+      title: "Completion persist failure warning",
+      description: "Do not drop completion persistence warnings",
+      state: "status:in-progress",
+      url: "https://example.org/issues/GH-504B"
+    }
+
+    started_at = DateTime.utc_now() |> DateTime.add(-5, :second)
+
+    running_entry = %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      issue: issue,
+      worker_host: nil,
+      session_id: "thread-504b-turn-1",
+      issue_session_id: "issue-session-504b",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "review_to_in_progress",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "reused_issue_session",
+      codex_command: "codex app-server",
+      codex_model: "gpt-5.3-codex",
+      codex_thread_id: "thread-504b",
+      physical_session_count: 1,
+      issue_session_turn_count: 2,
+      started_at: started_at,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0
+    }
+
+    state = %Orchestrator.State{
+      codex_totals: %{
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        seconds_running: 0
+      },
+      completed_runs: []
+    }
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        updated_state =
+          Orchestrator.record_session_completion_totals_for_test(
+            state,
+            running_entry,
+            "completed"
+          )
+
+        assert length(updated_state.completed_runs) == 1
+      end)
+
+    assert log =~
+             "Unable to persist issue session for issue_id=issue-completion-persist-warning issue_identifier=GH-504B"
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
@@ -1726,5 +2048,21 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp configure_execution_profile_workspace!(overrides \\ []) do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-orchestrator-execution-profiles-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(workspace_root)
+    on_exit(fn -> File.rm_rf(workspace_root) end)
+
+    write_workflow_file!(
+      SymphonyElixir.Workflow.workflow_file_path(),
+      Keyword.merge([workspace_root: workspace_root], overrides)
+    )
   end
 end

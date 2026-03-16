@@ -162,6 +162,7 @@ defmodule SymphonyElixir.Config.Schema do
     import Ecto.Changeset
 
     alias SymphonyElixir.Config.Schema
+    @session_reuse_policies ["new_issue_session", "reuse_issue_session"]
 
     @primary_key false
     embedded_schema do
@@ -169,6 +170,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
+      field(:execution_profiles, :map, default: %{})
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -176,7 +178,13 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state,
+          :execution_profiles
+        ],
         empty_values: []
       )
       |> validate_number(:max_concurrent_agents, greater_than: 0)
@@ -184,7 +192,93 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
+      |> update_change(:execution_profiles, &normalize_execution_profiles/1)
+      |> validate_execution_profiles(:execution_profiles)
     end
+
+    defp normalize_execution_profiles(profiles) when is_map(profiles) do
+      Enum.reduce(profiles, %{}, fn {name, profile}, acc ->
+        Map.put(acc, normalize_profile_name(name), normalize_execution_profile(profile))
+      end)
+    end
+
+    defp normalize_execution_profile(%{} = profile_map) do
+      %{
+        "session_reuse" => normalize_session_reuse(profile_map["session_reuse"] || profile_map[:session_reuse]),
+        "codex_command" => normalize_codex_command(profile_map["codex_command"] || profile_map[:codex_command])
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Enum.into(%{})
+    end
+
+    defp normalize_execution_profile(profile), do: profile
+
+    defp validate_execution_profiles(changeset, field) do
+      validate_change(changeset, field, fn ^field, profiles ->
+        validate_execution_profiles_value(field, profiles)
+      end)
+    end
+
+    defp validate_execution_profiles_value(_field, profiles) when is_map(profiles) do
+      Enum.flat_map(profiles, fn {name, profile} ->
+        validate_execution_profile(name, profile)
+      end)
+    end
+
+    defp validate_execution_profile(name, profile) do
+      cond do
+        not is_binary(name) or String.trim(name) == "" ->
+          [execution_profile_error(name, "profile names must be non-empty strings")]
+
+        not is_map(profile) ->
+          [execution_profile_error(name, "profiles must be maps")]
+
+        not valid_session_reuse_policy?(profile["session_reuse"]) ->
+          [execution_profile_error(name, "session_reuse must be one of #{Enum.join(@session_reuse_policies, ", ")}")]
+
+        Map.has_key?(profile, "codex_command") and
+            not valid_optional_binary?(profile["codex_command"]) ->
+          [execution_profile_error(name, "codex_command must be a string when present")]
+
+        true ->
+          []
+      end
+    end
+
+    defp execution_profile_error(name, message) do
+      {:execution_profiles, "#{name}: #{message}"}
+    end
+
+    defp normalize_profile_name(name) when is_binary(name) do
+      name
+      |> String.trim()
+      |> String.downcase()
+    end
+
+    defp normalize_session_reuse(value) when is_binary(value) do
+      case String.trim(value) do
+        "" -> nil
+        trimmed -> trimmed
+      end
+    end
+
+    defp normalize_session_reuse(_value), do: nil
+
+    defp normalize_codex_command(value) when is_binary(value) do
+      case String.trim(value) do
+        "" -> nil
+        trimmed -> trimmed
+      end
+    end
+
+    defp normalize_codex_command(value), do: value
+
+    defp valid_session_reuse_policy?(policy) when is_binary(policy),
+      do: String.trim(policy) in @session_reuse_policies
+
+    defp valid_session_reuse_policy?(_policy), do: false
+
+    defp valid_optional_binary?(value), do: is_binary(value)
   end
 
   defmodule Codex do
@@ -370,6 +464,18 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
+  @spec default_execution_profiles() :: map()
+  def default_execution_profiles do
+    %{
+      "ready_to_in_progress" => %{
+        "session_reuse" => "new_issue_session"
+      },
+      "review_to_in_progress" => %{
+        "session_reuse" => "reuse_issue_session"
+      }
+    }
+  end
+
   @doc false
   @spec validate_state_limits(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
   def validate_state_limits(changeset, field) do
@@ -446,8 +552,19 @@ defmodule SymphonyElixir.Config.Schema do
       | allowlist: normalize_string_list(settings.allowlist),
         tracker: tracker,
         workspace: workspace,
+        agent: %{
+          settings.agent
+          | execution_profiles: resolve_execution_profiles(settings.agent.execution_profiles)
+        },
         codex: codex
     }
+  end
+
+  defp resolve_execution_profiles(profiles) when is_map(profiles) do
+    default_execution_profiles()
+    |> Map.merge(profiles, fn _key, default_profile, profile ->
+      Map.merge(default_profile, profile)
+    end)
   end
 
   defp validate_string_list(changeset, field) do

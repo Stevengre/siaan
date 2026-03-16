@@ -95,42 +95,52 @@ defmodule SymphonyElixir.AgentRunner do
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+    issue_turn_count = Keyword.get(opts, :issue_turn_count, 0)
+    codex_command = Keyword.get(opts, :codex_command)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+    with {:ok, session} <-
+           AppServer.start_session(workspace, worker_host: worker_host, codex_command: codex_command) do
       try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        run_context = %{
+          workspace: workspace,
+          codex_update_recipient: codex_update_recipient,
+          opts: opts,
+          issue_state_fetcher: issue_state_fetcher,
+          max_turns: max_turns,
+          issue_turn_count: issue_turn_count
+        }
+
+        do_run_codex_turns(session, issue, run_context, 1)
       after
         AppServer.stop_session(session)
       end
     end
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
-    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+  defp do_run_codex_turns(app_session, issue, run_context, turn_number) do
+    prompt =
+      build_turn_prompt(
+        issue,
+        run_context.opts,
+        turn_number,
+        run_context.max_turns,
+        run_context.issue_turn_count
+      )
 
     with {:ok, turn_session} <-
            AppServer.run_turn(
              app_session,
              prompt,
              issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
+             on_message: codex_message_handler(run_context.codex_update_recipient, issue)
            ) do
-      Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+      Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{run_context.workspace} turn=#{turn_number}/#{run_context.max_turns}")
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
-        {:continue, refreshed_issue} when turn_number < max_turns ->
-          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+      case continue_with_issue?(issue, run_context.issue_state_fetcher) do
+        {:continue, refreshed_issue} when turn_number < run_context.max_turns ->
+          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{run_context.max_turns}")
 
-          do_run_codex_turns(
-            app_session,
-            workspace,
-            refreshed_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            turn_number + 1,
-            max_turns
-          )
+          do_run_codex_turns(app_session, refreshed_issue, run_context, turn_number + 1)
 
         {:continue, refreshed_issue} ->
           Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
@@ -146,14 +156,28 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
+  defp build_turn_prompt(issue, opts, 1, _max_turns, 0), do: PromptBuilder.build_prompt(issue, opts)
 
-  defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
+  defp build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count) do
+    """
+    #{PromptBuilder.build_prompt(issue, opts)}
+
+    Ongoing issue-session guidance:
+
+    - This is a fresh physical Codex session for an existing issue session.
+    - Previous issue-session turns completed: #{issue_turn_count}.
+    - `agent.max_turns` still caps this physical agent run at #{max_turns} turns.
+    - Reuse the current workspace and workpad state instead of redoing completed investigation.
+    """
+  end
+
+  defp build_turn_prompt(_issue, _opts, turn_number, max_turns, issue_turn_count) do
     """
     Continuation guidance:
 
     - The previous Codex turn completed normally, but the Linear issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
+    - This corresponds to issue-session turn ##{issue_turn_count + turn_number}.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
     - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
