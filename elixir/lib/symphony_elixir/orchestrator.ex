@@ -895,7 +895,7 @@ defmodule SymphonyElixir.Orchestrator do
       !issue_blocked_by_non_terminal?(issue, terminal_states) and
       (!MapSet.member?(claimed, issue.id) or reusable_running_entry?(running_entry)) and
       dispatchable_running_entry?(running_entry) and
-      (reusable_running_entry?(running_entry) or available_slots(state) > 0) and
+      available_slots(state) > 0 and
       state_slots_available?(issue, running) and
       worker_slots_available?(state, issue)
   end
@@ -1868,10 +1868,33 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp worker_slots_available?(%State{} = state, issue, preferred_worker_host) do
-    (reusable_running_entry?(Map.get(state.running, issue.id)) or
-       select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity) and
+    dispatch_worker_host_available?(state, issue, preferred_worker_host) and
       local_runtime_project_slots_available?(state.running, issue)
   end
+
+  defp dispatch_worker_host_available?(%State{} = state, issue, preferred_worker_host) do
+    case Map.get(state.running, issue.id) do
+      %{worker_host: worker_host} = running_entry ->
+        if reusable_running_entry?(running_entry) do
+          reusable_worker_host_available?(state, issue, worker_host)
+        else
+          select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity
+        end
+
+      _ ->
+        select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity
+    end
+  end
+
+  defp reusable_worker_host_available?(_state, %{project_runtime: runtime}, _worker_host)
+       when runtime in ["local", :local],
+       do: true
+
+  defp reusable_worker_host_available?(%State{} = state, _issue, worker_host)
+       when is_binary(worker_host),
+       do: worker_host_slots_available?(state, worker_host)
+
+  defp reusable_worker_host_available?(_state, _issue, _worker_host), do: true
 
   defp worker_host_slots_available?(%State{} = state, worker_host) when is_binary(worker_host) do
     case Config.settings!().worker.max_concurrent_agents_per_host do
@@ -2307,8 +2330,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do
-    reusable_running_entry?(Map.get(state.running, issue.id)) or
-      (available_slots(state) > 0 and state_slots_available?(issue, state.running))
+    available_slots(state) > 0 and state_slots_available?(issue, state.running)
   end
 
   defp apply_codex_token_delta(

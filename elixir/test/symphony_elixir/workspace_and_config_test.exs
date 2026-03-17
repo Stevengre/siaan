@@ -671,6 +671,43 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "idle reusable runners still respect the global concurrent-agent cap" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: 1)
+
+    issue = %Issue{
+      id: "reusable-issue",
+      identifier: "MT-1003A",
+      title: "Reusable work",
+      state: "In Progress"
+    }
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 1,
+      running: %{
+        "busy-issue" => %{
+          busy: true,
+          issue: %Issue{
+            id: "busy-issue",
+            identifier: "MT-1003B",
+            title: "Busy work",
+            state: "Todo"
+          }
+        },
+        issue.id => %{
+          pid: self(),
+          busy: false,
+          persistent_runner: true,
+          issue: issue
+        }
+      },
+      claimed: MapSet.new([issue.id]),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
   test "dispatch revalidation skips stale todo issue once a non-terminal blocker appears" do
     stale_issue = %Issue{
       id: "blocked-2",

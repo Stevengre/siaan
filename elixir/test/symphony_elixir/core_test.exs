@@ -1276,6 +1276,34 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.worker_slots_available_for_test(state, isolated_issue) == true
   end
 
+  test "worker_slots_available_for_test blocks reusable runners on full worker hosts" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_hosts: ["worker-a", "worker-b"],
+      worker_max_concurrent_agents_per_host: 1
+    )
+
+    issue = %Issue{id: "reusable-issue", identifier: "GH-44"}
+
+    state = %Orchestrator.State{
+      running: %{
+        "busy-issue" => %{
+          busy: true,
+          worker_host: "worker-a",
+          issue: %Issue{id: "busy-issue", identifier: "GH-99"}
+        },
+        issue.id => %{
+          pid: self(),
+          busy: false,
+          persistent_runner: true,
+          worker_host: "worker-a",
+          issue: issue
+        }
+      }
+    }
+
+    assert Orchestrator.worker_slots_available_for_test(state, issue, "worker-a") == false
+  end
+
   defp assert_due_offset_between(due_at_ms, earliest_ms, latest_ms, delay_ms) do
     assert due_at_ms >= earliest_ms + delay_ms
     assert due_at_ms <= latest_ms + delay_ms
