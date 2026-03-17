@@ -76,6 +76,67 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server still rejects paths outside workspace root unless explicitly allowed" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-explicit-cwd-guard-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      outside_workspace = Path.join(test_root, "outside")
+
+      File.mkdir_p!(workspace_root)
+      File.mkdir_p!(outside_workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "local",
+        tracker_local_config_path: Path.join(test_root, "config.toml"),
+        tracker_local_project: "siaan",
+        workspace_root: workspace_root
+      )
+
+      issue = %Issue{
+        id: "issue-explicit-workspace-guard",
+        identifier: "MT-999A",
+        title: "Validate explicit external workspace guard",
+        description: "Ensure app-server only accepts external cwd when explicitly enabled",
+        state: "status:in-progress",
+        url: "https://example.org/issues/MT-999A",
+        labels: ["backend"]
+      }
+
+      assert {:error, {:invalid_workspace_cwd, :outside_workspace_root, _path, _root}} =
+               AppServer.run(outside_workspace, "guard", issue)
+
+      assert {:ok, canonical_outside_workspace} =
+               SymphonyElixir.PathSafety.canonicalize(outside_workspace)
+
+      startup_outcome =
+        try do
+          AppServer.start_session(canonical_outside_workspace,
+            codex_command: "missing-binary app-server",
+            allow_external_workspace: true
+          )
+        catch
+          :exit, reason -> {:exit, reason}
+        end
+
+      case startup_outcome do
+        {:error, reason} ->
+          refute match?({:invalid_workspace_cwd, _, _, _}, reason)
+          refute match?({:invalid_workspace_cwd, _, _, _, _}, reason)
+
+        {:exit, reason} ->
+          refute match?({:invalid_workspace_cwd, _, _, _}, reason)
+          refute match?({:invalid_workspace_cwd, _, _, _, _}, reason)
+      end
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server passes explicit turn sandbox policies through unchanged" do
     test_root =
       Path.join(
@@ -296,10 +357,16 @@ defmodule SymphonyElixir.AppServerTest do
       #!/bin/sh
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-thread-fallback.trace}"
       count=0
+      current_id=""
 
       while IFS= read -r line; do
         count=$((count + 1))
         printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        request_id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p')
+
+        if [ -n "$request_id" ]; then
+          current_id="$request_id"
+        fi
 
         case "$count" in
           1)
@@ -308,13 +375,13 @@ defmodule SymphonyElixir.AppServerTest do
           2)
             ;;
           3)
-            printf '%s\\n' '{"id":3,"error":{"message":"thread not found"}}'
+            printf '{"id":%s,"error":{"message":"thread not found"}}\n' "$current_id"
             ;;
           4)
             printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-fresh"}}}'
             ;;
           5)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-fresh"}}}'
+            printf '{"id":%s,"result":{"turn":{"id":"turn-fresh"}}}\n' "$current_id"
             printf '%s\\n' '{"method":"turn/completed"}'
             exit 0
             ;;
@@ -360,6 +427,17 @@ defmodule SymphonyElixir.AppServerTest do
       assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
       assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-stale\""))
       assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-fresh\""))
+
+      turn_start_ids =
+        lines
+        |> Enum.filter(&String.contains?(&1, "\"method\":\"turn/start\""))
+        |> Enum.map(fn line ->
+          [_, id] = Regex.run(~r/"id":(\d+)/, line)
+          id
+        end)
+
+      assert length(turn_start_ids) == 2
+      assert Enum.uniq(turn_start_ids) == turn_start_ids
     after
       File.rm_rf(test_root)
     end

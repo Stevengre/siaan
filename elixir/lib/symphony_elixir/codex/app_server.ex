@@ -45,13 +45,15 @@ defmodule SymphonyElixir.Codex.AppServer do
     worker_host = Keyword.get(opts, :worker_host)
     codex_command = Keyword.get(opts, :codex_command) || Config.settings!().codex.command
     resume_thread_id = normalize_resume_thread_id(Keyword.get(opts, :resume_thread_id))
+    allow_external_workspace = Keyword.get(opts, :allow_external_workspace, false)
 
-    with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
+    with {:ok, expanded_workspace} <-
+           validate_workspace_cwd(workspace, worker_host, allow_external_workspace),
          {:ok, port} <- start_port(expanded_workspace, worker_host, codex_command) do
       metadata = port_metadata(port, worker_host)
       tracker_kind = Config.settings!().tracker.kind
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
+      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_state} <-
              do_start_session(
                port,
@@ -178,7 +180,10 @@ defmodule SymphonyElixir.Codex.AppServer do
     stop_port(port)
   end
 
-  defp validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
+  defp validate_workspace_cwd(workspace, worker_host, allow_external_workspace)
+
+  defp validate_workspace_cwd(workspace, nil, allow_external_workspace)
+       when is_binary(workspace) and is_boolean(allow_external_workspace) do
     expanded_workspace = Path.expand(workspace)
     expanded_root = Path.expand(Config.settings!().workspace.root)
     expanded_root_prefix = expanded_root <> "/"
@@ -194,6 +199,9 @@ defmodule SymphonyElixir.Codex.AppServer do
         String.starts_with?(canonical_workspace <> "/", canonical_root_prefix) ->
           {:ok, canonical_workspace}
 
+        allow_external_workspace ->
+          {:ok, canonical_workspace}
+
         String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
           {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
 
@@ -206,7 +214,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp validate_workspace_cwd(workspace, worker_host)
+  defp validate_workspace_cwd(workspace, worker_host, _allow_external_workspace)
        when is_binary(workspace) and is_binary(worker_host) do
     cond do
       String.trim(workspace) == "" ->
@@ -296,11 +304,11 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+  defp session_policies(workspace, nil, opts) do
+    Config.codex_runtime_settings(workspace, writable_roots: Keyword.get(opts, :writable_roots, []))
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
+  defp session_policies(workspace, worker_host, _opts) when is_binary(worker_host) do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
@@ -366,10 +374,19 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
+  defp start_turn(
+         port,
+         thread_id,
+         prompt,
+         issue,
+         workspace,
+         approval_policy,
+         turn_sandbox_policy,
+         request_id \\ @turn_start_id
+       ) do
     send_message(port, %{
       "method" => "turn/start",
-      "id" => @turn_start_id,
+      "id" => request_id,
       "params" => %{
         "threadId" => thread_id,
         "input" => [
@@ -385,7 +402,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       }
     })
 
-    case await_response(port, @turn_start_id) do
+    case await_response(port, request_id) do
       {:ok, %{"turn" => %{"id" => turn_id}}} -> {:ok, turn_id}
       other -> other
     end
@@ -436,7 +453,8 @@ defmodule SymphonyElixir.Codex.AppServer do
              context.issue,
              context.workspace,
              context.approval_policy,
-             context.turn_sandbox_policy
+             context.turn_sandbox_policy,
+             next_request_id()
            ) do
       {:ok, start_new_physical_session(session, new_thread_id, fallback_reason), turn_id}
     end
@@ -1168,6 +1186,10 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp normalize_resume_thread_id(_thread_id), do: nil
+
+  defp next_request_id do
+    System.unique_integer([:positive, :monotonic]) + @turn_start_id
+  end
 
   defp tool_call_name(params) when is_map(params) do
     case Map.get(params, "tool") || Map.get(params, :tool) || Map.get(params, "name") || Map.get(params, :name) do

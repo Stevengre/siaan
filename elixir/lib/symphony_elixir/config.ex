@@ -155,6 +155,9 @@ defmodule SymphonyElixir.Config do
       "github" ->
         validate_github_tracker(settings.tracker)
 
+      "local" ->
+        validate_local_tracker(settings.tracker)
+
       kind ->
         {:error, {:unsupported_tracker_kind, kind}}
     end
@@ -173,6 +176,14 @@ defmodule SymphonyElixir.Config do
       not present_binary?(tracker.api_key) -> {:error, :missing_github_api_token}
       not present_binary?(tracker.repo_owner) -> {:error, :missing_github_repo_owner}
       not present_binary?(tracker.repo_name) -> {:error, :missing_github_repo_name}
+      true -> :ok
+    end
+  end
+
+  defp validate_local_tracker(tracker) do
+    cond do
+      not present_binary?(tracker.local_project) -> {:error, :missing_local_project}
+      not present_binary?(tracker.local_config_path) -> {:error, :missing_local_config_path}
       true -> :ok
     end
   end
@@ -202,6 +213,12 @@ defmodule SymphonyElixir.Config do
 
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+
+      :missing_local_project ->
+        "Invalid WORKFLOW.md config: missing_local_project"
+
+      :missing_local_config_path ->
+        "Invalid WORKFLOW.md config: missing_local_config_path"
 
       other ->
         "Invalid WORKFLOW.md config: #{inspect(other)}"

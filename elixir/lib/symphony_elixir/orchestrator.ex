@@ -474,17 +474,32 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
-  @spec select_worker_host_for_test(term(), String.t() | nil) :: String.t() | nil | :no_worker_capacity
-  def select_worker_host_for_test(%State{} = state, preferred_worker_host) do
-    select_worker_host(state, preferred_worker_host)
+  @spec select_worker_host_for_test(term(), term(), String.t() | nil) ::
+          String.t() | nil | :no_worker_capacity
+  def select_worker_host_for_test(%State{} = state, issue, preferred_worker_host) do
+    select_worker_host(state, issue, preferred_worker_host)
   end
 
   @doc false
-  @spec transition_issue_for_dispatch_for_test(Issue.t(), (String.t(), String.t() -> term())) ::
+  @spec worker_slots_available_for_test(term(), term(), String.t() | nil) :: boolean()
+  def worker_slots_available_for_test(%State{} = state, issue, preferred_worker_host \\ nil) do
+    worker_slots_available?(state, issue, preferred_worker_host)
+  end
+
+  @doc false
+  @spec transition_issue_for_dispatch_for_test(
+          Issue.t(),
+          (String.t(), String.t() -> term()),
+          ([String.t()] -> {:ok, [Issue.t()]} | {:error, term()})
+        ) ::
           {:ok, Issue.t()} | {:error, term()}
-  def transition_issue_for_dispatch_for_test(%Issue{} = issue, update_issue_state_fun)
-      when is_function(update_issue_state_fun, 2) do
-    transition_issue_for_dispatch(issue, update_issue_state_fun)
+  def transition_issue_for_dispatch_for_test(
+        %Issue{} = issue,
+        update_issue_state_fun,
+        fetch_issue_states_fun \\ &Tracker.fetch_issue_states_by_ids/1
+      )
+      when is_function(update_issue_state_fun, 2) and is_function(fetch_issue_states_fun, 1) do
+    transition_issue_for_dispatch(issue, update_issue_state_fun, fetch_issue_states_fun)
   end
 
   @doc false
@@ -793,7 +808,7 @@ defmodule SymphonyElixir.Orchestrator do
       !Map.has_key?(running, issue.id) and
       available_slots(state) > 0 and
       state_slots_available?(issue, running) and
-      worker_slots_available?(state)
+      worker_slots_available?(state, issue)
   end
 
   defp should_dispatch_issue?(_issue, _state, _active_states, _terminal_states), do: false
@@ -896,7 +911,11 @@ defmodule SymphonyElixir.Orchestrator do
       {:ok, %Issue{} = refreshed_issue} ->
         dispatch_transition = resolve_dispatch_transition(refreshed_issue, transition_name)
 
-        case transition_issue_for_dispatch(refreshed_issue, &Tracker.update_issue_state/2) do
+        case transition_issue_for_dispatch(
+               refreshed_issue,
+               &Tracker.update_issue_state/2,
+               &Tracker.fetch_issue_states_by_ids/1
+             ) do
           {:ok, %Issue{} = dispatch_issue} ->
             do_dispatch_issue(state, dispatch_issue, attempt, preferred_worker_host, dispatch_transition)
 
@@ -924,7 +943,7 @@ defmodule SymphonyElixir.Orchestrator do
     recipient = self()
     dispatch_profile = resolve_dispatch_profile(issue, transition_name)
 
-    case select_worker_host(state, preferred_worker_host) do
+    case select_worker_host(state, issue, preferred_worker_host) do
       :no_worker_capacity ->
         Logger.debug("No SSH worker slots available for #{issue_context(issue)} preferred_worker_host=#{inspect(preferred_worker_host)}")
         state
@@ -1183,7 +1202,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp physical_session_reuse_allowed?(profile, transition_name) do
-    profile.session_reuse == "reuse_issue_session" and transition_name != "ready_to_in_progress"
+    profile.session_reuse == "reuse_issue_session" and transition_name == "review_to_in_progress"
   end
 
   defp existing_physical_session_id(%{"physical_session_id" => thread_id})
@@ -1279,13 +1298,18 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp revalidate_issue_for_dispatch(issue, _issue_fetcher, _terminal_states), do: {:ok, issue}
 
-  defp transition_issue_for_dispatch(%Issue{state: issue_state} = issue, update_issue_state_fun)
-       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) do
+  defp transition_issue_for_dispatch(
+         %Issue{state: issue_state} = issue,
+         update_issue_state_fun,
+         fetch_issue_states_fun
+       )
+       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) and
+              is_function(fetch_issue_states_fun, 1) do
     case normalize_issue_state(issue_state) do
       "status:ready" ->
         case update_issue_state_fun.(issue.id, "status:in-progress") do
           :ok ->
-            {:ok, %{issue | state: "status:in-progress"}}
+            refresh_transitioned_issue(issue, fetch_issue_states_fun)
 
           {:error, reason} ->
             {:error, reason}
@@ -1296,7 +1320,25 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp transition_issue_for_dispatch(issue, _update_issue_state_fun), do: {:ok, issue}
+  defp transition_issue_for_dispatch(issue, _update_issue_state_fun, _fetch_issue_states_fun),
+    do: {:ok, issue}
+
+  defp refresh_transitioned_issue(%Issue{id: issue_id}, fetch_issue_states_fun)
+       when is_binary(issue_id) and is_function(fetch_issue_states_fun, 1) do
+    case fetch_issue_states_fun.([issue_id]) do
+      {:ok, [%Issue{} = refreshed_issue | _]} ->
+        {:ok, refreshed_issue}
+
+      {:ok, []} ->
+        {:error, {:issue_state_refresh_failed, :issue_not_found}}
+
+      {:error, reason} ->
+        {:error, {:issue_state_refresh_failed, reason}}
+    end
+  end
+
+  defp refresh_transitioned_issue(issue, _fetch_issue_states_fun),
+    do: {:ok, %{issue | state: "status:in-progress"}}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{
@@ -1445,7 +1487,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp handle_active_retry(state, issue, attempt, metadata) do
     if retry_candidate_issue?(issue, terminal_state_set()) and
          dispatch_slots_available?(issue, state) and
-         worker_slots_available?(state, metadata[:worker_host]) do
+         worker_slots_available?(state, issue, metadata[:worker_host]) do
       {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host], metadata[:transition])}
     else
       Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
@@ -1520,7 +1562,11 @@ defmodule SymphonyElixir.Orchestrator do
     Map.put(running_entry, key, value)
   end
 
-  defp select_worker_host(%State{} = state, preferred_worker_host) do
+  defp select_worker_host(%State{} = _state, %{project_runtime: runtime}, _preferred_worker_host)
+       when runtime in ["local", :local],
+       do: nil
+
+  defp select_worker_host(%State{} = state, _issue, preferred_worker_host) do
     case Config.settings!().worker.ssh_hosts do
       [] ->
         nil
@@ -1564,12 +1610,13 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp worker_slots_available?(%State{} = state) do
-    select_worker_host(state, nil) != :no_worker_capacity
+  defp worker_slots_available?(%State{} = state, issue) do
+    worker_slots_available?(state, issue, nil)
   end
 
-  defp worker_slots_available?(%State{} = state, preferred_worker_host) do
-    select_worker_host(state, preferred_worker_host) != :no_worker_capacity
+  defp worker_slots_available?(%State{} = state, issue, preferred_worker_host) do
+    select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity and
+      local_runtime_project_slots_available?(state.running, issue)
   end
 
   defp worker_host_slots_available?(%State{} = state, worker_host) when is_binary(worker_host) do
@@ -1580,6 +1627,28 @@ defmodule SymphonyElixir.Orchestrator do
       _ ->
         true
     end
+  end
+
+  defp local_runtime_project_slots_available?(running, %{project_runtime: runtime, project_dir: project_dir})
+       when runtime in ["local", :local] and is_map(running) and is_binary(project_dir) do
+    project_dir_key = local_runtime_project_dir_key(project_dir)
+
+    Enum.all?(running, fn
+      {_issue_id, %{issue: %Issue{project_runtime: running_runtime, project_dir: running_project_dir}}}
+      when running_runtime in ["local", :local] and is_binary(running_project_dir) ->
+        local_runtime_project_dir_key(running_project_dir) != project_dir_key
+
+      _ ->
+        true
+    end)
+  end
+
+  defp local_runtime_project_slots_available?(_running, _issue), do: true
+
+  defp local_runtime_project_dir_key(project_dir) when is_binary(project_dir) do
+    project_dir
+    |> Path.expand()
+    |> String.trim_trailing("/")
   end
 
   defp find_issue_by_id(issues, issue_id) when is_binary(issue_id) do
