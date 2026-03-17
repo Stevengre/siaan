@@ -342,6 +342,19 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {%{}, "plain body"} =
              LocalIssue.read_frontmatter(Path.join(issue_root, "ready/plain.md"))
+
+    File.write!(
+      Path.join(issue_root, "ready/bad.md"),
+      """
+      ---
+      title: [unterminated
+      ---
+      broken
+      """
+    )
+
+    assert {:error, {:invalid_frontmatter, _, _}} =
+             LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/bad.md"))
   end
 
   test "local adapter filters candidate issues by adapter assignee and states" do
@@ -695,8 +708,103 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert File.exists?(Path.join([issue_root, "in-progress", slug, "workpad.md"]))
     assert File.read!(Path.join([issue_root, "in-progress", slug, "workpad.md"])) =~ "Prior work context."
     assert File.exists?(Path.join([issue_root, "in-progress", slug, "description-reviewer.md"]))
+
+    {workpad_frontmatter, _body} =
+      LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "workpad.md"]))
+
+    assert workpad_frontmatter["status"] == "in-progress"
     refute File.exists?(Path.join([issue_root, "ready", "#{slug}.workpad.md"]))
     refute File.exists?(Path.join([issue_root, "ready", "#{slug}.artifacts"]))
+  end
+
+  test "local adapter returns recoverable errors for malformed issue or workpad frontmatter" do
+    issue_root = tmp_dir!("local-malformed-frontmatter")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+    bad_issue_slug = "bad-issue"
+    bad_workpad_slug = "bad-workpad"
+
+    File.mkdir_p!(Path.join([issue_root, "ready"]))
+    File.mkdir_p!(Path.join([issue_root, "in-progress", bad_workpad_slug]))
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: in-progress
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: ready
+            when: []
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{bad_issue_slug}.md"]),
+      """
+      ---
+      title: [unterminated
+      ---
+      broken
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "in-progress", bad_workpad_slug, "issue.md"]),
+      """
+      ---
+      title: Bad workpad
+      status: in-progress
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "in-progress", bad_workpad_slug, "workpad.md"]),
+      """
+      ---
+      status: [unterminated
+      ---
+      broken
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert {:error, {:invalid_frontmatter, bad_issue_path, _message}} =
+             Adapter.fetch_candidate_issues()
+
+    assert String.ends_with?(bad_issue_path, "/ready/#{bad_issue_slug}.md")
+
+    File.rm!(Path.join([issue_root, "ready", "#{bad_issue_slug}.md"]))
+
+    assert {:error, {:invalid_frontmatter, bad_workpad_path, _message}} =
+             Adapter.fetch_candidate_issues()
+
+    assert String.ends_with?(bad_workpad_path, "/in-progress/#{bad_workpad_slug}/workpad.md")
   end
 
   test "local adapter returns an error when a requested transition is not declared" do

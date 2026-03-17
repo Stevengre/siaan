@@ -25,12 +25,12 @@ defmodule SymphonyElixir.Local.Issue do
       |> File.ls!()
       |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
 
-    issues =
-      Enum.flat_map(states, fn state ->
-        scan_state(root_path, state, project_dir, workflow)
-      end)
-
-    {:ok, issues}
+    Enum.reduce_while(states, {:ok, []}, fn state, {:ok, issues} ->
+      case scan_state(root_path, state, project_dir, workflow) do
+        {:ok, state_issues} -> {:cont, {:ok, issues ++ state_issues}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   rescue
     error in [File.Error] -> {:error, error}
   end
@@ -44,84 +44,103 @@ defmodule SymphonyElixir.Local.Issue do
       |> File.ls!()
       |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
 
-    case Enum.find_value(states, &load_slug_from_state(&1, root_path, slug, project_dir, workflow)) do
-      {:ok, issue} -> {:ok, issue}
-      nil -> {:error, {:issue_not_found, slug}}
-    end
+    Enum.reduce_while(states, {:error, {:issue_not_found, slug}}, fn state, _acc ->
+      case load_slug_from_state(state, root_path, slug, project_dir, workflow) do
+        {:ok, issue} -> {:halt, {:ok, issue}}
+        :skip -> {:cont, {:error, {:issue_not_found, slug}}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   rescue
     error in [File.Error] -> {:error, error}
   end
 
   defp load_slug_from_state(state, root_path, slug, project_dir, workflow) do
     path = issue_path_for_state(root_path, state, slug)
-    if File.exists?(path), do: {:ok, build_issue(root_path, state, slug, path, project_dir, workflow)}
+
+    if File.exists?(path) do
+      build_issue(root_path, state, slug, path, project_dir, workflow)
+    else
+      :skip
+    end
   end
 
   defp scan_state(root_path, state, project_dir, workflow) do
     state_path = Path.join(root_path, state)
 
-    if MapSet.member?(@directory_states, state) do
-      state_path
-      |> File.ls!()
-      |> Enum.filter(&File.exists?(Path.join([state_path, &1, "issue.md"])))
-      |> Enum.map(fn slug ->
-        issue_path = Path.join([state_path, slug, "issue.md"])
-        build_issue(root_path, state, slug, issue_path, project_dir, workflow)
-      end)
-    else
-      state_path
-      |> File.ls!()
-      |> Enum.filter(&String.ends_with?(&1, ".md"))
-      |> Enum.map(fn file_name ->
-        slug = Path.rootname(file_name)
-        issue_path = Path.join(state_path, file_name)
-        build_issue(root_path, state, slug, issue_path, project_dir, workflow)
-      end)
+    entries =
+      if MapSet.member?(@directory_states, state) do
+        state_path
+        |> File.ls!()
+        |> Enum.filter(&File.exists?(Path.join([state_path, &1, "issue.md"])))
+        |> Enum.map(fn slug ->
+          {slug, Path.join([state_path, slug, "issue.md"])}
+        end)
+      else
+        state_path
+        |> File.ls!()
+        |> Enum.filter(&String.ends_with?(&1, ".md"))
+        |> Enum.map(fn file_name ->
+          {Path.rootname(file_name), Path.join(state_path, file_name)}
+        end)
+      end
+
+    Enum.reduce_while(entries, {:ok, []}, fn {slug, issue_path}, {:ok, issues} ->
+      case build_issue(root_path, state, slug, issue_path, project_dir, workflow) do
+        {:ok, issue} -> {:cont, {:ok, [issue | issues]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, issues} -> {:ok, Enum.reverse(issues)}
+      {:error, _reason} = error -> error
     end
   end
 
   defp build_issue(root_path, state, slug, issue_path, project_dir, workflow) do
-    {frontmatter, body} = read_frontmatter(issue_path)
-    issue_dir = Path.dirname(issue_path)
+    with {:ok, {frontmatter, body}} <- read_frontmatter_safe(issue_path) do
+      issue_dir = Path.dirname(issue_path)
 
-    workpad_path =
-      if(MapSet.member?(@directory_states, state),
-        do: Path.join(issue_dir, "workpad.md"),
-        else: Path.join(issue_dir, "#{slug}.workpad.md")
-      )
+      workpad_path =
+        if(MapSet.member?(@directory_states, state),
+          do: Path.join(issue_dir, "workpad.md"),
+          else: Path.join(issue_dir, "#{slug}.workpad.md")
+        )
 
-    skill_template =
-      workflow
-      |> Map.get(state, %{activities: []})
-      |> Map.get(:activities, [])
-      |> Enum.find_value(fn
-        %Workflow.Activity{type: :skill, name: "siaan-inprogress"} ->
-          Path.join(project_dir, "elixir/priv/skills/siaan-inprogress.md")
+      skill_template =
+        workflow
+        |> Map.get(state, %{activities: []})
+        |> Map.get(:activities, [])
+        |> Enum.find_value(fn
+          %Workflow.Activity{type: :skill, name: "siaan-inprogress"} ->
+            Path.join(project_dir, "elixir/priv/skills/siaan-inprogress.md")
 
-        _ ->
-          nil
-      end)
+          _ ->
+            nil
+        end)
 
-    %TrackerIssue{
-      id: slug,
-      identifier: Map.get(frontmatter, "identifier", slug),
-      title: Map.get(frontmatter, "title", slug),
-      description: body,
-      state: tracker_state_from_storage_state(state),
-      url: Map.get(frontmatter, "url"),
-      labels: List.wrap(Map.get(frontmatter, "labels", [])),
-      assignee_id: Map.get(frontmatter, "assignee"),
-      branch_name: Map.get(frontmatter, "current-branch"),
-      issue_root: root_path,
-      issue_slug: slug,
-      issue_path: issue_path,
-      issue_dir: issue_dir,
-      workpad_path: workpad_path,
-      project_dir: project_dir,
-      prompt_template_path: skill_template,
-      base_branch: Map.get(frontmatter, "base-branch"),
-      current_branch: Map.get(frontmatter, "current-branch")
-    }
+      {:ok,
+       %TrackerIssue{
+         id: slug,
+         identifier: Map.get(frontmatter, "identifier", slug),
+         title: Map.get(frontmatter, "title", slug),
+         description: body,
+         state: tracker_state_from_storage_state(state),
+         url: Map.get(frontmatter, "url"),
+         labels: List.wrap(Map.get(frontmatter, "labels", [])),
+         assignee_id: Map.get(frontmatter, "assignee"),
+         branch_name: Map.get(frontmatter, "current-branch"),
+         issue_root: root_path,
+         issue_slug: slug,
+         issue_path: issue_path,
+         issue_dir: issue_dir,
+         workpad_path: workpad_path,
+         project_dir: project_dir,
+         prompt_template_path: skill_template,
+         base_branch: Map.get(frontmatter, "base-branch"),
+         current_branch: Map.get(frontmatter, "current-branch")
+       }}
+    end
   end
 
   defp issue_path_for_state(root_path, state, slug) do
@@ -134,6 +153,14 @@ defmodule SymphonyElixir.Local.Issue do
 
   @spec read_frontmatter(Path.t()) :: {map(), String.t()}
   def read_frontmatter(path) when is_binary(path) do
+    case read_frontmatter_safe(path) do
+      {:ok, result} -> result
+      {:error, reason} -> raise "failed to read frontmatter for #{path}: #{inspect(reason)}"
+    end
+  end
+
+  @spec read_frontmatter_safe(Path.t()) :: {:ok, {map(), String.t()}} | {:error, term()}
+  def read_frontmatter_safe(path) when is_binary(path) do
     {:ok, contents} = File.read(path)
     lines = String.split(contents, ~r/\R/, trim: false)
 
@@ -158,10 +185,16 @@ defmodule SymphonyElixir.Local.Issue do
             _ -> contents |> String.trim()
           end
 
-        {frontmatter || %{}, body}
+        {:ok, {frontmatter || %{}, body}}
 
       _ ->
-        {%{}, String.trim(contents)}
+        {:ok, {%{}, String.trim(contents)}}
     end
+  rescue
+    error in [File.Error] ->
+      {:error, error}
+
+    error ->
+      {:error, {:invalid_frontmatter, path, Exception.message(error)}}
   end
 end

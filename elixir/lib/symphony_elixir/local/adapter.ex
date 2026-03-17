@@ -22,16 +22,17 @@ defmodule SymphonyElixir.Local.Adapter do
         |> Enum.map(&normalize_tracker_state/1)
         |> MapSet.new()
 
-      issues
-      |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
-      |> Enum.map(&maybe_apply_transition(&1, context))
-      |> Enum.filter(&match?({:ok, _}, &1))
-      |> Enum.map(fn {:ok, issue} -> issue end)
-      |> Enum.filter(
-        &(MapSet.member?(active_states, normalize_tracker_state(&1.state)) and
-            dispatchable_activity?(&1, context.workflow))
-      )
-      |> then(&{:ok, &1})
+      with {:ok, transitioned_issues} <-
+             issues
+             |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
+             |> apply_transitions(context) do
+        transitioned_issues
+        |> Enum.filter(
+          &(MapSet.member?(active_states, normalize_tracker_state(&1.state)) and
+              dispatchable_activity?(&1, context.workflow))
+        )
+        |> then(&{:ok, &1})
+      end
     end
   end
 
@@ -45,13 +46,14 @@ defmodule SymphonyElixir.Local.Adapter do
     with {:ok, context} <- load_context(),
          {:ok, issues} <-
            Issue.scan_root(context.root_path, context.project.dir, context.workflow) do
-      issues
-      |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
-      |> Enum.map(&maybe_apply_transition(&1, context))
-      |> Enum.filter(&match?({:ok, _}, &1))
-      |> Enum.map(fn {:ok, issue} -> issue end)
-      |> Enum.filter(&MapSet.member?(wanted, normalize_tracker_state(&1.state)))
-      |> then(&{:ok, &1})
+      with {:ok, transitioned_issues} <-
+             issues
+             |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
+             |> apply_transitions(context) do
+        transitioned_issues
+        |> Enum.filter(&MapSet.member?(wanted, normalize_tracker_state(&1.state)))
+        |> then(&{:ok, &1})
+      end
     end
   end
 
@@ -115,30 +117,56 @@ defmodule SymphonyElixir.Local.Adapter do
     end
   end
 
-  defp maybe_apply_transition(issue, context) do
-    workpad_status =
-      issue.workpad_path
-      |> read_workpad_status()
-      |> normalize_storage_state()
-
-    if is_binary(workpad_status) and workpad_status != normalize_storage_state(issue.state) do
-      case Workflow.first_matching_transition_to(
-             context.workflow,
-             normalize_storage_state(issue.state),
-             workpad_status,
-             issue.issue_path
-           ) do
-        {:ok, nil} ->
-          {:ok, issue}
-
-        {:ok, _transition} ->
-          transition_issue(issue, workpad_status, context)
-
-        {:error, _reason} = error ->
-          error
+  defp apply_transitions(issues, context) do
+    Enum.reduce_while(issues, {:ok, []}, fn issue, {:ok, transitioned_issues} ->
+      case maybe_apply_transition(issue, context) do
+        {:ok, transitioned_issue} -> {:cont, {:ok, [transitioned_issue | transitioned_issues]}}
+        {:error, _reason} = error -> {:halt, error}
       end
+    end)
+    |> case do
+      {:ok, transitioned_issues} -> {:ok, Enum.reverse(transitioned_issues)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp maybe_apply_transition(issue, context) do
+    case read_workpad_status(issue.workpad_path) do
+      {:ok, workpad_status} ->
+        maybe_transition_issue(issue, context, normalize_storage_state(workpad_status))
+
+      :missing ->
+        {:ok, issue}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp maybe_transition_issue(issue, context, normalized_workpad_status) do
+    if is_binary(normalized_workpad_status) and
+         normalized_workpad_status != normalize_storage_state(issue.state) do
+      transition_for_workpad_status(issue, context, normalized_workpad_status)
     else
       {:ok, issue}
+    end
+  end
+
+  defp transition_for_workpad_status(issue, context, normalized_workpad_status) do
+    case Workflow.first_matching_transition_to(
+           context.workflow,
+           normalize_storage_state(issue.state),
+           normalized_workpad_status,
+           issue.issue_path
+         ) do
+      {:ok, nil} ->
+        {:ok, issue}
+
+      {:ok, _transition} ->
+        transition_issue(issue, normalized_workpad_status, context)
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -179,20 +207,23 @@ defmodule SymphonyElixir.Local.Adapter do
 
     case {source_directory?, target_directory?} do
       {true, true} ->
-        update_frontmatter_status!(issue.issue_path, target_state)
-        File.mkdir_p!(Path.dirname(target))
-        File.rename(source, target)
+        with :ok <- update_frontmatter_status(issue.issue_path, target_state) do
+          File.mkdir_p!(Path.dirname(target))
+          File.rename(source, target)
+          :ok
+        end
 
       {false, true} ->
-        File.mkdir_p!(Path.dirname(target))
-        File.mkdir_p!(target)
         target_issue_path = Path.join(target, "issue.md")
-        File.cp!(source, target_issue_path)
-        update_frontmatter_status!(target_issue_path, target_state)
-        File.rm!(source)
-        restore_or_initialize_workpad(issue, target_state, target)
-        restore_ready_artifacts(issue, target)
-        :ok
+
+        with :ok <- File.mkdir_p(Path.dirname(target)),
+             :ok <- File.mkdir_p(target),
+             :ok <- File.cp(source, target_issue_path),
+             :ok <- update_frontmatter_status(target_issue_path, target_state),
+             :ok <- File.rm(source),
+             :ok <- restore_or_initialize_workpad(issue, target_state, target) do
+          restore_ready_artifacts(issue, target)
+        end
 
       {true, false} ->
         collapse_issue_directory(issue, target, target_state)
@@ -219,14 +250,16 @@ defmodule SymphonyElixir.Local.Adapter do
   end
 
   defp ensure_workpad(path, target_state) do
-    if File.exists?(path), do: :ok, else: File.write!(path, "---\nstatus: #{target_state}\n---\n")
+    if File.exists?(path), do: :ok, else: File.write(path, "---\nstatus: #{target_state}\n---\n")
   end
 
   defp restore_or_initialize_workpad(issue, target_state, target_dir) do
     target_workpad = Path.join(target_dir, "workpad.md")
 
     if File.exists?(issue.workpad_path) do
-      File.rename!(issue.workpad_path, target_workpad)
+      with :ok <- File.rename(issue.workpad_path, target_workpad) do
+        update_frontmatter_status(target_workpad, target_state)
+      end
     else
       ensure_workpad(target_workpad, target_state)
     end
@@ -238,55 +271,107 @@ defmodule SymphonyElixir.Local.Adapter do
     if File.dir?(source_artifacts_dir) do
       source_artifacts_dir
       |> File.ls!()
-      |> Enum.each(fn artifact_name ->
-        File.rename!(
-          Path.join(source_artifacts_dir, artifact_name),
-          Path.join(target_dir, artifact_name)
-        )
-      end)
-
-      File.rmdir!(source_artifacts_dir)
+      |> move_ready_artifacts(source_artifacts_dir, target_dir)
+      |> case do
+        :ok -> File.rmdir(source_artifacts_dir)
+        {:error, _reason} = error -> error
+      end
+    else
+      :ok
     end
   end
 
-  defp collapse_issue_directory(issue, target_issue_path, target_state) do
-    File.mkdir_p!(Path.dirname(target_issue_path))
-    File.cp!(issue.issue_path, target_issue_path)
-    update_frontmatter_status!(target_issue_path, target_state)
-
-    workpad_target = Path.join(Path.dirname(target_issue_path), "#{issue.issue_slug}.workpad.md")
-
-    if File.exists?(issue.workpad_path) do
-      File.cp!(issue.workpad_path, workpad_target)
-    end
-
-    artifact_files =
-      issue.issue_dir
-      |> File.ls!()
-      |> Enum.reject(&(&1 in ["issue.md", "workpad.md"]))
-
-    if artifact_files != [] do
-      artifacts_dir = Path.join(Path.dirname(target_issue_path), "#{issue.issue_slug}.artifacts")
-      File.mkdir_p!(artifacts_dir)
-
-      Enum.each(artifact_files, fn file_name ->
-        File.cp_r!(Path.join(issue.issue_dir, file_name), Path.join(artifacts_dir, file_name))
-      end)
-    end
-
-    File.rm_rf!(issue.issue_dir)
-    :ok
+  defp move_ready_artifacts(artifact_names, source_artifacts_dir, target_dir) do
+    Enum.reduce_while(artifact_names, :ok, fn artifact_name, :ok ->
+      case File.rename(
+             Path.join(source_artifacts_dir, artifact_name),
+             Path.join(target_dir, artifact_name)
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
-  defp update_frontmatter_status!(issue_path, target_state) do
-    {frontmatter, body} = Issue.read_frontmatter(issue_path)
+  defp copy_artifact_sidecars(issue, target_issue_path) do
+    case issue_artifact_files(issue) do
+      [] ->
+        :ok
 
-    updated =
-      frontmatter
-      |> Map.put("status", target_state)
-      |> dump_frontmatter()
+      artifact_files ->
+        artifacts_dir = Path.join(Path.dirname(target_issue_path), "#{issue.issue_slug}.artifacts")
 
-    File.write!(issue_path, "---\n#{updated}---\n#{body}\n")
+        with :ok <- File.mkdir_p(artifacts_dir) do
+          copy_artifacts(artifact_files, issue.issue_dir, artifacts_dir)
+        end
+    end
+  end
+
+  defp issue_artifact_files(issue) do
+    issue.issue_dir
+    |> File.ls!()
+    |> Enum.reject(&(&1 in ["issue.md", "workpad.md"]))
+  end
+
+  defp copy_artifacts(artifact_files, source_dir, target_dir) do
+    Enum.reduce_while(artifact_files, :ok, fn file_name, :ok ->
+      case File.cp_r(Path.join(source_dir, file_name), Path.join(target_dir, file_name)) do
+        {:ok, _paths} -> {:cont, :ok}
+        {:error, _reason, _path} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp update_frontmatter_status(issue_path, target_state) do
+    with {:ok, {frontmatter, body}} <- Issue.read_frontmatter_safe(issue_path) do
+      updated =
+        frontmatter
+        |> Map.put("status", target_state)
+        |> dump_frontmatter()
+
+      File.write(issue_path, "---\n#{updated}---\n#{body}\n")
+    end
+  end
+
+  defp read_workpad_status(path) do
+    if File.exists?(path) do
+      case Issue.read_frontmatter_safe(path) do
+        {:ok, {frontmatter, _body}} -> {:ok, Map.get(frontmatter, "status")}
+        {:error, _reason} = error -> error
+      end
+    else
+      :missing
+    end
+  end
+
+  defp passes_adapter_filters?(issue, adapter_config) when is_map(adapter_config) do
+    filters = Map.get(adapter_config, "filters", %{})
+    passes_state_filter?(issue, filters) and passes_assignee_filter?(issue, filters)
+  end
+
+  defp passes_state_filter?(issue, filters) do
+    case Map.get(filters, "states") do
+      states when is_list(states) ->
+        normalized_states =
+          states
+          |> Enum.map(&normalize_tracker_state/1)
+          |> MapSet.new()
+
+        MapSet.member?(normalized_states, normalize_tracker_state(issue.state))
+
+      _ ->
+        true
+    end
+  end
+
+  defp passes_assignee_filter?(issue, filters) do
+    case Map.get(filters, "assignee") do
+      assignee when is_binary(assignee) and assignee != "" ->
+        issue.assignee_id == assignee
+
+      _ ->
+        true
+    end
   end
 
   defp dump_frontmatter(frontmatter) when is_map(frontmatter) do
@@ -327,41 +412,21 @@ defmodule SymphonyElixir.Local.Adapter do
     "\"#{escaped}\""
   end
 
-  defp read_workpad_status(path) do
-    if File.exists?(path) do
-      {frontmatter, _body} = Issue.read_frontmatter(path)
-      Map.get(frontmatter, "status")
+  defp collapse_issue_directory(issue, target_issue_path, target_state) do
+    with :ok <- File.mkdir_p(Path.dirname(target_issue_path)),
+         :ok <- File.cp(issue.issue_path, target_issue_path),
+         :ok <- update_frontmatter_status(target_issue_path, target_state),
+         :ok <- copy_workpad_sidecar(issue, target_issue_path),
+         :ok <- copy_artifact_sidecars(issue, target_issue_path),
+         {:ok, _removed} <- File.rm_rf(issue.issue_dir) do
+      :ok
     end
   end
 
-  defp passes_adapter_filters?(issue, adapter_config) when is_map(adapter_config) do
-    filters = Map.get(adapter_config, "filters", %{})
-    passes_state_filter?(issue, filters) and passes_assignee_filter?(issue, filters)
-  end
+  defp copy_workpad_sidecar(issue, target_issue_path) do
+    workpad_target = Path.join(Path.dirname(target_issue_path), "#{issue.issue_slug}.workpad.md")
 
-  defp passes_state_filter?(issue, filters) do
-    case Map.get(filters, "states") do
-      states when is_list(states) ->
-        normalized_states =
-          states
-          |> Enum.map(&normalize_tracker_state/1)
-          |> MapSet.new()
-
-        MapSet.member?(normalized_states, normalize_tracker_state(issue.state))
-
-      _ ->
-        true
-    end
-  end
-
-  defp passes_assignee_filter?(issue, filters) do
-    case Map.get(filters, "assignee") do
-      assignee when is_binary(assignee) and assignee != "" ->
-        issue.assignee_id == assignee
-
-      _ ->
-        true
-    end
+    if File.exists?(issue.workpad_path), do: File.cp(issue.workpad_path, workpad_target), else: :ok
   end
 
   defp normalize_storage_state(state_name), do: Issue.storage_state_from_tracker_state(state_name)
