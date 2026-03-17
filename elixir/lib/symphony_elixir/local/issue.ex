@@ -189,24 +189,15 @@ defmodule SymphonyElixir.Local.Issue do
       ["---" | tail] ->
         {frontmatter_lines, rest} = Enum.split_while(tail, &(&1 != "---"))
 
-        frontmatter =
-          case rest do
-            ["---" | _body_lines] ->
-              frontmatter_lines
-              |> Enum.join("\n")
-              |> YamlElixir.read_from_string!()
-
-            _ ->
-              %{}
-          end
-
         body =
           case rest do
             ["---" | body_lines] -> Enum.join(body_lines, "\n") |> String.trim()
             _ -> contents |> String.trim()
           end
 
-        {:ok, {frontmatter || %{}, body}}
+        frontmatter_lines
+        |> decode_delimited_frontmatter(rest, path)
+        |> frontmatter_with_body(body)
 
       _ ->
         {:ok, {%{}, String.trim(contents)}}
@@ -217,5 +208,32 @@ defmodule SymphonyElixir.Local.Issue do
 
     error ->
       {:error, {:invalid_frontmatter, path, Exception.message(error)}}
+  end
+
+  defp decode_delimited_frontmatter(frontmatter_lines, ["---" | _], path),
+    do: decode_frontmatter(frontmatter_lines, path)
+
+  defp decode_delimited_frontmatter(_frontmatter_lines, _rest, _path), do: {:ok, %{}}
+
+  defp frontmatter_with_body({:ok, frontmatter}, body), do: {:ok, {frontmatter, body}}
+  defp frontmatter_with_body({:error, _reason} = error, _body), do: error
+
+  defp decode_frontmatter(frontmatter_lines, path) when is_list(frontmatter_lines) do
+    frontmatter_lines
+    |> Enum.join("\n")
+    |> YamlElixir.read_from_string()
+    |> case do
+      {:ok, nil} ->
+        {:ok, %{}}
+
+      {:ok, frontmatter} when is_map(frontmatter) ->
+        {:ok, frontmatter}
+
+      {:ok, _frontmatter} ->
+        {:error, {:invalid_frontmatter, path, "frontmatter must decode to a map"}}
+
+      {:error, reason} ->
+        {:error, {:invalid_frontmatter, path, inspect(reason)}}
+    end
   end
 end

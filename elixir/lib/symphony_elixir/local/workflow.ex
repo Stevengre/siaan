@@ -129,30 +129,64 @@ defmodule SymphonyElixir.Local.Workflow do
     |> reverse_normalized_values()
   end
 
-  defp reverse_normalized_values({:ok, normalized_values}), do: {:ok, Enum.reverse(normalized_values)}
+  defp reverse_normalized_values({:ok, normalized_values}),
+    do: {:ok, Enum.reverse(normalized_values)}
+
   defp reverse_normalized_values({:error, _reason} = error), do: error
 
   defp normalize_activity(%{"skill" => name}) do
-    {:ok, %Activity{type: :skill, name: to_string(name)}}
+    with {:ok, normalized_name} <- normalize_activity_name(:skill, name) do
+      {:ok, %Activity{type: :skill, name: normalized_name}}
+    end
   end
 
   defp normalize_activity(%{"check" => name} = activity) do
-    {:ok, %Activity{type: :check, name: to_string(name), interval: Map.get(activity, "interval")}}
+    with {:ok, normalized_name} <- normalize_activity_name(:check, name) do
+      {:ok, %Activity{type: :check, name: normalized_name, interval: Map.get(activity, "interval")}}
+    end
   end
 
   defp normalize_activity(activity), do: {:error, {:invalid_activity, activity}}
 
   defp normalize_transition(%{"to" => target} = transition) do
-    case Map.get(transition, "when", []) do
-      conditions when is_list(conditions) ->
-        {:ok, %Transition{to: to_string(target), when: Enum.map(conditions, &to_string/1)}}
-
-      value ->
-        {:error, {:invalid_transition_conditions, to_string(target), value}}
+    with {:ok, normalized_target} <- normalize_transition_target(target),
+         {:ok, normalized_conditions} <-
+           normalize_transition_conditions(normalized_target, Map.get(transition, "when", [])) do
+      {:ok, %Transition{to: normalized_target, when: normalized_conditions}}
     end
   end
 
   defp normalize_transition(transition), do: {:error, {:invalid_transition, transition}}
+
+  defp normalize_activity_name(type, value) when type in [:skill, :check] do
+    if is_binary(value) do
+      {:ok, value}
+    else
+      {:error, {:invalid_activity_name, type, value}}
+    end
+  end
+
+  defp normalize_transition_target(target) do
+    if is_binary(target) do
+      {:ok, target}
+    else
+      {:error, {:invalid_transition_target, target}}
+    end
+  end
+
+  defp normalize_transition_conditions(target, conditions) when is_list(conditions) do
+    Enum.reduce_while(conditions, {:ok, []}, fn condition, {:ok, acc} ->
+      if is_binary(condition) do
+        {:cont, {:ok, [condition | acc]}}
+      else
+        {:halt, {:error, {:invalid_transition_condition, target, condition}}}
+      end
+    end)
+    |> reverse_normalized_values()
+  end
+
+  defp normalize_transition_conditions(target, value),
+    do: {:error, {:invalid_transition_conditions, target, value}}
 
   defp transition_matches?(%Transition{to: target, when: conditions}, issue_path, opts) do
     Logger.info("Evaluating workflow transition target=#{target} issue_path=#{issue_path}")

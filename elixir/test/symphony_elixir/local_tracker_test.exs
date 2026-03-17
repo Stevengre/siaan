@@ -306,9 +306,47 @@ defmodule SymphonyElixir.LocalTrackerTest do
     File.write!(workflow_path, "ready:\n  activities:\n    - skll: typo\n")
     assert {:error, {:invalid_activity, %{"skll" => "typo"}}} = LocalWorkflow.load(workflow_path)
 
+    File.write!(workflow_path, "ready:\n  activities:\n    - skill:\n        nested: value\n")
+
+    assert {:error, {:invalid_activity_name, :skill, %{"nested" => "value"}}} =
+             LocalWorkflow.load(workflow_path)
+
+    File.write!(workflow_path, "ready:\n  activities:\n    - check:\n        nested: value\n")
+
+    assert {:error, {:invalid_activity_name, :check, %{"nested" => "value"}}} =
+             LocalWorkflow.load(workflow_path)
+
     File.write!(workflow_path, "ready:\n  transitions:\n    - to: review\n      when:\n")
 
     assert {:error, {:invalid_transition_conditions, "review", nil}} =
+             LocalWorkflow.load(workflow_path)
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        transitions:
+          - to:
+              nested: review
+      """
+    )
+
+    assert {:error, {:invalid_transition_target, %{"nested" => "review"}}} =
+             LocalWorkflow.load(workflow_path)
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        transitions:
+          - to: review
+            when:
+              - nested:
+                  check: value
+      """
+    )
+
+    assert {:error, {:invalid_transition_condition, "review", %{"nested" => %{"check" => "value"}}}} =
              LocalWorkflow.load(workflow_path)
   end
 
@@ -540,6 +578,19 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:error, {:invalid_frontmatter, _, _}} =
              LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/bad.md"))
+
+    File.write!(
+      Path.join(issue_root, "ready/list-frontmatter.md"),
+      """
+      ---
+      - item
+      ---
+      broken
+      """
+    )
+
+    assert {:error, {:invalid_frontmatter, _, _}} =
+             LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/list-frontmatter.md"))
   end
 
   test "local issue helpers preserve project runtime metadata on loaded issues" do
@@ -645,7 +696,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, [issue]} = LocalIssue.scan_root(issue_root, project_dir, workflow)
     assert issue.id == "queued"
 
-    assert {:ok, same_issue} = LocalIssue.load_by_slug(issue_root, "queued", project_dir, workflow)
+    assert {:ok, same_issue} =
+             LocalIssue.load_by_slug(issue_root, "queued", project_dir, workflow)
+
     assert same_issue.id == "queued"
   end
 
@@ -1110,7 +1163,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
-    {frontmatter, _body} = LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "issue.md"]))
+
+    {frontmatter, _body} =
+      LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "issue.md"]))
 
     assert frontmatter["identifier"] == "GH-42"
     assert frontmatter["title"] == "Fix #42: local-first orchestration"
@@ -1178,7 +1233,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
-    {frontmatter, _body} = LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "issue.md"]))
+
+    {frontmatter, _body} =
+      LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "issue.md"]))
 
     assert frontmatter["status"] == "in-progress"
     assert frontmatter["metadata"]["owner"] == "orchestrator"
@@ -1247,7 +1304,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     File.mkdir_p!(Path.join([issue_root, "ready", "#{slug}.artifacts"]))
-    File.write!(Path.join([issue_root, "ready", "#{slug}.artifacts", "description-reviewer.md"]), "artifact")
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.artifacts", "description-reviewer.md"]),
+      "artifact"
+    )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
       tracker_kind: "local",
@@ -1260,7 +1321,10 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
     assert File.exists?(Path.join([issue_root, "in-progress", slug, "issue.md"]))
     assert File.exists?(Path.join([issue_root, "in-progress", slug, "workpad.md"]))
-    assert File.read!(Path.join([issue_root, "in-progress", slug, "workpad.md"])) =~ "Prior work context."
+
+    assert File.read!(Path.join([issue_root, "in-progress", slug, "workpad.md"])) =~
+             "Prior work context."
+
     assert File.exists?(Path.join([issue_root, "in-progress", slug, "description-reviewer.md"]))
 
     {workpad_frontmatter, _body} =
@@ -1486,7 +1550,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert :ok = Adapter.update_issue_state(slug, "status:ready")
     assert File.exists?(Path.join([issue_root, "ready", "#{slug}.md"]))
     assert File.exists?(Path.join([issue_root, "ready", "#{slug}.workpad.md"]))
+
     assert File.exists?(Path.join([issue_root, "ready", "#{slug}.artifacts", "description-reviewer.md"]))
+
     refute File.exists?(issue_dir)
 
     assert {:ok, [issue]} = Adapter.fetch_issue_states_by_ids([slug])
@@ -1605,7 +1671,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
       end
     end)
 
-    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
+    assert :ok =
+             Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
+
     SymphonyElixir.Workflow.set_workflow_file_path(Path.join(tmp_dir!("missing-workflow"), "missing.md"))
 
     issue = %Issue{
@@ -1651,7 +1719,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     settings = Config.settings!()
-    assert settings.tracker.local_config_path == Path.join(System.user_home!(), ".config/skills/issue-config/config.toml")
+
+    assert settings.tracker.local_config_path ==
+             Path.join(System.user_home!(), ".config/skills/issue-config/config.toml")
   end
 
   test "config expands bare ~ in local tracker config path" do
@@ -1697,7 +1767,10 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert :ok = Tracker.create_comment("ignored", "ignored")
     assert {:ok, false} = Tracker.has_actionable_pr_feedback?("ignored", ["Stevengre"])
     assert {:ok, false} = Tracker.has_pr_approval?("ignored")
-    assert {:ok, :needs_agent, ["unsupported tracker"]} = Tracker.check_auto_merge_readiness("ignored")
+
+    assert {:ok, :needs_agent, ["unsupported tracker"]} =
+             Tracker.check_auto_merge_readiness("ignored")
+
     assert {:error, :unsupported_tracker} = Tracker.auto_merge_pr(123)
   end
 end
