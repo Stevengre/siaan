@@ -221,7 +221,11 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(" sort  "),
         Span::styled("Space", Style::default().fg(Color::Yellow)),
-        Span::raw(" fold(issue/project)  "),
+        Span::raw(" fold issue  "),
+        Span::styled("p", Style::default().fg(Color::Yellow)),
+        Span::raw(" fold project  "),
+        Span::styled("a", Style::default().fg(Color::Yellow)),
+        Span::raw(" fold all  "),
         Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(" quit"),
     ]);

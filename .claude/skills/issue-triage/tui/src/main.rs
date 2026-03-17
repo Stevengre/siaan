@@ -106,6 +106,8 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Ac
                 KeyCode::Char('n') => return Ok(Action::New),
                 KeyCode::Tab => app.cycle_sort(),
                 KeyCode::Char(' ') => app.toggle_collapse(),
+                KeyCode::Char('p') => app.toggle_project_collapse(),
+                KeyCode::Char('a') => app.toggle_all_projects(),
                 _ => {}
             }
         }

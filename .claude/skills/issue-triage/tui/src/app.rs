@@ -74,8 +74,7 @@ impl App {
         }
     }
 
-    /// Toggle collapse for the selected issue subtree (when it has children),
-    /// otherwise toggle collapse for the issue's project group.
+    /// Toggle collapse for the selected issue subtree (only when it has children).
     pub fn toggle_collapse(&mut self) {
         let rows_before = self.display_rows();
         let row_idx = tree::selectable_to_row_index(&rows_before, self.selected);
@@ -98,8 +97,13 @@ impl App {
 
             let rows_after = self.display_rows();
             self.selected = nearest_selectable_index(&rows_after, row_idx).unwrap_or_default();
-            return;
         }
+    }
+
+    /// Toggle collapse on the project that the current selection belongs to.
+    pub fn toggle_project_collapse(&mut self) {
+        let rows_before = self.display_rows();
+        let row_idx = tree::selectable_to_row_index(&rows_before, self.selected);
 
         // Walk backwards from current row to find its project header.
         let project = rows_before[..=row_idx].iter().rev().find_map(|r| match r {
@@ -118,6 +122,35 @@ impl App {
             let rows_after = self.display_rows();
             self.selected = nearest_selectable_index(&rows_after, row_idx).unwrap_or_default();
         }
+    }
+
+    /// Toggle all project groups:
+    /// if all are collapsed -> expand all, otherwise collapse all.
+    pub fn toggle_all_projects(&mut self) {
+        let rows_before = self.display_rows();
+        let project_names: Vec<String> = rows_before
+            .iter()
+            .filter_map(|r| match r {
+                DisplayRow::ProjectHeader { name, .. } => Some((*name).to_string()),
+                _ => None,
+            })
+            .collect();
+        if project_names.is_empty() {
+            return;
+        }
+
+        let all_collapsed = project_names
+            .iter()
+            .all(|name| self.collapsed_projects.contains(name));
+
+        if all_collapsed {
+            self.collapsed_projects.clear();
+        } else {
+            self.collapsed_projects.extend(project_names);
+        }
+
+        let rows_after = self.display_rows();
+        self.selected = nearest_selectable_index(&rows_after, 0).unwrap_or_default();
     }
 
     pub fn cycle_sort(&mut self) {
@@ -310,18 +343,8 @@ agents:
 
         assert_eq!(app.selectable_count(), 2);
 
-        // Collapse the project the first selected issue belongs to
+        // Space now only folds issue subtree, and leaf issues should no-op.
         app.toggle_collapse();
-        assert_eq!(app.selectable_count(), 1);
-
-        // Clamp should have moved selection to the only remaining issue
-        assert_eq!(app.selected, 0);
-
-        // Toggle again — now we're on the other project, so this collapses that one
-        // Need to expand the first one, so let's toggle collapse on current selection's project
-        // Actually the selection moved to the other project's issue, so toggling collapses that
-        // Let's just verify we can expand by inserting the first project back
-        app.collapsed_projects.clear();
         assert_eq!(app.selectable_count(), 2);
     }
 
@@ -331,7 +354,7 @@ agents:
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         app.selected = 1; // second project's only issue
 
-        app.toggle_collapse(); // collapses beta
+        app.toggle_project_collapse(); // collapses beta
 
         // beta hidden, alpha remains; selection should move to remaining issue
         assert_eq!(app.selectable_count(), 1);
@@ -361,7 +384,7 @@ agents:
         app.collapsed_projects.insert("test".to_string());
         app.selected = 0;
 
-        app.toggle_collapse();
+        app.toggle_project_collapse();
         assert!(!app.collapsed_projects.contains("test"));
     }
 
@@ -409,8 +432,44 @@ priority: p1
         .unwrap();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         let before = app.selectable_count();
-        app.toggle_collapse();
+        app.toggle_project_collapse();
         assert_eq!(app.selectable_count(), before);
+    }
+
+    #[test]
+    fn test_toggle_all_projects_collapses_and_expands() {
+        let dir = setup_multi_project();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(app.selectable_count(), 2);
+
+        app.toggle_all_projects();
+        assert_eq!(app.selectable_count(), 0);
+        assert!(app.collapsed_projects.contains("alpha"));
+        assert!(app.collapsed_projects.contains("beta"));
+
+        app.toggle_all_projects();
+        assert_eq!(app.selectable_count(), 2);
+    }
+
+    #[test]
+    fn test_toggle_all_projects_no_headers_is_noop() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("orphan.md"),
+            r#"---
+title: Orphan
+type: task
+priority: p1
+---
+"#,
+        )
+        .unwrap();
+
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(app.selectable_count(), 1);
+        app.toggle_all_projects();
+        assert_eq!(app.selectable_count(), 1);
+        assert!(app.collapsed_projects.is_empty());
     }
 
     #[test]
