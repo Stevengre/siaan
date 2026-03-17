@@ -28,17 +28,40 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       title: "Dispatch transition test",
       description: "Ensure ready issues are retargeted before dispatch",
       state: "status:ready",
-      url: "https://example.org/issues/GH-500"
+      url: "https://example.org/issues/GH-500",
+      issue_path: "/tmp/ready/issue-ready-dispatch.md",
+      workpad_path: "/tmp/ready/issue-ready-dispatch.workpad.md"
     }
 
     assert {:ok, transitioned_issue} =
-             Orchestrator.transition_issue_for_dispatch_for_test(issue, fn issue_id, state_name ->
-               send(self(), {:update_issue_state_called, issue_id, state_name})
-               :ok
-             end)
+             Orchestrator.transition_issue_for_dispatch_for_test(
+               issue,
+               fn issue_id, state_name ->
+                 send(self(), {:update_issue_state_called, issue_id, state_name})
+                 :ok
+               end,
+               fn [issue_id] ->
+                 send(self(), {:fetch_issue_states_called, [issue_id]})
+
+                 {:ok,
+                  [
+                    %{
+                      issue
+                      | state: "status:in-progress",
+                        issue_path: "/tmp/in-progress/issue-ready-dispatch/issue.md",
+                        workpad_path: "/tmp/in-progress/issue-ready-dispatch/workpad.md",
+                        issue_dir: "/tmp/in-progress/issue-ready-dispatch"
+                    }
+                  ]}
+               end
+             )
 
     assert_receive {:update_issue_state_called, "issue-ready-dispatch", "status:in-progress"}
+    assert_receive {:fetch_issue_states_called, ["issue-ready-dispatch"]}
     assert transitioned_issue.state == "status:in-progress"
+    assert transitioned_issue.issue_path == "/tmp/in-progress/issue-ready-dispatch/issue.md"
+    assert transitioned_issue.workpad_path == "/tmp/in-progress/issue-ready-dispatch/workpad.md"
+    assert transitioned_issue.issue_dir == "/tmp/in-progress/issue-ready-dispatch"
   end
 
   test "ready issues are not dispatched when the transition to in-progress fails" do
@@ -58,6 +81,33 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              end)
 
     assert_receive {:update_issue_state_called, "issue-ready-dispatch-error", "status:in-progress"}
+  end
+
+  test "ready issues are not dispatched when the transitioned issue cannot be refreshed" do
+    issue = %Issue{
+      id: "issue-ready-refresh-error",
+      identifier: "GH-501A",
+      title: "Dispatch transition refresh failure",
+      description: "Do not dispatch when ready->in-progress refresh fails",
+      state: "status:ready",
+      url: "https://example.org/issues/GH-501A"
+    }
+
+    assert {:error, {:issue_state_refresh_failed, :stale_index}} =
+             Orchestrator.transition_issue_for_dispatch_for_test(
+               issue,
+               fn issue_id, state_name ->
+                 send(self(), {:update_issue_state_called, issue_id, state_name})
+                 :ok
+               end,
+               fn [issue_id] ->
+                 send(self(), {:fetch_issue_states_called, [issue_id]})
+                 {:error, :stale_index}
+               end
+             )
+
+    assert_receive {:update_issue_state_called, "issue-ready-refresh-error", "status:in-progress"}
+    assert_receive {:fetch_issue_states_called, ["issue-ready-refresh-error"]}
   end
 
   test "dispatch profile defaults start new issue sessions for ready transitions" do

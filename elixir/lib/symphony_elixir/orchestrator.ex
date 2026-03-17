@@ -487,11 +487,19 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
-  @spec transition_issue_for_dispatch_for_test(Issue.t(), (String.t(), String.t() -> term())) ::
+  @spec transition_issue_for_dispatch_for_test(
+          Issue.t(),
+          (String.t(), String.t() -> term()),
+          ([String.t()] -> {:ok, [Issue.t()]} | {:error, term()})
+        ) ::
           {:ok, Issue.t()} | {:error, term()}
-  def transition_issue_for_dispatch_for_test(%Issue{} = issue, update_issue_state_fun)
-      when is_function(update_issue_state_fun, 2) do
-    transition_issue_for_dispatch(issue, update_issue_state_fun)
+  def transition_issue_for_dispatch_for_test(
+        %Issue{} = issue,
+        update_issue_state_fun,
+        fetch_issue_states_fun \\ &Tracker.fetch_issue_states_by_ids/1
+      )
+      when is_function(update_issue_state_fun, 2) and is_function(fetch_issue_states_fun, 1) do
+    transition_issue_for_dispatch(issue, update_issue_state_fun, fetch_issue_states_fun)
   end
 
   @doc false
@@ -903,7 +911,11 @@ defmodule SymphonyElixir.Orchestrator do
       {:ok, %Issue{} = refreshed_issue} ->
         dispatch_transition = resolve_dispatch_transition(refreshed_issue, transition_name)
 
-        case transition_issue_for_dispatch(refreshed_issue, &Tracker.update_issue_state/2) do
+        case transition_issue_for_dispatch(
+               refreshed_issue,
+               &Tracker.update_issue_state/2,
+               &Tracker.fetch_issue_states_by_ids/1
+             ) do
           {:ok, %Issue{} = dispatch_issue} ->
             do_dispatch_issue(state, dispatch_issue, attempt, preferred_worker_host, dispatch_transition)
 
@@ -1249,13 +1261,18 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp revalidate_issue_for_dispatch(issue, _issue_fetcher, _terminal_states), do: {:ok, issue}
 
-  defp transition_issue_for_dispatch(%Issue{state: issue_state} = issue, update_issue_state_fun)
-       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) do
+  defp transition_issue_for_dispatch(
+         %Issue{state: issue_state} = issue,
+         update_issue_state_fun,
+         fetch_issue_states_fun
+       )
+       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) and
+              is_function(fetch_issue_states_fun, 1) do
     case normalize_issue_state(issue_state) do
       "status:ready" ->
         case update_issue_state_fun.(issue.id, "status:in-progress") do
           :ok ->
-            {:ok, %{issue | state: "status:in-progress"}}
+            refresh_transitioned_issue(issue, fetch_issue_states_fun)
 
           {:error, reason} ->
             {:error, reason}
@@ -1266,7 +1283,25 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp transition_issue_for_dispatch(issue, _update_issue_state_fun), do: {:ok, issue}
+  defp transition_issue_for_dispatch(issue, _update_issue_state_fun, _fetch_issue_states_fun),
+    do: {:ok, issue}
+
+  defp refresh_transitioned_issue(%Issue{id: issue_id}, fetch_issue_states_fun)
+       when is_binary(issue_id) and is_function(fetch_issue_states_fun, 1) do
+    case fetch_issue_states_fun.([issue_id]) do
+      {:ok, [%Issue{} = refreshed_issue | _]} ->
+        {:ok, refreshed_issue}
+
+      {:ok, []} ->
+        {:error, {:issue_state_refresh_failed, :issue_not_found}}
+
+      {:error, reason} ->
+        {:error, {:issue_state_refresh_failed, reason}}
+    end
+  end
+
+  defp refresh_transitioned_issue(issue, _fetch_issue_states_fun),
+    do: {:ok, %{issue | state: "status:in-progress"}}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{
