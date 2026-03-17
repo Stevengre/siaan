@@ -175,6 +175,13 @@ defmodule SymphonyElixir.Codex.AppServer do
     stop_port(port)
   end
 
+  @spec mark_physical_session_reuse(session()) :: session()
+  def mark_physical_session_reuse(session) when is_map(session) do
+    session
+    |> Map.put(:physical_session_reuse_decision, "reused_physical_session")
+    |> Map.put(:physical_session_fallback_reason, nil)
+  end
+
   defp validate_workspace_cwd(workspace, worker_host, allow_external_workspace)
 
   defp validate_workspace_cwd(workspace, nil, allow_external_workspace)

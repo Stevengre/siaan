@@ -20,19 +20,20 @@ This preserves issue-level observability such as total turns and aggregate token
 
 ## Physical Codex Session Reuse
 
-Symphony records the physical Codex thread id for observability, but it does not currently reuse
-that thread across redispatches.
+Symphony keeps a live Codex app-server session for an issue while that issue remains in the active
+or watch lifecycle. When a later dispatch targets the same issue, Symphony reuses that live
+physical session instead of starting a new thread.
 
-Today each agent dispatch owns its own Codex app-server port and `AgentRunner` always stops that
-session at the end of the run. Closing the app-server tears down the underlying Codex process, so
-the prior thread is no longer resumable on the next dispatch.
+This applies to:
 
-On `status:review -> status:in-progress`, Symphony still reuses the logical `issue_session_id`, but
-it starts a fresh physical Codex session and records why:
+- `status:review -> status:in-progress` re-entry when the prior runner/session is still alive
+- continuation retries while the same issue session stays resident in the orchestrator
+- multi-turn dispatches within the same long-lived runner
 
-- `missing_previous_physical_session_id`: no earlier physical thread id was persisted
-- `ephemeral_app_server_lifecycle`: a prior physical thread id existed, but the previous app-server
-  process was already torn down and cannot be resumed today
+If the live runner/session is gone, Symphony deterministically starts a fresh physical session and
+records the fallback reason. The persisted `physical_session_id` remains useful for observability,
+but the reusable runtime object is the live runner/app-server session, not just the stored thread
+id.
 
 ## Observability
 
