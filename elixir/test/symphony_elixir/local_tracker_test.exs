@@ -84,6 +84,50 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert project.workflow == Path.join(project_dir, ".claude/workflow.yaml")
   end
 
+  test "project config defaults missing runtime to local" do
+    root = tmp_dir!("local-project-config-default-runtime")
+    project_dir = Path.join(root, "repo")
+    config_path = Path.join(root, "config.toml")
+
+    File.mkdir_p!(Path.join(project_dir, ".claude"))
+    File.write!(Path.join(project_dir, ".claude/workflow.yaml"), "ready: {}\n")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = ".claude/workflow.yaml"
+      """
+    )
+
+    assert {:ok, project} = ProjectConfig.load(config_path, "siaan")
+    assert project.runtime == "local"
+  end
+
+  test "project config preserves # characters inside quoted values" do
+    root = tmp_dir!("local-project-config-hash-values")
+    project_dir = Path.join(root, "repo#exp")
+    config_path = Path.join(root, "config.toml")
+
+    File.mkdir_p!(Path.join(project_dir, ".claude"))
+    File.write!(Path.join(project_dir, ".claude/workflow#1.yaml"), "ready: {}\n")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "repo#exp"
+      workflow = ".claude/workflow#1.yaml"
+      runtime = "local"
+      """
+    )
+
+    assert {:ok, project} = ProjectConfig.load(config_path, "siaan")
+    assert project.dir == project_dir
+    assert project.workflow == Path.join(project_dir, ".claude/workflow#1.yaml")
+  end
+
   test "project config returns errors for missing projects and invalid assignments" do
     root = tmp_dir!("local-project-config-errors")
     config_path = Path.join(root, "config.toml")

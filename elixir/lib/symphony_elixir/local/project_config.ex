@@ -27,7 +27,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          name: project_name,
          dir: resolved_dir,
          workflow: resolve_path(config_path, workflow, resolved_dir),
-         runtime: Map.get(project, "runtime"),
+         runtime: normalize_runtime(Map.get(project, "runtime")),
          adapter: Map.get(project, "adapter", %{})
        }}
     end
@@ -107,10 +107,23 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   end
 
   defp strip_comment(line) do
-    case String.split(line, "#", parts: 2) do
-      [prefix, _comment] -> prefix
-      [prefix] -> prefix
-    end
+    {prefix, _quote?} =
+      line
+      |> String.to_charlist()
+      |> Enum.reduce_while({[], false}, fn char, {acc, quote?} ->
+        cond do
+          char == ?" ->
+            {:cont, {[char | acc], not quote?}}
+
+          char == ?# and not quote? ->
+            {:halt, {acc, quote?}}
+
+          true ->
+            {:cont, {[char | acc], quote?}}
+        end
+      end)
+
+    prefix |> Enum.reverse() |> List.to_string()
   end
 
   defp parse_value(value) when value in ["true", "false"], do: {:ok, value == "true"}
@@ -265,6 +278,10 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   defp expand_home("~/" <> tail), do: Path.join(System.user_home!(), tail)
   defp expand_home("~"), do: System.user_home!()
   defp expand_home(path), do: path
+
+  defp normalize_runtime(value) when value in [nil, ""], do: "local"
+  defp normalize_runtime(value) when is_binary(value), do: value
+  defp normalize_runtime(_value), do: "local"
 
   defp present_path?(value) when is_binary(value), do: String.trim(value) != ""
   defp present_path?(_value), do: false
