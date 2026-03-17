@@ -16,11 +16,20 @@ print-env:
 	@echo "CARGO_ENCODED_RUSTDOCFLAGS=$${CARGO_ENCODED_RUSTDOCFLAGS-}"
 
 scan:
-	! rg -n '#!\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
-	! rg -n '#\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
-	! rg -n 'cfg_attr\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
-	! rg -n 'include!\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
-	! rg -n '\bunsafe\b' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+	@set -eu; \
+	if command -v rg >/dev/null 2>&1; then \
+		! rg -n '#!\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock' --glob '!Makefile'; \
+		! rg -n '#\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock' --glob '!Makefile'; \
+		! rg -n 'cfg_attr\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock' --glob '!Makefile'; \
+		! rg -n 'include!\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock' --glob '!Makefile'; \
+		! rg -n '\bunsafe\b' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock' --glob '!Makefile'; \
+	else \
+		! grep -RInE '#!\[allow\(' . --exclude-dir=target --exclude-dir=.git --exclude=Cargo.lock --exclude=Makefile; \
+		! grep -RInE '#\[allow\(' . --exclude-dir=target --exclude-dir=.git --exclude=Cargo.lock --exclude=Makefile; \
+		! grep -RInE 'cfg_attr[[:space:]]*\(' . --exclude-dir=target --exclude-dir=.git --exclude=Cargo.lock --exclude=Makefile; \
+		! grep -RInE 'include![[:space:]]*\(' . --exclude-dir=target --exclude-dir=.git --exclude=Cargo.lock --exclude=Makefile; \
+		! grep -RInE '(^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$$)' . --exclude-dir=target --exclude-dir=.git --exclude=Cargo.lock --exclude=Makefile; \
+	fi
 
 # Format check (fails if not formatted)
 fmt:

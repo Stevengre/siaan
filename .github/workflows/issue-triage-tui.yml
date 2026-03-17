@@ -31,7 +31,7 @@ jobs:
       - name: Install cargo tools
         run: |
           cargo install --locked cargo-llvm-cov --version 0.6.15
-          cargo install --locked cargo-deny --version 0.18.5
+          cargo install --locked cargo-deny --version 0.19.0
 
       - name: Run quality + security gates
         run: make check
