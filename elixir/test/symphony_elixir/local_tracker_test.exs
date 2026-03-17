@@ -1425,6 +1425,27 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert String.ends_with?(bad_workpad_path, "/in-progress/#{bad_workpad_slug}/workpad.md")
   end
 
+  test "local issue rejects unclosed frontmatter blocks" do
+    issue_root = tmp_dir!("local-unclosed-frontmatter")
+    issue_path = Path.join(issue_root, "ready/truncated.md")
+
+    File.mkdir_p!(Path.dirname(issue_path))
+
+    File.write!(
+      issue_path,
+      """
+      ---
+      title: Truncated
+      status: ready
+      """
+    )
+
+    assert {:error, {:invalid_frontmatter, ^issue_path, message}} =
+             LocalIssue.read_frontmatter_safe(issue_path)
+
+    assert message =~ "missing closing frontmatter delimiter"
+  end
+
   test "local adapter returns an error when a requested transition is not declared" do
     issue_root = tmp_dir!("local-missing-transition")
     config_path = Path.join(issue_root, "config.toml")

@@ -213,7 +213,8 @@ defmodule SymphonyElixir.Local.Issue do
   defp decode_delimited_frontmatter(frontmatter_lines, ["---" | _], path),
     do: decode_frontmatter(frontmatter_lines, path)
 
-  defp decode_delimited_frontmatter(_frontmatter_lines, _rest, _path), do: {:ok, %{}}
+  defp decode_delimited_frontmatter(_frontmatter_lines, _rest, path),
+    do: {:error, {:invalid_frontmatter, path, "missing closing frontmatter delimiter"}}
 
   defp frontmatter_with_body({:ok, frontmatter}, body), do: {:ok, {frontmatter, body}}
   defp frontmatter_with_body({:error, _reason} = error, _body), do: error
