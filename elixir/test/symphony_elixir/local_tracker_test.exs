@@ -569,6 +569,54 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, []} = Adapter.fetch_candidate_issues()
   end
 
+  test "local adapter active states exclude sink workflow states" do
+    issue_root = tmp_dir!("local-active-states")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities: []
+        transitions:
+          - to: in-progress
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: review
+      review:
+        activities: []
+        transitions: []
+      done:
+        activities: []
+        transitions: []
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:fallback-ready"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert Enum.sort(Adapter.active_states()) == ["status:in-progress", "status:ready"]
+  end
+
   test "local issue helpers cover missing files and frontmatter fallbacks" do
     issue_root = tmp_dir!("local-issue-helper-coverage")
     project_dir = Path.expand("..", File.cwd!())

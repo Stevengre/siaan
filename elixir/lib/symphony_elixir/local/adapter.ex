@@ -108,11 +108,12 @@ defmodule SymphonyElixir.Local.Adapter do
     case load_context() do
       {:ok, context} ->
         context.workflow
-        |> workflow_state_names()
+        |> active_workflow_state_names()
         |> Enum.map(&Issue.tracker_state_from_storage_state/1)
+        |> fallback_active_states_if_empty()
 
       {:error, _reason} ->
-        Config.settings!().tracker.active_states || []
+        fallback_active_states()
     end
   end
 
@@ -175,6 +176,25 @@ defmodule SymphonyElixir.Local.Adapter do
     workflow
     |> Map.keys()
     |> Enum.filter(&is_binary/1)
+  end
+
+  defp active_workflow_state_names(workflow) when is_map(workflow) do
+    workflow
+    |> workflow_state_names()
+    |> Enum.filter(&active_workflow_state?(workflow, &1))
+  end
+
+  defp active_workflow_state?(workflow, state_name) when is_binary(state_name) do
+    case Map.get(workflow, state_name, %{activities: [], transitions: []}) do
+      %{activities: [_ | _]} ->
+        true
+
+      %{transitions: [_ | _]} ->
+        true
+
+      _ ->
+        false
+    end
   end
 
   defp dispatch_entry_state(workflow) when is_map(workflow) do
@@ -313,6 +333,13 @@ defmodule SymphonyElixir.Local.Adapter do
     do: {:error, {:no_declared_transition, issue_state, target_state}}
 
   defp ensure_transition(_transition, _issue_state, _target_state), do: :ok
+
+  defp fallback_active_states_if_empty([]), do: fallback_active_states()
+  defp fallback_active_states_if_empty(active_states), do: active_states
+
+  defp fallback_active_states do
+    Config.settings!().tracker.active_states || []
+  end
 
   defp transition_issue(issue, workpad_status, context) do
     with :ok <- move_issue(issue, workpad_status, context.root_path) do
