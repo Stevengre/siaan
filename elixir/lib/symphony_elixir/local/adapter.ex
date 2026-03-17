@@ -295,18 +295,37 @@ defmodule SymphonyElixir.Local.Adapter do
     |> Kernel.<>("\n")
   end
 
-  defp dump_frontmatter_entry(key, value) when is_binary(value), do: "#{key}: #{value}"
+  defp dump_frontmatter_entry(key, value) when is_binary(value), do: "#{key}: #{dump_yaml_string(value)}"
   defp dump_frontmatter_entry(key, value) when is_integer(value), do: "#{key}: #{value}"
   defp dump_frontmatter_entry(key, true), do: "#{key}: true"
   defp dump_frontmatter_entry(key, false), do: "#{key}: false"
   defp dump_frontmatter_entry(key, nil), do: "#{key}:"
 
   defp dump_frontmatter_entry(key, values) when is_list(values) do
-    items = Enum.map_join(values, "\n", &"  - #{&1}")
+    items = Enum.map_join(values, "\n", &"  - #{dump_yaml_value(&1)}")
     "#{key}:\n#{items}"
   end
 
-  defp dump_frontmatter_entry(key, value), do: "#{key}: #{inspect(value)}"
+  defp dump_frontmatter_entry(key, value), do: "#{key}: #{dump_yaml_value(value)}"
+
+  defp dump_yaml_value(value) when is_binary(value), do: dump_yaml_string(value)
+  defp dump_yaml_value(value) when is_integer(value), do: to_string(value)
+  defp dump_yaml_value(true), do: "true"
+  defp dump_yaml_value(false), do: "false"
+  defp dump_yaml_value(nil), do: "null"
+  defp dump_yaml_value(value), do: dump_yaml_string(inspect(value))
+
+  defp dump_yaml_string(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+      |> String.replace("\t", "\\t")
+
+    "\"#{escaped}\""
+  end
 
   defp read_workpad_status(path) do
     if File.exists?(path) do

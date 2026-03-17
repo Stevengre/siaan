@@ -18,11 +18,13 @@ defmodule SymphonyElixir.Local.ProjectConfig do
     with {:ok, contents} <- File.read(config_path),
          {:ok, document} <- parse_document(contents),
          {:ok, project} <- fetch_project(document, project_name) do
+      resolved_dir = resolve_path(config_path, Map.get(project, "dir"))
+
       {:ok,
        %__MODULE__{
          name: project_name,
-         dir: resolve_path(config_path, Map.get(project, "dir")),
-         workflow: resolve_path(config_path, Map.get(project, "workflow"), Map.get(project, "dir")),
+         dir: resolved_dir,
+         workflow: resolve_path(config_path, Map.get(project, "workflow"), resolved_dir),
          runtime: Map.get(project, "runtime"),
          adapter: Map.get(project, "adapter", %{})
        }}
@@ -229,12 +231,20 @@ defmodule SymphonyElixir.Local.ProjectConfig do
     config_root = Path.dirname(config_path)
 
     if present_path?(base_dir) do
-      project_root = expand_home(base_dir)
+      project_root =
+        base_dir
+        |> expand_home()
+        |> resolve_base_dir(config_root)
+
       candidate = Path.expand(expanded_path, project_root)
       if File.exists?(candidate), do: project_root, else: config_root
     else
       config_root
     end
+  end
+
+  defp resolve_base_dir(path, config_root) do
+    if Path.type(path) == :absolute, do: path, else: Path.expand(path, config_root)
   end
 
   defp expand_home("~/" <> tail), do: Path.join(System.user_home!(), tail)
