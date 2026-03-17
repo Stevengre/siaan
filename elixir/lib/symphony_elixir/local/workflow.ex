@@ -33,9 +33,10 @@ defmodule SymphonyElixir.Local.Workflow do
   @spec load(Path.t()) :: {:ok, t()} | {:error, term()}
   def load(path) when is_binary(path) do
     with {:ok, contents} <- File.read(path),
-         {:ok, decoded} <- YamlElixir.read_from_string(contents) do
+         {:ok, decoded} <- YamlElixir.read_from_string(contents),
+         {:ok, workflow} <- normalize(decoded) do
       if is_map(decoded) do
-        {:ok, normalize(decoded)}
+        {:ok, workflow}
       else
         {:error, :workflow_not_a_map}
       end
@@ -81,20 +82,36 @@ defmodule SymphonyElixir.Local.Workflow do
     end)
   end
 
-  defp normalize(decoded) do
-    Enum.reduce(decoded, %{}, fn {state_name, state_config}, acc ->
-      activities =
-        state_config
-        |> Map.get("activities", [])
-        |> Enum.map(&normalize_activity/1)
+  defp normalize(decoded) when is_map(decoded) do
+    Enum.reduce_while(decoded, {:ok, %{}}, fn {state_name, state_config}, {:ok, acc} ->
+      case normalize_state_config(state_name, state_config) do
+        {:ok, normalized_state_config} ->
+          {:cont, {:ok, Map.put(acc, to_string(state_name), normalized_state_config)}}
 
-      transitions =
-        state_config
-        |> Map.get("transitions", [])
-        |> Enum.map(&normalize_transition/1)
-
-      Map.put(acc, to_string(state_name), %{activities: activities, transitions: transitions})
+        {:error, _reason} = error ->
+          {:halt, error}
+      end
     end)
+  end
+
+  defp normalize(_decoded), do: {:error, :workflow_not_a_map}
+
+  defp normalize_state_config(_state_name, state_config) when is_map(state_config) do
+    activities =
+      state_config
+      |> Map.get("activities", [])
+      |> Enum.map(&normalize_activity/1)
+
+    transitions =
+      state_config
+      |> Map.get("transitions", [])
+      |> Enum.map(&normalize_transition/1)
+
+    {:ok, %{activities: activities, transitions: transitions}}
+  end
+
+  defp normalize_state_config(state_name, state_config) do
+    {:error, {:invalid_state_config, to_string(state_name), state_config}}
   end
 
   defp normalize_activity(%{"skill" => name}) do

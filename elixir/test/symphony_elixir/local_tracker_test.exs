@@ -189,6 +189,9 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     File.write!(workflow_path, "- not-a-map\n")
     assert {:error, :workflow_not_a_map} = LocalWorkflow.load(workflow_path)
+
+    File.write!(workflow_path, "ready:\n")
+    assert {:error, {:invalid_state_config, "ready", nil}} = LocalWorkflow.load(workflow_path)
   end
 
   test "local adapter transitions an in-progress issue to review from workpad intent when conditions pass" do
@@ -355,6 +358,41 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:error, {:invalid_frontmatter, _, _}} =
              LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/bad.md"))
+  end
+
+  test "local issue scan ignores collapsed workpad sidecars in file states" do
+    issue_root = tmp_dir!("local-issue-sidecar-scan")
+    project_dir = Path.expand("..", File.cwd!())
+    workflow = %{"ready" => %{activities: [], transitions: []}}
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    File.write!(
+      Path.join(issue_root, "ready/plain.md"),
+      """
+      ---
+      title: Plain issue
+      status: ready
+      ---
+      plain body
+      """
+    )
+
+    File.write!(
+      Path.join(issue_root, "ready/plain.workpad.md"),
+      """
+      ---
+      status: in-progress
+      ---
+      sidecar body
+      """
+    )
+
+    assert {:ok, [issue]} = LocalIssue.scan_root(issue_root, project_dir, workflow)
+    assert issue.id == "plain"
+
+    assert {:error, {:issue_not_found, "plain.workpad"}} =
+             LocalIssue.load_by_slug(issue_root, "plain.workpad", project_dir, workflow)
   end
 
   test "local issue scan ignores sibling directories that are not workflow states" do

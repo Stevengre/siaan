@@ -52,7 +52,7 @@ defmodule SymphonyElixir.Local.Issue do
   defp load_slug_from_state(state, root_path, slug, project_dir, workflow) do
     path = issue_path_for_state(root_path, state, slug)
 
-    if File.exists?(path) do
+    if issue_document_path?(state, path) and File.exists?(path) do
       build_issue(root_path, state, slug, path, project_dir, workflow)
     else
       :skip
@@ -73,7 +73,7 @@ defmodule SymphonyElixir.Local.Issue do
       else
         state_path
         |> File.ls!()
-        |> Enum.filter(&String.ends_with?(&1, ".md"))
+        |> Enum.filter(&issue_document_file?/1)
         |> Enum.map(fn file_name ->
           {Path.rootname(file_name), Path.join(state_path, file_name)}
         end)
@@ -149,6 +149,14 @@ defmodule SymphonyElixir.Local.Issue do
     workflow
     |> Map.keys()
     |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
+  end
+
+  defp issue_document_path?(state, path) when is_binary(state) and is_binary(path) do
+    MapSet.member?(@directory_states, state) or issue_document_file?(Path.basename(path))
+  end
+
+  defp issue_document_file?(file_name) when is_binary(file_name) do
+    String.ends_with?(file_name, ".md") and not String.ends_with?(file_name, ".workpad.md")
   end
 
   defp skill_template_path(file_name) when is_binary(file_name) do
