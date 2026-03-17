@@ -1236,6 +1236,46 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.worker_slots_available_for_test(state, remote_issue) == false
   end
 
+  test "worker_slots_available_for_test blocks concurrent local-runtime issues sharing a project dir" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_hosts: ["worker-a"],
+      worker_max_concurrent_agents_per_host: 1
+    )
+
+    state = %Orchestrator.State{
+      running: %{
+        "issue-1" => %{
+          worker_host: nil,
+          issue: %Issue{
+            id: "issue-1",
+            identifier: "GH-41",
+            project_runtime: "local",
+            project_dir: "/tmp/shared-project"
+          }
+        }
+      }
+    }
+
+    conflicting_issue =
+      %Issue{
+        id: "issue-2",
+        identifier: "GH-42",
+        project_runtime: "local",
+        project_dir: "/tmp/shared-project"
+      }
+
+    isolated_issue =
+      %Issue{
+        id: "issue-3",
+        identifier: "GH-43",
+        project_runtime: "local",
+        project_dir: "/tmp/other-project"
+      }
+
+    assert Orchestrator.worker_slots_available_for_test(state, conflicting_issue) == false
+    assert Orchestrator.worker_slots_available_for_test(state, isolated_issue) == true
+  end
+
   defp assert_due_offset_between(due_at_ms, earliest_ms, latest_ms, delay_ms) do
     assert due_at_ms >= earliest_ms + delay_ms
     assert due_at_ms <= latest_ms + delay_ms

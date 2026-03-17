@@ -70,10 +70,27 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   defp validate_adapter_filters(adapter, project_name) when is_map(adapter) do
     case Map.get(adapter, "filters", %{}) do
       filters when is_map(filters) ->
-        {:ok, adapter}
+        validate_state_filters(filters, adapter, project_name)
 
       value ->
         {:error, {:invalid_project_field_type, project_name, "adapter.filters", :map, value}}
+    end
+  end
+
+  defp validate_state_filters(filters, adapter, project_name) when is_map(filters) do
+    case Map.get(filters, "states") do
+      nil ->
+        {:ok, adapter}
+
+      states when is_list(states) ->
+        if Enum.all?(states, &is_binary/1) do
+          {:ok, adapter}
+        else
+          {:error, {:invalid_project_field_type, project_name, "adapter.filters.states", :string_list, states}}
+        end
+
+      value ->
+        {:error, {:invalid_project_field_type, project_name, "adapter.filters.states", :string_list, value}}
     end
   end
 

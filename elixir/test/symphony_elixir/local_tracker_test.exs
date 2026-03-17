@@ -791,6 +791,61 @@ defmodule SymphonyElixir.LocalTrackerTest do
              Adapter.fetch_candidate_issues()
   end
 
+  test "local adapter returns config errors for non-string state filter entries" do
+    issue_root = tmp_dir!("local-filter-state-entry-errors")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - skill: siaan-inprogress
+        transitions: []
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "ready", "wanted.md"]),
+      """
+      ---
+      title: Wanted
+      status: ready
+      assignee: Stevengre
+      ---
+      Wanted body
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+
+      [projects.siaan.adapter]
+      filters = { states = [1] }
+      """
+    )
+
+    assert {:error, {:invalid_project_field_type, "siaan", "adapter.filters.states", :string_list, [1]}} =
+             Adapter.fetch_candidate_issues()
+  end
+
   test "local adapter fetches issues by state and tolerates unknown ids" do
     issue_root = tmp_dir!("local-state-fetch")
     config_path = Path.join(issue_root, "config.toml")

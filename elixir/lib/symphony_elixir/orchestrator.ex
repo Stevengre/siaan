@@ -1543,7 +1543,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp worker_slots_available?(%State{} = state, issue, preferred_worker_host) do
-    select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity
+    select_worker_host(state, issue, preferred_worker_host) != :no_worker_capacity and
+      local_runtime_project_slots_available?(state.running, issue)
   end
 
   defp worker_host_slots_available?(%State{} = state, worker_host) when is_binary(worker_host) do
@@ -1554,6 +1555,28 @@ defmodule SymphonyElixir.Orchestrator do
       _ ->
         true
     end
+  end
+
+  defp local_runtime_project_slots_available?(running, %{project_runtime: runtime, project_dir: project_dir})
+       when runtime in ["local", :local] and is_map(running) and is_binary(project_dir) do
+    project_dir_key = local_runtime_project_dir_key(project_dir)
+
+    Enum.all?(running, fn
+      {_issue_id, %{issue: %Issue{project_runtime: running_runtime, project_dir: running_project_dir}}}
+      when running_runtime in ["local", :local] and is_binary(running_project_dir) ->
+        local_runtime_project_dir_key(running_project_dir) != project_dir_key
+
+      _ ->
+        true
+    end)
+  end
+
+  defp local_runtime_project_slots_available?(_running, _issue), do: true
+
+  defp local_runtime_project_dir_key(project_dir) when is_binary(project_dir) do
+    project_dir
+    |> Path.expand()
+    |> String.trim_trailing("/")
   end
 
   defp find_issue_by_id(issues, issue_id) when is_binary(issue_id) do
