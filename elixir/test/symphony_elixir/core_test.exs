@@ -2118,36 +2118,73 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "orchestrator restart terminates lingering persistent agent runners" do
-    issue = %Issue{
-      id: "issue-persistent-runner-restart",
-      identifier: "MT-248B",
-      title: "Restart cleanup",
-      description: "Ensure persistent runners do not survive orchestrator restarts",
-      state: "In Progress",
-      url: "https://example.org/issues/MT-248B",
-      labels: []
-    }
+    test_root = Path.join(System.tmp_dir!(), "symphony-elixir-agent-runner-restart-#{System.unique_integer([:positive])}")
+    workspace_root = Path.join(test_root, "workspaces")
+    codex_binary = Path.join(test_root, "fake-codex")
 
-    assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
-    assert {:ok, pid} = AgentRunner.start(issue, self())
-    assert Process.alive?(pid)
+    try do
+      File.mkdir_p!(workspace_root)
 
-    assert Enum.any?(
-             DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
-             fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
-           )
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
 
-    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
-    assert is_pid(orchestrator_pid)
-    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+      while IFS= read -r _line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-restart"}}}'
+            ;;
+        esac
+      done
+      """)
 
-    assert {:ok, restarted_orchestrator_pid} =
-             Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+      File.chmod!(codex_binary, 0o755)
 
-    assert is_pid(restarted_orchestrator_pid)
-    assert restarted_orchestrator_pid != orchestrator_pid
-    refute Process.alive?(pid)
-    assert DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor) == []
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 1
+      )
+
+      issue = %Issue{
+        id: "issue-persistent-runner-restart",
+        identifier: "MT-248B",
+        title: "Restart cleanup",
+        description: "Ensure persistent runners do not survive orchestrator restarts",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248B",
+        labels: []
+      }
+
+      assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
+      assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+      assert Process.alive?(pid)
+
+      assert Enum.any?(
+               DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
+               fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
+             )
+
+      orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+      assert is_pid(orchestrator_pid)
+      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+      assert {:ok, restarted_orchestrator_pid} =
+               Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+      assert is_pid(restarted_orchestrator_pid)
+      assert restarted_orchestrator_pid != orchestrator_pid
+      refute Process.alive?(pid)
+      assert DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor) == []
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "agent runner stops continuing once agent.max_turns is reached" do
