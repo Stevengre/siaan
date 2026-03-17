@@ -494,8 +494,7 @@ defmodule SymphonyElixir.AppServerTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        codex_command: "#{codex_binary} app-server",
-        codex_read_timeout_ms: 50
+        codex_command: "#{codex_binary} app-server"
       )
 
       issue = %Issue{
@@ -509,6 +508,12 @@ defmodule SymphonyElixir.AppServerTest do
       }
 
       assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-stale")
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_read_timeout_ms: 50
+      )
 
       assert {:error, :response_timeout} =
                AppServer.run_turn(
