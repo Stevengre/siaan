@@ -114,10 +114,10 @@ defmodule SymphonyElixir.Local.ProjectConfig do
       [raw_key, raw_value] ->
         key = String.trim(raw_key)
 
-        case parse_value(String.trim(raw_value)) do
-          {:ok, value} ->
-            {:cont, {:ok, {put_in_path(acc, path ++ [key], value), path}}}
-
+        with {:ok, value} <- parse_value(String.trim(raw_value)),
+             {:ok, updated_acc} <- put_in_path(acc, path ++ [key], value) do
+          {:cont, {:ok, {updated_acc, path}}}
+        else
           {:error, reason} ->
             {:halt, {:error, {:invalid_toml, line_no, reason}}}
         end
@@ -247,15 +247,19 @@ defmodule SymphonyElixir.Local.ProjectConfig do
     Enum.reverse([current |> Enum.reverse() |> List.to_string() | parts])
   end
 
-  defp put_in_path(map, [key], value), do: Map.put(map, key, value)
+  defp put_in_path(map, [key], value) when is_map(map), do: {:ok, Map.put(map, key, value)}
 
-  defp put_in_path(map, [key | rest], value) do
-    nested =
-      map
-      |> Map.get(key, %{})
-      |> put_in_path(rest, value)
+  defp put_in_path(map, [key | rest], value) when is_map(map) do
+    case Map.get(map, key, %{}) do
+      nested when is_map(nested) ->
+        case put_in_path(nested, rest, value) do
+          {:ok, updated_nested} -> {:ok, Map.put(map, key, updated_nested)}
+          {:error, _reason} = error -> error
+        end
 
-    Map.put(map, key, nested)
+      nested ->
+        {:error, {:invalid_section_parent, key, nested}}
+    end
   end
 
   defp resolve_path(config_path, path), do: resolve_path(config_path, path, nil)

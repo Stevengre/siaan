@@ -149,6 +149,20 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:error, {:invalid_toml, 2, :invalid_assignment}} =
              ProjectConfig.load(config_path, "siaan")
+
+    File.write!(
+      config_path,
+      """
+      projects = "broken"
+
+      [projects.siaan]
+      dir = "/tmp/repo"
+      workflow = "workflow.yaml"
+      """
+    )
+
+    assert {:error, {:invalid_toml, 4, {:invalid_section_parent, "projects", "broken"}}} =
+             ProjectConfig.load(config_path, "siaan")
   end
 
   test "project config rejects non-map adapter and filters values" do
@@ -1498,6 +1512,36 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert settings.tracker.active_states == ["status:ready", "status:in-progress"]
     assert settings.tracker.terminal_states == ["status:done"]
     assert :ok = Config.validate!()
+  end
+
+  test "config expands ~ in local tracker config path" do
+    relative_home_path = "~/.config/skills/issue-config/config.toml"
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_endpoint: nil,
+      tracker_local_config_path: relative_home_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: nil,
+      tracker_terminal_states: nil
+    )
+
+    settings = Config.settings!()
+    assert settings.tracker.local_config_path == Path.join(System.user_home!(), ".config/skills/issue-config/config.toml")
+  end
+
+  test "config expands bare ~ in local tracker config path" do
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_endpoint: nil,
+      tracker_local_config_path: "~",
+      tracker_local_project: "siaan",
+      tracker_active_states: nil,
+      tracker_terminal_states: nil
+    )
+
+    settings = Config.settings!()
+    assert settings.tracker.local_config_path == System.user_home!()
   end
 
   test "config local tracker validation fails when required fields are missing" do

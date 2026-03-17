@@ -533,7 +533,7 @@ defmodule SymphonyElixir.Config.Schema do
         api_key: resolve_secret_setting(settings.tracker.api_key, api_key_fallback),
         repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
-        local_config_path: resolve_path_value(settings.tracker.local_config_path, nil),
+        local_config_path: resolve_local_config_path(settings.tracker.local_config_path),
         local_project: resolve_secret_setting(settings.tracker.local_project, "siaan"),
         ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
         active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
@@ -688,6 +688,21 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp resolve_path_value(nil, default), do: default
+
+  defp resolve_local_config_path(value) do
+    case resolve_path_value(value, nil) do
+      nil -> nil
+      path -> expand_home_path(path)
+    end
+  end
+
+  defp expand_home_path("~"), do: System.user_home!()
+
+  defp expand_home_path("~/" <> rest) do
+    Path.join(System.user_home!(), rest)
+  end
+
+  defp expand_home_path(path), do: path
 
   defp default_workspace_root_for_tracker(%{kind: "github", repo_owner: owner, repo_name: repo})
        when is_binary(owner) and owner != "" and is_binary(repo) and repo != "" do
