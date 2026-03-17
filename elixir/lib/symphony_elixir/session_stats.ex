@@ -203,6 +203,8 @@ defmodule SymphonyElixir.SessionStats do
       execution_transition: Map.get(running_entry, :execution_transition),
       session_reuse_policy: Map.get(running_entry, :session_reuse_policy),
       session_reuse_decision: Map.get(running_entry, :session_reuse_decision),
+      physical_session_reuse_decision: Map.get(running_entry, :physical_session_reuse_decision),
+      physical_session_fallback_reason: Map.get(running_entry, :physical_session_fallback_reason),
       physical_session_id: Map.get(running_entry, :codex_thread_id),
       physical_session_count: Map.get(running_entry, :physical_session_count, 0),
       issue_session_turn_count: Map.get(running_entry, :issue_session_turn_count, 0)
@@ -232,6 +234,8 @@ defmodule SymphonyElixir.SessionStats do
       "execution_transition" => Map.get(running_entry, :execution_transition),
       "session_reuse_policy" => Map.get(running_entry, :session_reuse_policy),
       "session_reuse_decision" => Map.get(running_entry, :session_reuse_decision),
+      "physical_session_reuse_decision" => Map.get(running_entry, :physical_session_reuse_decision),
+      "physical_session_fallback_reason" => Map.get(running_entry, :physical_session_fallback_reason),
       "physical_session_id" => Map.get(running_entry, :codex_thread_id),
       "physical_session_count" => Map.get(running_entry, :physical_session_count, 0),
       "repo_head_sha" => git.repo_head_sha,

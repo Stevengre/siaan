@@ -183,6 +183,188 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server reuses an existing physical Codex thread when turn/start accepts it" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-thread-reuse-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1001A")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-thread-reuse.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-thread-reuse.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-reused"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-thread-reuse",
+        identifier: "MT-1001A",
+        title: "Reuse physical thread",
+        description: "Keep the same thread id",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-1001A",
+        labels: ["backend"]
+      }
+
+      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-existing")
+      assert session.thread_id == "thread-existing"
+      assert session.resume_thread_id == "thread-existing"
+
+      assert {:ok, result} = AppServer.run_turn(session, "Resume this thread", issue)
+      assert result.thread_id == "thread-existing"
+      assert result.physical_session_reuse_decision == "reused_physical_session"
+      assert result.physical_session_fallback_reason == nil
+      assert result.app_session.thread_id == "thread-existing"
+      assert result.app_session.resume_thread_id == "thread-existing"
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server falls back to a fresh physical Codex thread when resume fails" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-thread-fallback-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1001B")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-thread-fallback.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-thread-fallback.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"error":{"message":"thread not found"}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-fresh"}}}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-fresh"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-thread-fallback",
+        identifier: "MT-1001B",
+        title: "Fallback to fresh physical thread",
+        description: "Resume thread no longer exists",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-1001B",
+        labels: ["backend"]
+      }
+
+      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-stale")
+
+      assert {:ok, result} =
+               AppServer.run_turn(
+                 session,
+                 "Resume this thread",
+                 issue,
+                 fallback_prompt: "Fresh session fallback prompt"
+               )
+
+      assert result.thread_id == "thread-fresh"
+      assert result.physical_session_reuse_decision == "started_new_physical_session"
+      assert result.physical_session_fallback_reason =~ "resume_turn_start_failed"
+      assert result.physical_session_fallback_reason =~ "thread not found"
+      assert result.app_session.thread_id == "thread-fresh"
+      assert result.app_session.resume_thread_id == nil
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
+      assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-stale\""))
+      assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-fresh\""))
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server marks request-for-input events as a hard failure" do
     test_root =
       Path.join(

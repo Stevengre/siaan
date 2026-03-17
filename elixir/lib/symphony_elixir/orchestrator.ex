@@ -939,7 +939,8 @@ defmodule SymphonyElixir.Orchestrator do
       attempt: attempt,
       worker_host: worker_host,
       codex_command: dispatch_profile.codex_command,
-      issue_turn_count: dispatch_profile.issue_turn_count
+      issue_turn_count: dispatch_profile.issue_turn_count,
+      resume_thread_id: dispatch_profile.codex_thread_id
     ]
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
@@ -966,6 +967,8 @@ defmodule SymphonyElixir.Orchestrator do
           execution_transition: dispatch_profile.transition_name,
           session_reuse_policy: dispatch_profile.session_reuse_policy,
           session_reuse_decision: dispatch_profile.session_reuse_decision,
+          physical_session_reuse_decision: dispatch_profile.physical_session_reuse_decision,
+          physical_session_fallback_reason: dispatch_profile.physical_session_fallback_reason,
           codex_command: dispatch_profile.codex_command,
           codex_thread_id: dispatch_profile.codex_thread_id,
           physical_session_count: dispatch_profile.physical_session_count,
@@ -1055,6 +1058,8 @@ defmodule SymphonyElixir.Orchestrator do
       profile_name: profile_name,
       session_reuse_policy: profile.session_reuse,
       session_reuse_decision: issue_session["session_reuse_decision"],
+      physical_session_reuse_decision: issue_session["physical_session_reuse_decision"],
+      physical_session_fallback_reason: issue_session["physical_session_fallback_reason"],
       issue_session_id: issue_session["issue_session_id"],
       issue_turn_count: Map.get(issue_session, "issue_session_turn_count", 0),
       physical_session_count: Map.get(issue_session, "physical_session_count", 0),
@@ -1106,6 +1111,9 @@ defmodule SymphonyElixir.Orchestrator do
         {new_issue_session(issue.id), "started_new_issue_session"}
       end
 
+    {physical_session_reuse_decision, physical_session_fallback_reason, physical_session_id} =
+      resolve_physical_session_reuse(existing_issue_session, profile, transition_name)
+
     Map.merge(base_session, %{
       "issue_id" => issue.id,
       "issue_identifier" => issue.identifier,
@@ -1113,8 +1121,11 @@ defmodule SymphonyElixir.Orchestrator do
       "execution_transition" => transition_name,
       "session_reuse_policy" => profile.session_reuse,
       "session_reuse_decision" => session_reuse_decision,
+      "physical_session_reuse_decision" => physical_session_reuse_decision,
+      "physical_session_fallback_reason" => physical_session_fallback_reason,
       "codex_command" => profile.codex_command,
       "model" => SessionStats.configured_model(profile.codex_command),
+      "physical_session_id" => physical_session_id,
       "updated_at" => now,
       "created_at" => Map.get(base_session, "created_at", now)
     })
@@ -1156,6 +1167,30 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp normalized_issue_session_id(_issue_session_id), do: nil
+
+  defp resolve_physical_session_reuse(existing_issue_session, profile, transition_name) do
+    if physical_session_reuse_allowed?(profile, transition_name) do
+      case existing_physical_session_id(existing_issue_session) do
+        thread_id when is_binary(thread_id) ->
+          {"attempting_physical_session_reuse", nil, thread_id}
+
+        _ ->
+          {"started_new_physical_session", "missing_previous_physical_session_id", nil}
+      end
+    else
+      {"started_new_physical_session", nil, nil}
+    end
+  end
+
+  defp physical_session_reuse_allowed?(profile, transition_name) do
+    profile.session_reuse == "reuse_issue_session" and transition_name != "ready_to_in_progress"
+  end
+
+  defp existing_physical_session_id(%{"physical_session_id" => thread_id})
+       when is_binary(thread_id) and thread_id != "",
+       do: thread_id
+
+  defp existing_physical_session_id(_existing_issue_session), do: nil
 
   defp record_issue_session(running_entry, issue, worker_host, dispatch_profile) do
     case persist_issue_session(running_entry, issue, worker_host, dispatch_profile) do
@@ -1202,6 +1237,8 @@ defmodule SymphonyElixir.Orchestrator do
       "execution_transition" => Map.get(running_entry, :execution_transition),
       "session_reuse_policy" => Map.get(running_entry, :session_reuse_policy),
       "session_reuse_decision" => Map.get(running_entry, :session_reuse_decision),
+      "physical_session_reuse_decision" => Map.get(running_entry, :physical_session_reuse_decision),
+      "physical_session_fallback_reason" => Map.get(running_entry, :physical_session_fallback_reason),
       "codex_command" => Map.get(running_entry, :codex_command),
       "model" => Map.get(running_entry, :codex_model),
       "issue_session_turn_count" => Map.get(running_entry, :issue_session_turn_count, 0),
@@ -1633,6 +1670,8 @@ defmodule SymphonyElixir.Orchestrator do
           execution_transition: stats.execution_transition,
           session_reuse_policy: stats.session_reuse_policy,
           session_reuse_decision: stats.session_reuse_decision,
+          physical_session_reuse_decision: stats.physical_session_reuse_decision,
+          physical_session_fallback_reason: stats.physical_session_fallback_reason,
           physical_session_id: stats.physical_session_id,
           physical_session_count: stats.physical_session_count,
           issue_session_turn_count: stats.issue_session_turn_count,
@@ -1720,6 +1759,16 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_message: summarize_codex_update(update),
         session_id: session_id_for_update(running_entry.session_id, update),
         codex_thread_id: physical_session_id_for_update(Map.get(running_entry, :codex_thread_id), update),
+        physical_session_reuse_decision:
+          physical_session_reuse_decision_for_update(
+            Map.get(running_entry, :physical_session_reuse_decision),
+            update
+          ),
+        physical_session_fallback_reason:
+          physical_session_fallback_reason_for_update(
+            Map.get(running_entry, :physical_session_fallback_reason),
+            update
+          ),
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
@@ -1768,6 +1817,25 @@ defmodule SymphonyElixir.Orchestrator do
     do: thread_id
 
   defp physical_session_id_for_update(existing, _update), do: existing
+
+  defp physical_session_reuse_decision_for_update(_existing, %{
+         physical_session_reuse_decision: decision
+       })
+       when is_binary(decision),
+       do: decision
+
+  defp physical_session_reuse_decision_for_update(existing, _update), do: existing
+
+  defp physical_session_fallback_reason_for_update(_existing, %{
+         physical_session_fallback_reason: reason
+       })
+       when is_binary(reason),
+       do: reason
+
+  defp physical_session_fallback_reason_for_update(_existing, %{physical_session_fallback_reason: nil}),
+    do: nil
+
+  defp physical_session_fallback_reason_for_update(existing, _update), do: existing
 
   defp turn_count_for_update(existing_count, existing_session_id, %{
          event: :session_started,

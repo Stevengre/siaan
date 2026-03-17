@@ -97,9 +97,15 @@ defmodule SymphonyElixir.AgentRunner do
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
     issue_turn_count = Keyword.get(opts, :issue_turn_count, 0)
     codex_command = Keyword.get(opts, :codex_command)
+    resume_thread_id = Keyword.get(opts, :resume_thread_id)
 
     with {:ok, session} <-
-           AppServer.start_session(workspace, worker_host: worker_host, codex_command: codex_command) do
+           AppServer.start_session(
+             workspace,
+             worker_host: worker_host,
+             codex_command: codex_command,
+             resume_thread_id: resume_thread_id
+           ) do
       try do
         run_context = %{
           workspace: workspace,
@@ -118,13 +124,14 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp do_run_codex_turns(app_session, issue, run_context, turn_number) do
-    prompt =
-      build_turn_prompt(
+    {prompt, fallback_prompt} =
+      build_turn_prompts(
         issue,
         run_context.opts,
         turn_number,
         run_context.max_turns,
-        run_context.issue_turn_count
+        run_context.issue_turn_count,
+        app_session
       )
 
     with {:ok, turn_session} <-
@@ -132,7 +139,8 @@ defmodule SymphonyElixir.AgentRunner do
              app_session,
              prompt,
              issue,
-             on_message: codex_message_handler(run_context.codex_update_recipient, issue)
+             on_message: codex_message_handler(run_context.codex_update_recipient, issue),
+             fallback_prompt: fallback_prompt
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{run_context.workspace} turn=#{turn_number}/#{run_context.max_turns}")
 
@@ -140,7 +148,7 @@ defmodule SymphonyElixir.AgentRunner do
         {:continue, refreshed_issue} when turn_number < run_context.max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{run_context.max_turns}")
 
-          do_run_codex_turns(app_session, refreshed_issue, run_context, turn_number + 1)
+          do_run_codex_turns(turn_session.app_session, refreshed_issue, run_context, turn_number + 1)
 
         {:continue, refreshed_issue} ->
           Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
@@ -171,7 +179,39 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp build_turn_prompt(_issue, _opts, turn_number, max_turns, issue_turn_count) do
+  defp build_turn_prompts(issue, opts, 1, _max_turns, 0, _app_session) do
+    {build_turn_prompt(issue, opts, 1, 0, 0), nil}
+  end
+
+  defp build_turn_prompts(issue, opts, 1, max_turns, issue_turn_count, %{resume_thread_id: resume_thread_id})
+       when is_binary(resume_thread_id) do
+    {
+      build_reused_physical_session_prompt(issue_turn_count, max_turns),
+      build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count)
+    }
+  end
+
+  defp build_turn_prompts(issue, opts, 1, max_turns, issue_turn_count, _app_session) do
+    {build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count), nil}
+  end
+
+  defp build_turn_prompts(_issue, _opts, turn_number, max_turns, issue_turn_count, _app_session) do
+    {build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count), nil}
+  end
+
+  defp build_reused_physical_session_prompt(issue_turn_count, max_turns) do
+    """
+    Continuation guidance:
+
+    - The issue returned to active work on the same physical Codex session/thread.
+    - This is continuation turn #1 of #{max_turns} for the current agent run.
+    - This corresponds to issue-session turn ##{issue_turn_count + 1}.
+    - The original task instructions and prior thread context are already present in this thread, so do not restate them before acting.
+    - Resume from the current workspace and workpad state instead of restarting from scratch.
+    """
+  end
+
+  defp build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count) do
     """
     Continuation guidance:
 
