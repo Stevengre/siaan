@@ -52,6 +52,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:project_slug, :string)
       field(:repo_owner, :string)
       field(:repo_name, :string)
+      field(:local_config_path, :string)
+      field(:local_project, :string)
       field(:ready_label, :string, default: "status:ready")
       field(:assignee, :string)
       field(:active_states, {:array, :string})
@@ -71,6 +73,8 @@ defmodule SymphonyElixir.Config.Schema do
           :project_slug,
           :repo_owner,
           :repo_name,
+          :local_config_path,
+          :local_project,
           :ready_label,
           :assignee,
           :active_states,
@@ -529,6 +533,8 @@ defmodule SymphonyElixir.Config.Schema do
         api_key: resolve_secret_setting(settings.tracker.api_key, api_key_fallback),
         repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
         repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
+        local_config_path: resolve_path_value(settings.tracker.local_config_path, nil),
+        local_project: resolve_secret_setting(settings.tracker.local_project, "siaan"),
         ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
         active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
         watch_states: resolve_watch_states(settings.tracker.watch_states),
@@ -591,6 +597,7 @@ defmodule SymphonyElixir.Config.Schema do
     default_endpoint =
       case kind do
         "github" -> "https://api.github.com/graphql"
+        "local" -> ""
         _ -> "https://api.linear.app/graphql"
       end
 
@@ -622,10 +629,12 @@ defmodule SymphonyElixir.Config.Schema do
   defp resolve_watch_states(watch_states), do: watch_states
 
   defp resolve_active_states("github", nil), do: ["status:ready", "status:in-progress"]
+  defp resolve_active_states("local", nil), do: ["status:ready", "status:in-progress"]
   defp resolve_active_states(_kind, nil), do: ["Todo", "In Progress"]
   defp resolve_active_states(_kind, active_states), do: active_states
 
   defp resolve_terminal_states("github", nil), do: ["closed"]
+  defp resolve_terminal_states("local", nil), do: ["status:done"]
   defp resolve_terminal_states(_kind, nil), do: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
   defp resolve_terminal_states(_kind, terminal_states), do: terminal_states
 

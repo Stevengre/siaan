@@ -160,6 +160,8 @@ defmodule SymphonyElixir.TestSupport do
           tracker_project_slug: "project",
           tracker_repo_owner: nil,
           tracker_repo_name: nil,
+          tracker_local_config_path: nil,
+          tracker_local_project: nil,
           tracker_ready_label: "status:ready",
           tracker_assignee: nil,
           tracker_active_states: ["Todo", "In Progress"],
@@ -202,6 +204,8 @@ defmodule SymphonyElixir.TestSupport do
     tracker_project_slug = Keyword.get(config, :tracker_project_slug)
     tracker_repo_owner = Keyword.get(config, :tracker_repo_owner)
     tracker_repo_name = Keyword.get(config, :tracker_repo_name)
+    tracker_local_config_path = Keyword.get(config, :tracker_local_config_path)
+    tracker_local_project = Keyword.get(config, :tracker_local_project)
     tracker_ready_label = Keyword.get(config, :tracker_ready_label)
     tracker_assignee = Keyword.get(config, :tracker_assignee)
     tracker_active_states = Keyword.get(config, :tracker_active_states)
@@ -245,6 +249,8 @@ defmodule SymphonyElixir.TestSupport do
         "  project_slug: #{yaml_value(tracker_project_slug)}",
         "  repo_owner: #{yaml_value(tracker_repo_owner)}",
         "  repo_name: #{yaml_value(tracker_repo_name)}",
+        "  local_config_path: #{yaml_value(tracker_local_config_path)}",
+        "  local_project: #{yaml_value(tracker_local_project)}",
         "  ready_label: #{yaml_value(tracker_ready_label)}",
         "  assignee: #{yaml_value(tracker_assignee)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
