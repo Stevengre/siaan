@@ -111,31 +111,48 @@ defmodule SymphonyElixir.Local.Workflow do
 
   defp normalize_list_field(state_name, state_config, key, mapper) when is_function(mapper, 1) do
     case Map.get(state_config, key, []) do
-      values when is_list(values) -> {:ok, Enum.map(values, mapper)}
-      value -> {:error, {:invalid_state_list, to_string(state_name), key, value}}
+      values when is_list(values) ->
+        normalize_list_values(values, mapper)
+
+      value ->
+        {:error, {:invalid_state_list, to_string(state_name), key, value}}
     end
   end
 
+  defp normalize_list_values(values, mapper) when is_list(values) and is_function(mapper, 1) do
+    Enum.reduce_while(values, {:ok, []}, fn value, {:ok, acc} ->
+      case mapper.(value) do
+        {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> reverse_normalized_values()
+  end
+
+  defp reverse_normalized_values({:ok, normalized_values}), do: {:ok, Enum.reverse(normalized_values)}
+  defp reverse_normalized_values({:error, _reason} = error), do: error
+
   defp normalize_activity(%{"skill" => name}) do
-    %Activity{type: :skill, name: to_string(name)}
+    {:ok, %Activity{type: :skill, name: to_string(name)}}
   end
 
   defp normalize_activity(%{"check" => name} = activity) do
-    %Activity{type: :check, name: to_string(name), interval: Map.get(activity, "interval")}
+    {:ok, %Activity{type: :check, name: to_string(name), interval: Map.get(activity, "interval")}}
   end
 
-  defp normalize_activity(activity) do
-    raise ArgumentError, "unsupported workflow activity: #{inspect(activity)}"
-  end
+  defp normalize_activity(activity), do: {:error, {:invalid_activity, activity}}
 
   defp normalize_transition(%{"to" => target} = transition) do
-    conditions =
-      transition
-      |> Map.get("when", [])
-      |> Enum.map(&to_string/1)
+    case Map.get(transition, "when", []) do
+      conditions when is_list(conditions) ->
+        {:ok, %Transition{to: to_string(target), when: Enum.map(conditions, &to_string/1)}}
 
-    %Transition{to: to_string(target), when: conditions}
+      value ->
+        {:error, {:invalid_transition_conditions, to_string(target), value}}
+    end
   end
+
+  defp normalize_transition(transition), do: {:error, {:invalid_transition, transition}}
 
   defp transition_matches?(%Transition{to: target, when: conditions}, issue_path, opts) do
     Logger.info("Evaluating workflow transition target=#{target} issue_path=#{issue_path}")

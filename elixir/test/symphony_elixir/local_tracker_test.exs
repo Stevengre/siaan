@@ -207,6 +207,14 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:error, {:invalid_state_list, "ready", "activities", nil}} =
              LocalWorkflow.load(workflow_path)
+
+    File.write!(workflow_path, "ready:\n  activities:\n    - skll: typo\n")
+    assert {:error, {:invalid_activity, %{"skll" => "typo"}}} = LocalWorkflow.load(workflow_path)
+
+    File.write!(workflow_path, "ready:\n  transitions:\n    - to: review\n      when:\n")
+
+    assert {:error, {:invalid_transition_conditions, "review", nil}} =
+             LocalWorkflow.load(workflow_path)
   end
 
   test "local adapter transitions an in-progress issue to review from workpad intent when conditions pass" do
@@ -682,6 +690,75 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:ok, [same_issue]} = Adapter.fetch_issue_states_by_ids([slug, "missing"])
     assert same_issue.id == slug
+  end
+
+  test "local adapter surfaces transition read errors during state refresh" do
+    issue_root = tmp_dir!("local-state-refresh-errors")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+    slug = "refresh-error"
+    issue_dir = Path.join([issue_root, "in-progress", slug])
+
+    File.mkdir_p!(issue_dir)
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: review
+            when: []
+      review:
+        activities: []
+        transitions: []
+      """
+    )
+
+    File.write!(
+      Path.join(issue_dir, "issue.md"),
+      """
+      ---
+      title: Refresh error
+      status: in-progress
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join(issue_dir, "workpad.md"),
+      """
+      ---
+      status: [unterminated
+      ---
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert {:error, {:invalid_frontmatter, path, _message}} =
+             Adapter.fetch_issue_states_by_ids([slug, "missing"])
+
+    assert path == Path.join(issue_dir, "workpad.md")
   end
 
   test "local adapter supports orchestrator ready to in-progress transition and preserves branch metadata" do

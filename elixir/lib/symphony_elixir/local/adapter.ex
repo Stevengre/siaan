@@ -69,10 +69,9 @@ defmodule SymphonyElixir.Local.Adapter do
 
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [term()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) when is_list(issue_ids) do
-    with {:ok, context} <- load_context() do
-      issues = Enum.flat_map(issue_ids, &fetch_issue_state(&1, context))
-
-      {:ok, issues}
+    with {:ok, context} <- load_context(),
+         {:ok, issues} <- collect_issue_states(issue_ids, context) do
+      {:ok, Enum.reverse(issues)}
     end
   end
 
@@ -130,14 +129,29 @@ defmodule SymphonyElixir.Local.Adapter do
          ) do
       {:ok, issue} ->
         case maybe_apply_transition(issue, context) do
-          {:ok, transitioned_issue} -> [transitioned_issue]
-          _ -> []
+          {:ok, transitioned_issue} -> {:ok, transitioned_issue}
+          {:error, _reason} = error -> error
         end
 
-      {:error, _reason} ->
-        []
+      {:error, {:issue_not_found, ^slug}} ->
+        {:ok, nil}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
+
+  defp collect_issue_states(issue_ids, context) when is_list(issue_ids) do
+    Enum.reduce_while(issue_ids, {:ok, []}, fn issue_id, {:ok, issues} ->
+      issue_id
+      |> fetch_issue_state(context)
+      |> append_issue_state(issues)
+    end)
+  end
+
+  defp append_issue_state({:ok, nil}, issues), do: {:cont, {:ok, issues}}
+  defp append_issue_state({:ok, issue}, issues), do: {:cont, {:ok, [issue | issues]}}
+  defp append_issue_state({:error, _reason} = error, _issues), do: {:halt, error}
 
   defp apply_transitions(issues, context) do
     Enum.reduce_while(issues, {:ok, []}, fn issue, {:ok, transitioned_issues} ->
