@@ -16,13 +16,22 @@ defmodule SymphonyElixir.Workspace do
     issue_context = issue_context(issue_or_identifier)
 
     try do
-      safe_id = safe_identifier(issue_context.issue_identifier)
+      case local_runtime_workspace(issue_or_identifier, worker_host) do
+        {:ok, workspace} ->
+          {:ok, workspace}
 
-      with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
-           :ok <- validate_workspace_path(workspace, worker_host),
-           {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
-           :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
-        {:ok, workspace}
+        {:error, _reason} = error ->
+          error
+
+        :ignore ->
+          safe_id = safe_identifier(issue_context.issue_identifier)
+
+          with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
+               :ok <- validate_workspace_path(workspace, worker_host),
+               {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
+               :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
+            {:ok, workspace}
+          end
       end
     rescue
       error in [ArgumentError, ErlangError, File.Error] ->
@@ -83,6 +92,28 @@ defmodule SymphonyElixir.Workspace do
     File.mkdir_p!(workspace)
     {:ok, workspace, true}
   end
+
+  defp local_runtime_workspace(
+         %{project_runtime: runtime, project_dir: project_dir},
+         nil
+       )
+       when runtime in ["local", :local] and is_binary(project_dir) do
+    if File.dir?(project_dir) do
+      PathSafety.canonicalize(project_dir)
+    else
+      {:error, {:project_dir_not_found, project_dir}}
+    end
+  end
+
+  defp local_runtime_workspace(
+         %{project_runtime: runtime},
+         worker_host
+       )
+       when runtime in ["local", :local] and is_binary(worker_host) do
+    {:error, {:unsupported_project_runtime_host, "local", worker_host}}
+  end
+
+  defp local_runtime_workspace(_issue_or_identifier, _worker_host), do: :ignore
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
   def remove(workspace), do: remove(workspace, nil)

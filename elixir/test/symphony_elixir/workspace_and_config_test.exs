@@ -171,6 +171,56 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "workspace returns a clear error when local runtime project_dir is missing" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-local-runtime-missing-project-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      missing_project_dir = Path.join(workspace_root, "missing-project")
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:project_dir_not_found, ^missing_project_dir}} =
+               Workspace.create_for_issue(%{
+                 identifier: "GH-42",
+                 project_runtime: "local",
+                 project_dir: missing_project_dir
+               })
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace rejects remote worker hosts for local runtime issues" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-local-runtime-remote-host-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      project_dir = Path.join(workspace_root, "project")
+      File.mkdir_p!(project_dir)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:unsupported_project_runtime_host, "local", "worker-01"}} =
+               Workspace.create_for_issue(
+                 %{
+                   identifier: "GH-42",
+                   project_runtime: "local",
+                   project_dir: project_dir
+                 },
+                 "worker-01"
+               )
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "workspace remove rejects the workspace root itself with a distinct error" do
     workspace_root =
       Path.join(
@@ -1355,6 +1405,79 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       assert {:error, {:unsafe_turn_sandbox_policy, {:invalid_workspace_root, 123}}} =
                Schema.resolve_runtime_turn_sandbox_policy(settings, 123)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "runtime sandbox policy resolution includes additional writable roots for local runtime issues" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-runtime-sandbox-extra-roots-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      issue_dir = Path.join(test_root, "issues/in-progress/GH-42")
+      issue_workspace = Path.join(workspace_root, "GH-42")
+
+      File.mkdir_p!(issue_workspace)
+      File.mkdir_p!(issue_dir)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      settings = Config.settings!()
+
+      assert {:ok, canonical_workspace_root} =
+               SymphonyElixir.PathSafety.canonicalize(issue_workspace)
+
+      assert {:ok, canonical_issue_dir} =
+               SymphonyElixir.PathSafety.canonicalize(issue_dir)
+
+      assert {:ok, policy} =
+               Schema.resolve_runtime_turn_sandbox_policy(
+                 settings,
+                 issue_workspace,
+                 writable_roots: [issue_dir, issue_dir]
+               )
+
+      assert policy == %{
+               "type" => "workspaceWrite",
+               "writableRoots" => [canonical_workspace_root, canonical_issue_dir],
+               "readOnlyAccess" => %{"type" => "fullAccess"},
+               "networkAccess" => false,
+               "excludeTmpdirEnvVar" => false,
+               "excludeSlashTmp" => false
+             }
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "runtime sandbox policy resolution rejects invalid additional writable roots" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-runtime-sandbox-invalid-root-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      issue_workspace = Path.join(workspace_root, "GH-42")
+
+      File.mkdir_p!(issue_workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      settings = Config.settings!()
+
+      assert {:error, {:unsafe_turn_sandbox_policy, {:invalid_workspace_root, 123}}} =
+               Schema.resolve_runtime_turn_sandbox_policy(
+                 settings,
+                 issue_workspace,
+                 writable_roots: [123]
+               )
     after
       File.rm_rf(test_root)
     end

@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Tracker do
   alias SymphonyElixir.Config
   alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
   alias SymphonyElixir.GitHub.Client, as: GitHubClient
+  alias SymphonyElixir.Local.Adapter, as: LocalAdapter
 
   @callback fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   @callback fetch_issues_by_states([String.t()]) :: {:ok, [term()]} | {:error, term()}
@@ -76,6 +77,7 @@ defmodule SymphonyElixir.Tracker do
     case Config.settings!().tracker.kind do
       "memory" -> SymphonyElixir.Tracker.Memory
       "github" -> GitHubAdapter
+      "local" -> LocalAdapter
       _ -> SymphonyElixir.Linear.Adapter
     end
   end

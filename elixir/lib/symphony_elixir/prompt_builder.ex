@@ -10,8 +10,7 @@ defmodule SymphonyElixir.PromptBuilder do
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
     {template, allowlist} =
-      Workflow.current()
-      |> prompt_context!()
+      prompt_context!(issue, Workflow.current())
 
     template
     |> Solid.render!(
@@ -25,7 +24,20 @@ defmodule SymphonyElixir.PromptBuilder do
     |> IO.iodata_to_binary()
   end
 
-  defp prompt_context!({:ok, %{config: config, prompt_template: prompt}}) do
+  defp prompt_context!(%{prompt_template_path: path}, _workflow_result) when is_binary(path) do
+    allowlist_values =
+      case Workflow.current() do
+        {:ok, %{config: config}} -> allowlist_values(config)
+        _ -> []
+      end
+
+    {
+      path |> File.read!() |> parse_template!(),
+      format_allowlist_values(allowlist_values)
+    }
+  end
+
+  defp prompt_context!(_issue, {:ok, %{config: config, prompt_template: prompt}}) do
     allowlist_values = allowlist_values(config)
 
     {
@@ -34,7 +46,7 @@ defmodule SymphonyElixir.PromptBuilder do
     }
   end
 
-  defp prompt_context!({:error, reason}) do
+  defp prompt_context!(_issue, {:error, reason}) do
     raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
   end
 

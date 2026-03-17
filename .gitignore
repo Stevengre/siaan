@@ -18,6 +18,7 @@ erl_crash.dump
 
 # Worktrees
 .worktrees/
+/tmp/
 
 # Env
 .env
