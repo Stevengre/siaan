@@ -1,0 +1,31 @@
+[package]
+name = "issue-tui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "issue_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "issue-tui"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+anyhow = "1"
+dirs = "6"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+warnings = "deny"

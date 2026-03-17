@@ -1,0 +1,37 @@
+name: issue-triage-tui
+
+on:
+  pull_request:
+    paths:
+      - ".claude/skills/issue-triage/tui/**"
+      - ".github/workflows/issue-triage-tui.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".claude/skills/issue-triage/tui/**"
+      - ".github/workflows/issue-triage-tui.yml"
+  workflow_dispatch:
+
+jobs:
+  rust-guard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .claude/skills/issue-triage/tui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Install cargo tools
+        run: |
+          cargo install --locked cargo-llvm-cov --version 0.6.15
+          cargo install --locked cargo-deny --version 0.18.5
+
+      - name: Run quality + security gates
+        run: make check
