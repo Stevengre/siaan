@@ -207,10 +207,11 @@ defmodule SymphonyElixir.Local.Adapter do
 
     case {source_directory?, target_directory?} do
       {true, true} ->
-        with :ok <- update_frontmatter_status(issue.issue_path, target_state) do
-          File.mkdir_p!(Path.dirname(target))
-          File.rename(source, target)
-          :ok
+        target_issue_path = Path.join(target, "issue.md")
+
+        with :ok <- File.mkdir_p(Path.dirname(target)),
+             :ok <- File.rename(source, target) do
+          update_frontmatter_status(target_issue_path, target_state)
         end
 
       {false, true} ->

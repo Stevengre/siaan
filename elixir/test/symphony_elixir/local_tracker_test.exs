@@ -277,6 +277,70 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert issue.state == "status:review"
   end
 
+  test "local adapter surfaces directory transition rename failures without rewriting source status" do
+    issue_root = tmp_dir!("local-transition-rename-failure")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+    slug = "rename-failure"
+    issue_dir = Path.join([issue_root, "in-progress", slug])
+    blocked_target = Path.join([issue_root, "review", slug])
+
+    File.mkdir_p!(issue_dir)
+    File.mkdir_p!(blocked_target)
+    File.write!(Path.join(blocked_target, "issue.md"), "occupied\n")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: review
+      review:
+        activities: []
+        transitions: []
+      """
+    )
+
+    File.write!(
+      Path.join(issue_dir, "issue.md"),
+      """
+      ---
+      title: Rename failure
+      status: in-progress
+      ---
+      Issue body
+      """
+    )
+
+    File.write!(Path.join(issue_dir, "workpad.md"), "---\nstatus: review\n---\n")
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["in-progress"],
+      tracker_terminal_states: ["done"]
+    )
+
+    assert {:error, reason} = Adapter.fetch_candidate_issues()
+    assert reason in [:eexist, :enotempty]
+    assert File.exists?(Path.join(issue_dir, "issue.md"))
+    refute File.read!(Path.join(issue_dir, "issue.md")) =~ "status: review"
+  end
+
   test "local adapter ignores states without dispatchable activities" do
     issue_root = tmp_dir!("local-ignored-state")
     config_path = Path.join(issue_root, "config.toml")
