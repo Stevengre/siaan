@@ -67,7 +67,10 @@ defmodule SymphonyElixir.AgentRunner do
 
   @spec start(map(), pid() | nil, keyword()) :: GenServer.on_start()
   def start(issue, codex_update_recipient \\ nil, opts \\ []) do
-    GenServer.start(__MODULE__, {issue, codex_update_recipient, opts})
+    DynamicSupervisor.start_child(
+      SymphonyElixir.AgentRunnerSupervisor,
+      {__MODULE__, {issue, codex_update_recipient, opts}}
+    )
   end
 
   @spec dispatch_turn(pid(), map(), keyword()) :: :ok
@@ -77,7 +80,25 @@ defmodule SymphonyElixir.AgentRunner do
 
   @spec stop(pid()) :: :ok
   def stop(pid) when is_pid(pid) do
-    GenServer.stop(pid, :normal)
+    if Process.alive?(pid) do
+      try do
+        GenServer.stop(pid, :normal)
+      catch
+        :exit, _reason -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @spec child_spec({map(), pid() | nil, keyword()}) :: Supervisor.child_spec()
+  def child_spec({issue, codex_update_recipient, opts}) do
+    %{
+      id: {__MODULE__, make_ref()},
+      start: {__MODULE__, :start_link, [issue, codex_update_recipient, opts]},
+      restart: :temporary,
+      type: :worker
+    }
   end
 
   @impl true

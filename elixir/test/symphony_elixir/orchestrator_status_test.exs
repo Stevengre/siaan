@@ -1720,6 +1720,57 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     send(worker_pid, :done)
   end
 
+  test "terminate_running_issue ignores stale dead persistent-runner pids" do
+    issue_id = "issue-dead-persistent-runner"
+    orchestrator_name = Module.concat(__MODULE__, :DeadPersistentRunnerOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    ref = Process.monitor(worker_pid)
+    send(worker_pid, :stop)
+    assert_receive {:DOWN, ^ref, :process, ^worker_pid, :normal}
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "MT-DEAD",
+      issue: %Issue{id: issue_id, identifier: "MT-DEAD", state: "Done"},
+      session_id: nil,
+      busy: false,
+      persistent_runner: true,
+      completion_recorded: true,
+      started_at: DateTime.utc_now()
+    }
+
+    initial_state = :sys.get_state(pid)
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    state =
+      pid
+      |> :sys.get_state()
+      |> Orchestrator.terminate_running_issue_for_test(issue_id, true)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute MapSet.member?(state.claimed, issue_id)
+  end
+
   test "status dashboard renders offline marker to terminal" do
     rendered =
       ExUnit.CaptureIO.capture_io(fn ->

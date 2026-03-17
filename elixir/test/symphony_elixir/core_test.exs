@@ -2053,6 +2053,12 @@ defmodule SymphonyElixir.CoreTest do
       done_fetcher = fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
 
       assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+      assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
+
+      assert Enum.any?(
+               DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
+               fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
+             )
 
       AgentRunner.dispatch_turn(pid, issue, issue_state_fetcher: done_fetcher, max_turns: 1)
 
@@ -2088,6 +2094,7 @@ defmodule SymphonyElixir.CoreTest do
       assert_receive {:agent_runner_dispatch_complete, "issue-persistent-runner"}
 
       AgentRunner.stop(pid)
+      refute Process.alive?(pid)
 
       lines = File.read!(trace_file) |> String.split("\n", trim: true)
       assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
