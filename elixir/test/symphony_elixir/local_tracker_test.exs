@@ -1063,6 +1063,75 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert frontmatter["status"] == "in-progress"
   end
 
+  test "local adapter preserves structured frontmatter metadata across transitions" do
+    issue_root = tmp_dir!("local-frontmatter-structured-roundtrip")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+    slug = "yaml-frontmatter-structured"
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: in-progress
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions: []
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.md"]),
+      """
+      ---
+      identifier: GH-42
+      status: ready
+      metadata:
+        owner: orchestrator
+        retries: 2
+        checks:
+          - name: smoke
+            status: pending
+      ---
+      Ready body
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
+    {frontmatter, _body} = LocalIssue.read_frontmatter(Path.join([issue_root, "in-progress", slug, "issue.md"]))
+
+    assert frontmatter["status"] == "in-progress"
+    assert frontmatter["metadata"]["owner"] == "orchestrator"
+    assert frontmatter["metadata"]["retries"] == 2
+    assert Enum.at(frontmatter["metadata"]["checks"], 0)["name"] == "smoke"
+    assert Enum.at(frontmatter["metadata"]["checks"], 0)["status"] == "pending"
+  end
+
   test "local adapter restores ready sidecars when transitioning back to in-progress" do
     issue_root = tmp_dir!("local-ready-restore")
     config_path = Path.join(issue_root, "config.toml")

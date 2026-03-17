@@ -419,29 +419,77 @@ defmodule SymphonyElixir.Local.Adapter do
 
   defp dump_frontmatter(frontmatter) when is_map(frontmatter) do
     frontmatter
-    |> Enum.map_join("\n", fn {key, value} -> dump_frontmatter_entry(to_string(key), value) end)
+    |> Enum.map_join("\n", fn {key, value} -> dump_frontmatter_entry(to_string(key), value, 0) end)
     |> Kernel.<>("\n")
   end
 
-  defp dump_frontmatter_entry(key, value) when is_binary(value), do: "#{key}: #{dump_yaml_string(value)}"
-  defp dump_frontmatter_entry(key, value) when is_integer(value), do: "#{key}: #{value}"
-  defp dump_frontmatter_entry(key, true), do: "#{key}: true"
-  defp dump_frontmatter_entry(key, false), do: "#{key}: false"
-  defp dump_frontmatter_entry(key, nil), do: "#{key}:"
+  defp dump_frontmatter_entry(key, value, indent) when is_binary(value),
+    do: "#{indent(indent)}#{key}: #{dump_yaml_string(value)}"
 
-  defp dump_frontmatter_entry(key, values) when is_list(values) do
-    items = Enum.map_join(values, "\n", &"  - #{dump_yaml_value(&1)}")
-    "#{key}:\n#{items}"
+  defp dump_frontmatter_entry(key, value, indent) when is_integer(value),
+    do: "#{indent(indent)}#{key}: #{value}"
+
+  defp dump_frontmatter_entry(key, true, indent), do: "#{indent(indent)}#{key}: true"
+  defp dump_frontmatter_entry(key, false, indent), do: "#{indent(indent)}#{key}: false"
+  defp dump_frontmatter_entry(key, nil, indent), do: "#{indent(indent)}#{key}:"
+
+  defp dump_frontmatter_entry(key, values, indent) when is_list(values) do
+    if values == [] do
+      "#{indent(indent)}#{key}: []"
+    else
+      items = Enum.map_join(values, "\n", &dump_yaml_list_item(&1, indent + 2))
+      "#{indent(indent)}#{key}:\n#{items}"
+    end
   end
 
-  defp dump_frontmatter_entry(key, value), do: "#{key}: #{dump_yaml_value(value)}"
+  defp dump_frontmatter_entry(key, values, indent) when is_map(values) do
+    if map_size(values) == 0 do
+      "#{indent(indent)}#{key}: {}"
+    else
+      entries = dump_map_entries(values, indent + 2)
+      "#{indent(indent)}#{key}:\n#{entries}"
+    end
+  end
 
-  defp dump_yaml_value(value) when is_binary(value), do: dump_yaml_string(value)
-  defp dump_yaml_value(value) when is_integer(value), do: to_string(value)
-  defp dump_yaml_value(true), do: "true"
-  defp dump_yaml_value(false), do: "false"
-  defp dump_yaml_value(nil), do: "null"
-  defp dump_yaml_value(value), do: dump_yaml_string(inspect(value))
+  defp dump_frontmatter_entry(key, value, indent),
+    do: "#{indent(indent)}#{key}: #{dump_yaml_scalar(value)}"
+
+  defp dump_map_entries(values, indent) when is_map(values) do
+    values
+    |> Enum.map_join("\n", fn {key, value} -> dump_frontmatter_entry(to_string(key), value, indent) end)
+  end
+
+  defp dump_yaml_list_item(value, indent) when is_list(value) do
+    prefix = "#{indent(indent)}-"
+
+    if value == [] do
+      "#{prefix} []"
+    else
+      "#{prefix}\n#{Enum.map_join(value, "\n", &dump_yaml_list_item(&1, indent + 2))}"
+    end
+  end
+
+  defp dump_yaml_list_item(value, indent) when is_map(value) do
+    prefix = "#{indent(indent)}-"
+
+    if map_size(value) == 0 do
+      "#{prefix} {}"
+    else
+      "#{prefix}\n#{dump_map_entries(value, indent + 2)}"
+    end
+  end
+
+  defp dump_yaml_list_item(value, indent),
+    do: "#{indent(indent)}- #{dump_yaml_scalar(value)}"
+
+  defp dump_yaml_scalar(value) when is_binary(value), do: dump_yaml_string(value)
+  defp dump_yaml_scalar(value) when is_integer(value), do: to_string(value)
+  defp dump_yaml_scalar(true), do: "true"
+  defp dump_yaml_scalar(false), do: "false"
+  defp dump_yaml_scalar(nil), do: "null"
+  defp dump_yaml_scalar(value), do: dump_yaml_string(inspect(value))
+
+  defp indent(size), do: String.duplicate(" ", size)
 
   defp dump_yaml_string(value) do
     escaped =
