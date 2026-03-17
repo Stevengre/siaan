@@ -1,17 +1,23 @@
 use crate::issue::{self, Issue};
+use crate::tree::{self, DisplayRow, SortMode};
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub enum Action {
     Resume(String), // command to exec
+    Edit(PathBuf),  // open issue file in editor
     New,            // start new issue triage
     Quit,
 }
 
 pub struct App {
     pub issues: Vec<Issue>,
+    /// Index into selectable rows (skips headers)
     pub selected: usize,
     pub triage_dir: PathBuf,
+    pub collapsed: HashSet<String>,
+    pub sort_mode: SortMode,
 }
 
 impl App {
@@ -21,26 +27,83 @@ impl App {
             issues,
             selected: 0,
             triage_dir,
+            collapsed: HashSet::new(),
+            sort_mode: SortMode::Priority,
         })
     }
 
+    /// Build the display rows from current issues, respecting collapsed state.
+    pub fn display_rows(&self) -> Vec<DisplayRow<'_>> {
+        tree::build_display_rows(&self.issues, &self.collapsed, self.sort_mode)
+    }
+
+    pub fn selectable_count(&self) -> usize {
+        tree::selectable_count(&self.display_rows())
+    }
+
     pub fn next(&mut self) {
-        if !self.issues.is_empty() {
-            self.selected = (self.selected + 1) % self.issues.len();
+        let count = self.selectable_count();
+        if count > 0 {
+            self.selected = (self.selected + 1) % count;
         }
     }
 
     pub fn previous(&mut self) {
-        if !self.issues.is_empty() {
-            self.selected = self
-                .selected
-                .checked_sub(1)
-                .unwrap_or(self.issues.len() - 1);
+        let count = self.selectable_count();
+        if count > 0 {
+            self.selected = self.selected.checked_sub(1).unwrap_or(count - 1);
         }
     }
 
+    /// Get the currently selected issue (None if header is selected).
     pub fn selected_issue(&self) -> Option<&Issue> {
-        self.issues.get(self.selected)
+        let rows = self.display_rows();
+        let row_idx = tree::selectable_to_row_index(&rows, self.selected);
+        match rows.get(row_idx) {
+            Some(DisplayRow::IssueRow { issue, .. }) => {
+                self.issues.iter().find(|i| i.slug == issue.slug)
+            }
+            _ => None,
+        }
+    }
+
+    /// Toggle collapse on the project header that the selected issue belongs to,
+    /// or on the header itself if a header is selectable (it's not currently).
+    /// We find which project the current selection is under.
+    pub fn toggle_collapse(&mut self) {
+        let rows_before = self.display_rows();
+        let row_idx = tree::selectable_to_row_index(&rows_before, self.selected);
+
+        // Walk backwards from current row to find its project header
+        let project = rows_before[..=row_idx].iter().rev().find_map(|r| match r {
+            DisplayRow::ProjectHeader { name, .. } => Some(name.to_string()),
+            _ => None,
+        });
+
+        if let Some(name) = project {
+            if self.collapsed.contains(&name) {
+                self.collapsed.remove(&name);
+            } else {
+                self.collapsed.insert(name);
+            }
+
+            // Keep focus near previous visual position after folding/unfolding.
+            let rows_after = self.display_rows();
+            if let Some(next_selected) = nearest_selectable_index(&rows_after, row_idx) {
+                self.selected = next_selected;
+            } else {
+                self.selected = 0;
+            }
+        }
+    }
+
+    pub fn cycle_sort(&mut self) {
+        self.sort_mode = self.sort_mode.next();
+        // Clamp selection
+        let count = self.selectable_count();
+        if count > 0 && self.selected >= count {
+            self.selected = count - 1;
+        }
     }
 
     pub fn triage_dir(&self) -> &Path {
@@ -55,6 +118,25 @@ impl App {
     }
 }
 
+fn nearest_selectable_index(rows: &[DisplayRow<'_>], preferred_row_idx: usize) -> Option<usize> {
+    let selectable_rows: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, row)| row.is_selectable().then_some(idx))
+        .collect();
+
+    if selectable_rows.is_empty() {
+        return None;
+    }
+
+    // Prefer the first selectable row at/after current visual row; fallback to last before.
+    let pos = selectable_rows
+        .iter()
+        .position(|&idx| idx >= preferred_row_idx)
+        .unwrap_or(selectable_rows.len() - 1);
+    Some(pos)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +148,7 @@ mod tests {
         fs::write(
             dir.path().join("issue-a.md"),
             r#"---
+project: test
 title: Alpha
 type: task
 priority: p1
@@ -79,13 +162,47 @@ Body A
         fs::write(
             dir.path().join("issue-b.md"),
             r#"---
+project: test
 title: Beta
 type: epic
 priority: p0
 agents:
   triage: "claude -r bbb"
+sub_issues:
+  - issue-a
 ---
 Body B
+"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    fn setup_multi_project() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("a.md"),
+            r#"---
+project: alpha
+title: Alpha Issue
+type: task
+priority: p1
+agents:
+  triage: "claude -r aaa"
+---
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("b.md"),
+            r#"---
+project: beta
+title: Beta Issue
+type: bug
+priority: p0
+agents:
+  triage: "claude -r bbb"
+---
 "#,
         )
         .unwrap();
@@ -101,6 +218,17 @@ Body B
     }
 
     #[test]
+    fn test_app_display_rows_hierarchy() {
+        let dir = setup_dir();
+        let app = App::new(dir.path().to_path_buf()).unwrap();
+        let rows = app.display_rows();
+
+        // header + epic(depth=0) + alpha(depth=1) = 3
+        assert_eq!(rows.len(), 3);
+        assert_eq!(app.selectable_count(), 2);
+    }
+
+    #[test]
     fn test_app_navigation() {
         let dir = setup_dir();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
@@ -108,9 +236,17 @@ Body B
         app.next();
         assert_eq!(app.selected, 1);
         app.next();
-        assert_eq!(app.selected, 0); // wraps
+        assert_eq!(app.selected, 0);
         app.previous();
-        assert_eq!(app.selected, 1); // wraps back
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn test_app_selected_issue() {
+        let dir = setup_dir();
+        let app = App::new(dir.path().to_path_buf()).unwrap();
+        let issue = app.selected_issue().unwrap();
+        assert_eq!(issue.frontmatter.title, "Beta");
     }
 
     #[test]
@@ -128,8 +264,8 @@ Body B
         let dir = TempDir::new().unwrap();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         assert!(app.issues.is_empty());
-        app.next(); // should not panic
-        app.previous(); // should not panic
+        app.next();
+        app.previous();
         assert_eq!(
             std::mem::discriminant(&app.confirm()),
             std::mem::discriminant(&Action::Quit)
@@ -142,5 +278,110 @@ Body B
         let file = dir.path().join("not-a-dir.md");
         fs::write(&file, "x").unwrap();
         assert!(App::new(file).is_err());
+    }
+
+    #[test]
+    fn test_toggle_collapse() {
+        let dir = setup_multi_project();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+
+        assert_eq!(app.selectable_count(), 2);
+
+        // Collapse the project the first selected issue belongs to
+        app.toggle_collapse();
+        assert_eq!(app.selectable_count(), 1);
+
+        // Clamp should have moved selection to the only remaining issue
+        assert_eq!(app.selected, 0);
+
+        // Toggle again — now we're on the other project, so this collapses that one
+        // Need to expand the first one, so let's toggle collapse on current selection's project
+        // Actually the selection moved to the other project's issue, so toggling collapses that
+        // Let's just verify we can expand by inserting the first project back
+        app.collapsed.clear();
+        assert_eq!(app.selectable_count(), 2);
+    }
+
+    #[test]
+    fn test_toggle_collapse_keeps_selection_nearby() {
+        let dir = setup_multi_project();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.selected = 1; // second project's only issue
+
+        app.toggle_collapse(); // collapses beta
+
+        // beta hidden, alpha remains; selection should move to remaining issue
+        assert_eq!(app.selectable_count(), 1);
+        assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.selected_issue().map(|i| i.frontmatter.title.as_str()),
+            Some("Alpha Issue")
+        );
+    }
+
+    #[test]
+    fn test_toggle_collapse_expands_when_already_collapsed() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.collapsed.insert("test".to_string());
+        app.selected = 0;
+
+        // No selectable rows when collapsed; toggle should expand the header project.
+        app.toggle_collapse();
+        assert!(!app.collapsed.contains("test"));
+    }
+
+    #[test]
+    fn test_toggle_collapse_with_single_project_can_leave_no_selectable_rows() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.selected = 0;
+        app.toggle_collapse();
+        assert_eq!(app.selectable_count(), 0);
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn test_cycle_sort_clamps_out_of_range_selection() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.selected = 999;
+        app.cycle_sort();
+        assert!(app.selected < app.selectable_count());
+    }
+
+    #[test]
+    fn test_toggle_collapse_no_project_header_is_noop() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("orphan.md"),
+            r#"---
+title: Orphan
+type: task
+priority: p1
+---
+"#,
+        )
+        .unwrap();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        let before = app.selectable_count();
+        app.toggle_collapse();
+        assert_eq!(app.selectable_count(), before);
+    }
+
+    #[test]
+    fn test_cycle_sort() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(app.sort_mode, SortMode::Priority);
+
+        app.cycle_sort();
+        assert_eq!(app.sort_mode, SortMode::Type);
+
+        app.cycle_sort();
+        assert_eq!(app.sort_mode, SortMode::Title);
+
+        app.cycle_sort();
+        assert_eq!(app.sort_mode, SortMode::Priority);
     }
 }

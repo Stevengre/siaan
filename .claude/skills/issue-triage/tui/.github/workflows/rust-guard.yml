@@ -1,0 +1,57 @@
+name: rust-guard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Install cargo tools
+        run: |
+          cargo install --locked cargo-llvm-cov --version 0.6.15
+          cargo install --locked cargo-deny --version 0.18.5
+
+      - name: Print build env
+        run: |
+          echo "RUSTFLAGS=${RUSTFLAGS-}"
+          echo "CARGO_ENCODED_RUSTFLAGS=${CARGO_ENCODED_RUSTFLAGS-}"
+          echo "RUSTDOCFLAGS=${RUSTDOCFLAGS-}"
+          echo "CARGO_ENCODED_RUSTDOCFLAGS=${CARGO_ENCODED_RUSTDOCFLAGS-}"
+
+      - name: Ban common escape hatches
+        run: |
+          ! rg -n '#!\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+          ! rg -n '#\[allow\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+          ! rg -n 'cfg_attr\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+          ! rg -n 'include!\s*\(' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+          ! rg -n '\bunsafe\b' . --glob '!target/**' --glob '!.git/**' --glob '!Cargo.lock'
+
+      - name: Fmt
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings -D clippy::allow_attributes -D clippy::allow_attributes_without_reason
+
+      - name: Test
+        run: |
+          cargo test --workspace --all-targets --all-features
+          cargo test --workspace --doc
+
+      - name: Coverage (100% lines on lib)
+        run: cargo llvm-cov --workspace --all-features --lib --summary-only --fail-under-lines 100 --fail-under-regions 100 --fail-under-functions 100
+
+      - name: Dependency policy
+        run: cargo deny check
+
+      - name: Release build
+        run: cargo build --workspace --release --all-features

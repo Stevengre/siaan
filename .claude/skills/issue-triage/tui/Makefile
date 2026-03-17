@@ -57,6 +57,8 @@ build:
 # Build + copy binary to scripts/
 install: build
 	cp target/release/$(BIN_NAME) $(SCRIPTS_DIR)/$(BIN_NAME)
+	-xattr -dr com.apple.provenance $(SCRIPTS_DIR)/$(BIN_NAME)
+	-xattr -dr com.apple.quarantine $(SCRIPTS_DIR)/$(BIN_NAME)
 	@echo "Installed: $(SCRIPTS_DIR)/$(BIN_NAME)"
 
 # Clean build artifacts

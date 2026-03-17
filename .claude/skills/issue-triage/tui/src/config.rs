@@ -7,7 +7,16 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
+    pub global: GlobalConfig,
+    #[serde(default)]
     pub projects: HashMap<String, ProjectConfig>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct GlobalConfig {
+    /// Editor command for opening issue files (e.g., "hx", "nvim", "code").
+    /// Falls back to $EDITOR, then "vi".
+    pub editor: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -18,6 +27,15 @@ pub struct ProjectConfig {
 impl Config {
     pub fn project_dir(&self, project: &str) -> Option<&str> {
         self.projects.get(project).map(|p| p.dir.as_str())
+    }
+
+    /// Resolve editor: config.global.editor → $EDITOR → "vi"
+    pub fn editor(&self) -> String {
+        self.global
+            .editor
+            .clone()
+            .or_else(|| std::env::var("EDITOR").ok())
+            .unwrap_or_else(|| "vi".to_string())
     }
 
     /// Return the first configured project (name, dir). Useful as fallback
@@ -90,6 +108,13 @@ mod tests {
         match previous {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
+        }
+    }
+
+    fn restore_editor(previous: Option<OsString>) {
+        match previous {
+            Some(value) => std::env::set_var("EDITOR", value),
+            None => std::env::remove_var("EDITOR"),
         }
     }
 
@@ -217,6 +242,28 @@ dir = "/tmp/siaan"
     }
 
     #[test]
+    fn test_home_guard_restores_existing_home() {
+        let _lock = home_lock().lock().unwrap();
+        let original = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/tmp/home-before");
+
+        {
+            let temp = TempDir::new().unwrap();
+            let _guard = set_home(temp.path());
+            assert_ne!(
+                std::env::var_os("HOME"),
+                Some(OsString::from("/tmp/home-before"))
+            );
+        }
+
+        assert_eq!(
+            std::env::var_os("HOME"),
+            Some(OsString::from("/tmp/home-before"))
+        );
+        restore_home(original);
+    }
+
+    #[test]
     fn test_restore_home_none_branch() {
         let _lock = home_lock().lock().unwrap();
         restore_home(None);
@@ -233,6 +280,77 @@ dir = "/tmp/siaan"
             Some(OsString::from("/tmp/issue-tui-home"))
         );
         restore_home(original);
+    }
+
+    #[test]
+    fn test_editor_from_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[global]
+editor = "hx"
+"#,
+        )
+        .unwrap();
+        let config = load_config_from(&path).unwrap();
+        assert_eq!(config.editor(), "hx");
+    }
+
+    #[test]
+    fn test_editor_fallback_to_vi() {
+        let _lock = home_lock().lock().unwrap();
+        let original_editor = std::env::var_os("EDITOR");
+        std::env::remove_var("EDITOR");
+
+        let config = Config::default();
+        assert_eq!(config.editor(), "vi");
+
+        restore_editor(original_editor);
+    }
+
+    #[test]
+    fn test_editor_fallback_to_env_var() {
+        let _lock = home_lock().lock().unwrap();
+        let original_editor = std::env::var_os("EDITOR");
+        std::env::set_var("EDITOR", "vim");
+
+        let config = Config::default();
+        assert_eq!(config.editor(), "vim");
+
+        restore_editor(original_editor);
+    }
+
+    #[test]
+    fn test_editor_restore_branch_when_original_editor_exists() {
+        let _lock = home_lock().lock().unwrap();
+        let original_editor = std::env::var_os("EDITOR");
+        std::env::set_var("EDITOR", "nano");
+        let saved = std::env::var_os("EDITOR");
+        std::env::remove_var("EDITOR");
+
+        let config = Config::default();
+        assert_eq!(config.editor(), "vi");
+
+        restore_editor(saved);
+        restore_editor(original_editor);
+    }
+
+    #[test]
+    fn test_restore_editor_none_branch() {
+        let _lock = home_lock().lock().unwrap();
+        restore_editor(None);
+        assert!(std::env::var_os("EDITOR").is_none());
+    }
+
+    #[test]
+    fn test_restore_editor_some_branch() {
+        let _lock = home_lock().lock().unwrap();
+        let original_editor = std::env::var_os("EDITOR");
+        restore_editor(Some(OsString::from("nano")));
+        assert_eq!(std::env::var_os("EDITOR"), Some(OsString::from("nano")));
+        restore_editor(original_editor);
     }
 
     #[test]

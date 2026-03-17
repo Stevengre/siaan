@@ -66,6 +66,26 @@ impl Issue {
     }
 }
 
+fn priority_sort_key(issue: &Issue) -> (u8, u32, &str) {
+    match issue.frontmatter.priority.as_deref() {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            match trimmed
+                .strip_prefix('p')
+                .or_else(|| trimmed.strip_prefix('P'))
+            {
+                Some(rest) if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) => {
+                    (0, rest.parse::<u32>().unwrap_or(u32::MAX), trimmed)
+                }
+                Some(_) => (1, u32::MAX, trimmed),
+                None if trimmed.is_empty() => (2, u32::MAX, ""),
+                None => (1, u32::MAX, trimmed),
+            }
+        }
+        None => (2, u32::MAX, ""),
+    }
+}
+
 /// Parse a markdown file with YAML frontmatter into an Issue.
 pub fn parse_issue(path: &Path) -> Result<Issue> {
     let content = fs::read_to_string(path).context(format!("reading {}", path.display()))?;
@@ -145,8 +165,8 @@ pub fn list_issues(dir: &Path) -> Result<Vec<Issue>> {
 
     // Sort by priority (p0 first), then by title
     issues.sort_by(|a, b| {
-        a.display_priority()
-            .cmp(b.display_priority())
+        priority_sort_key(a)
+            .cmp(&priority_sort_key(b))
             .then_with(|| a.frontmatter.title.cmp(&b.frontmatter.title))
     });
 
@@ -390,6 +410,141 @@ a
         assert_eq!(issues.len(), 2);
         assert_eq!(issues[0].frontmatter.title, "Alpha");
         assert_eq!(issues[1].frontmatter.title, "Zeta");
+    }
+
+    #[test]
+    fn test_list_issues_sorts_priority_numerically() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("p10.md"),
+            r#"---
+title: P10
+priority: p10
+---
+x
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("p2.md"),
+            r#"---
+title: P2
+priority: p2
+---
+x
+"#,
+        )
+        .unwrap();
+
+        let issues = list_issues(dir.path()).unwrap();
+        assert_eq!(issues.len(), 2);
+        assert_eq!(issues[0].frontmatter.title, "P2");
+        assert_eq!(issues[1].frontmatter.title, "P10");
+    }
+
+    #[test]
+    fn test_list_issues_priority_handles_blank_and_text_and_overflow() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("overflow.md"),
+            r#"---
+title: Overflow
+priority: p999999999999999999999999
+---
+x
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("text.md"),
+            r#"---
+title: Text
+priority: urgent
+---
+x
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("blank.md"),
+            r#"---
+title: Blank
+priority: "   "
+---
+x
+"#,
+        )
+        .unwrap();
+
+        let issues = list_issues(dir.path()).unwrap();
+        let titles: Vec<&str> = issues
+            .iter()
+            .map(|i| i.frontmatter.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["Overflow", "Text", "Blank"]);
+    }
+
+    #[test]
+    fn test_priority_sort_key_overflow_stays_numeric_bucket() {
+        let issue = Issue {
+            slug: "x".into(),
+            path: PathBuf::from("x.md"),
+            frontmatter: IssueFrontmatter {
+                project: None,
+                title: "Overflow".into(),
+                status: None,
+                issue_type: None,
+                priority: Some("p999999999999999999999999".into()),
+                area: None,
+                agents: None,
+                sub_issues: None,
+            },
+            body: String::new(),
+        };
+        let key = priority_sort_key(&issue);
+        assert_eq!(key.0, 0);
+    }
+
+    #[test]
+    fn test_priority_sort_key_parses_normal_numeric() {
+        let issue = Issue {
+            slug: "x".into(),
+            path: PathBuf::from("x.md"),
+            frontmatter: IssueFrontmatter {
+                project: None,
+                title: "Normal".into(),
+                status: None,
+                issue_type: None,
+                priority: Some("p2".into()),
+                area: None,
+                agents: None,
+                sub_issues: None,
+            },
+            body: String::new(),
+        };
+        let key = priority_sort_key(&issue);
+        assert_eq!(key, (0, 2, "p2"));
+    }
+
+    #[test]
+    fn test_priority_sort_key_handles_prefixed_invalid_values() {
+        let mk = |priority: &str| Issue {
+            slug: "x".into(),
+            path: PathBuf::from("x.md"),
+            frontmatter: IssueFrontmatter {
+                project: None,
+                title: "X".into(),
+                status: None,
+                issue_type: None,
+                priority: Some(priority.to_string()),
+                area: None,
+                agents: None,
+                sub_issues: None,
+            },
+            body: String::new(),
+        };
+        assert_eq!(priority_sort_key(&mk("p")), (1, u32::MAX, "p"));
+        assert_eq!(priority_sort_key(&mk("pabc")), (1, u32::MAX, "pabc"));
     }
 
     #[test]

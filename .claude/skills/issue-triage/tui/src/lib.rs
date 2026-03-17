@@ -4,3 +4,4 @@
 pub mod app;
 pub mod config;
 pub mod issue;
+pub mod tree;

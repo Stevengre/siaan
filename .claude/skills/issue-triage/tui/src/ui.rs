@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::tree::{self, DisplayRow};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -23,7 +24,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let title = format!("Issue Triage - {}", app.triage_dir().display());
+    let title = format!(
+        "Issue Triage - {}  [sort: {}]",
+        app.triage_dir().display(),
+        app.sort_mode.label()
+    );
     let header = Paragraph::new(title)
         .style(
             Style::default()
@@ -35,8 +40,10 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
-    if app.issues.is_empty() {
-        let empty = Paragraph::new("  No issues in triage/")
+    let display_rows = app.display_rows();
+
+    if display_rows.is_empty() {
+        let empty = Paragraph::new("  No issues in triage/  (press n to create)")
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::ALL).title(" Issues "));
         frame.render_widget(empty, area);
@@ -56,35 +63,60 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     )
     .bottom_margin(1);
 
-    let rows: Vec<Row> = app
-        .issues
+    let selected_row_idx = tree::selectable_to_row_index(&display_rows, app.selected);
+
+    let rows: Vec<Row> = display_rows
         .iter()
         .enumerate()
-        .map(|(i, issue)| {
-            let style = if i == app.selected {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        .map(|(i, row)| match row {
+            DisplayRow::ProjectHeader {
+                name,
+                collapsed,
+                count,
+            } => {
+                let arrow = if *collapsed { "▶" } else { "▼" };
+                Row::new(vec![
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(format!("{} [{}] ({})", arrow, name, count)).style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Cell::from(""),
+                ])
+            }
+            DisplayRow::IssueRow { issue, depth } => {
+                let is_selected = i == selected_row_idx;
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
 
-            let type_color = match issue.display_type() {
-                "epic" => Color::Magenta,
-                "feature" => Color::Green,
-                "bug" => Color::Red,
-                "task" => Color::Blue,
-                "research" => Color::Yellow,
-                _ => Color::White,
-            };
+                let type_color = match issue.display_type() {
+                    "epic" => Color::Magenta,
+                    "feature" => Color::Green,
+                    "bug" => Color::Red,
+                    "task" => Color::Blue,
+                    "research" => Color::Yellow,
+                    _ => Color::White,
+                };
 
-            Row::new(vec![
-                Cell::from(issue.display_type()).style(Style::default().fg(type_color)),
-                Cell::from(issue.display_priority()),
-                Cell::from(issue.frontmatter.title.as_str()),
-                Cell::from(issue.display_areas()),
-            ])
-            .style(style)
+                let indent = "  ".repeat(*depth);
+                let prefix = if *depth > 0 { "└ " } else { "" };
+                let title = format!("{}{}{}", indent, prefix, issue.frontmatter.title);
+
+                Row::new(vec![
+                    Cell::from(issue.display_type()).style(Style::default().fg(type_color)),
+                    Cell::from(issue.display_priority()),
+                    Cell::from(title),
+                    Cell::from(issue.display_areas()),
+                ])
+                .style(style)
+            }
         })
         .collect();
 
@@ -97,8 +129,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Issues "))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .block(Block::default().borders(Borders::ALL).title(" Issues "));
 
     frame.render_widget(table, area);
 }
@@ -162,9 +193,15 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Span::raw(" down  "),
         Span::styled("Enter", Style::default().fg(Color::Yellow)),
         Span::raw(" resume  "),
+        Span::styled("e", Style::default().fg(Color::Yellow)),
+        Span::raw(" edit  "),
         Span::styled("n", Style::default().fg(Color::Yellow)),
-        Span::raw(" new issue  "),
-        Span::styled("q/Esc", Style::default().fg(Color::Yellow)),
+        Span::raw(" new  "),
+        Span::styled("Tab", Style::default().fg(Color::Yellow)),
+        Span::raw(" sort  "),
+        Span::styled("Space", Style::default().fg(Color::Yellow)),
+        Span::raw(" fold  "),
+        Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(" quit"),
     ]);
     frame.render_widget(Paragraph::new(help), area);

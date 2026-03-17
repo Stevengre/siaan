@@ -4,16 +4,12 @@
 mod app;
 mod config;
 mod issue;
+mod tree;
 mod ui;
 
 use anyhow::Result;
 use app::{Action, App};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
-};
-use std::io::stdout;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use std::process::Command;
 
 fn main() -> Result<()> {
@@ -25,11 +21,8 @@ fn main() -> Result<()> {
     let config = config::load_config()?;
     let mut app = App::new(triage_dir)?;
 
-    // Enter TUI (even if empty — user can press 'n' to create)
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
+    // Enter TUI (ratatui::init handles raw mode + alternate screen)
     let mut terminal = ratatui::init();
-
     let result = run_loop(&mut terminal, &mut app);
 
     // Grab project info before we lose access to app
@@ -37,10 +30,8 @@ fn main() -> Result<()> {
         .selected_issue()
         .and_then(|i| i.frontmatter.project.clone());
 
-    // Restore terminal
+    // Restore terminal (ratatui::restore handles cleanup)
     ratatui::restore();
-    stdout().execute(LeaveAlternateScreen)?;
-    disable_raw_mode()?;
 
     // Handle action after terminal is restored
     match result {
@@ -50,8 +41,12 @@ fn main() -> Result<()> {
                 .and_then(|p| config.project_dir(p));
             exec_in_project_dir(&cmd, project_dir, selected_project.as_deref())?;
         }
+        Ok(Action::Edit(path)) => {
+            let editor = config.editor();
+            println!("Opening: {} {}", editor, path.display());
+            Command::new(&editor).arg(&path).status()?;
+        }
         Ok(Action::New) => {
-            // Find the first configured project dir
             let (project_name, project_dir) = selected_project
                 .as_deref()
                 .and_then(|p| config.project_dir(p).map(|d| (p, d)))
@@ -103,7 +98,14 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Ac
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.previous(),
                 KeyCode::Enter => return Ok(app.confirm()),
+                KeyCode::Char('e') => {
+                    if let Some(issue) = app.selected_issue() {
+                        return Ok(Action::Edit(issue.path.clone()));
+                    }
+                }
                 KeyCode::Char('n') => return Ok(Action::New),
+                KeyCode::Tab => app.cycle_sort(),
+                KeyCode::Char(' ') => app.toggle_collapse(),
                 _ => {}
             }
         }
