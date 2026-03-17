@@ -2020,22 +2020,34 @@ defmodule SymphonyElixir.CoreTest do
 
       assert_receive {:worker_runtime_info, "proof-issue", %{workspace_path: runtime_path}}, 500
       assert {:ok, canonical_project_dir} = SymphonyElixir.PathSafety.canonicalize(project_dir)
+      assert {:ok, canonical_issue_dir} = SymphonyElixir.PathSafety.canonicalize(issue_dir)
       assert runtime_path == canonical_project_dir
 
       trace_lines = File.read!(trace_file) |> String.split("\n", trim: true)
       assert Enum.member?(trace_lines, "CWD:#{canonical_project_dir}")
 
-      prompt_text =
+      turn_payload =
         trace_lines
         |> Enum.filter(&String.starts_with?(&1, "JSON:"))
         |> Enum.map(&String.trim_leading(&1, "JSON:"))
         |> Enum.map(&Jason.decode!/1)
-        |> Enum.find_value(fn payload ->
-          if payload["method"] == "turn/start" do
-            get_in(payload, ["params", "input"])
-            |> Enum.map_join("\n", &Map.get(&1, "text", ""))
-          end
-        end)
+        |> Enum.find(fn payload -> payload["method"] == "turn/start" end)
+
+      assert get_in(turn_payload, ["params", "cwd"]) == canonical_project_dir
+
+      assert get_in(turn_payload, ["params", "sandboxPolicy"]) == %{
+               "type" => "workspaceWrite",
+               "writableRoots" => [canonical_project_dir, canonical_issue_dir],
+               "readOnlyAccess" => %{"type" => "fullAccess"},
+               "networkAccess" => false,
+               "excludeTmpdirEnvVar" => false,
+               "excludeSlashTmp" => false
+             }
+
+      prompt_text =
+        turn_payload
+        |> get_in(["params", "input"])
+        |> Enum.map_join("\n", &Map.get(&1, "text", ""))
 
       assert prompt_text =~ "Issue path: #{issue_path}"
       assert prompt_text =~ "Workpad path: #{workpad_path}"

@@ -746,10 +746,14 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_secret_value(_value), do: nil
 
-  defp default_turn_sandbox_policy(workspace) do
+  defp default_turn_sandbox_policy(workspace) when is_binary(workspace) do
+    default_turn_sandbox_policy([workspace])
+  end
+
+  defp default_turn_sandbox_policy(writable_roots) when is_list(writable_roots) do
     %{
       "type" => "workspaceWrite",
-      "writableRoots" => [workspace],
+      "writableRoots" => writable_roots,
       "readOnlyAccess" => %{"type" => "fullAccess"},
       "networkAccess" => false,
       "excludeTmpdirEnvVar" => false,
@@ -762,8 +766,10 @@ defmodule SymphonyElixir.Config.Schema do
       {:ok, default_turn_sandbox_policy(workspace_root)}
     else
       with expanded_workspace_root <- expand_local_workspace_root(workspace_root),
-           {:ok, canonical_workspace_root} <- PathSafety.canonicalize(expanded_workspace_root) do
-        {:ok, default_turn_sandbox_policy(canonical_workspace_root)}
+           additional_roots <- Keyword.get(opts, :writable_roots, []),
+           {:ok, writable_roots} <-
+             canonical_writable_roots([expanded_workspace_root | List.wrap(additional_roots)]) do
+        {:ok, default_turn_sandbox_policy(writable_roots)}
       end
     end
   end
@@ -786,6 +792,36 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp expand_local_workspace_root(_workspace_root) do
     Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))
+  end
+
+  defp canonical_writable_roots(roots) when is_list(roots) do
+    roots
+    |> Enum.reduce_while({:ok, []}, fn root, {:ok, acc} ->
+      case canonical_writable_root(root) do
+        {:ok, canonical_root} -> {:cont, {:ok, [canonical_root | acc]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, canonical_roots} ->
+        canonical_roots
+        |> Enum.reverse()
+        |> Enum.uniq()
+        |> then(&{:ok, &1})
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp canonical_writable_root(root) when is_binary(root) do
+    root
+    |> expand_local_workspace_root()
+    |> PathSafety.canonicalize()
+  end
+
+  defp canonical_writable_root(root) do
+    {:error, {:unsafe_turn_sandbox_policy, {:invalid_workspace_root, root}}}
   end
 
   defp format_errors(changeset) do

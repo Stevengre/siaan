@@ -49,7 +49,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       metadata = port_metadata(port, worker_host)
       tracker_kind = Config.settings!().tracker.kind
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
+      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, tracker_kind) do
         {:ok,
          %{
@@ -275,11 +275,11 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+  defp session_policies(workspace, nil, opts) do
+    Config.codex_runtime_settings(workspace, writable_roots: Keyword.get(opts, :writable_roots, []))
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
+  defp session_policies(workspace, worker_host, _opts) when is_binary(worker_host) do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 

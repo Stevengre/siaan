@@ -102,12 +102,14 @@ defmodule SymphonyElixir.AgentRunner do
     issue_turn_count = Keyword.get(opts, :issue_turn_count, 0)
     codex_command = Keyword.get(opts, :codex_command)
     allow_external_workspace = Map.get(issue, :project_runtime) in ["local", :local]
+    writable_roots = local_runtime_writable_roots(issue, workspace)
 
     with {:ok, session} <-
            AppServer.start_session(workspace,
              worker_host: worker_host,
              codex_command: codex_command,
-             allow_external_workspace: allow_external_workspace
+             allow_external_workspace: allow_external_workspace,
+             writable_roots: writable_roots
            ) do
       try do
         run_context = %{
@@ -220,6 +222,18 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp active_issue_state?(_state_name), do: false
+
+  defp local_runtime_writable_roots(%{project_runtime: runtime} = issue, workspace)
+       when runtime in ["local", :local] and is_binary(workspace) do
+    [workspace, Map.get(issue, :issue_dir), parent_dir(Map.get(issue, :issue_path)), parent_dir(Map.get(issue, :workpad_path))]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+  end
+
+  defp local_runtime_writable_roots(_issue, _workspace), do: []
+
+  defp parent_dir(path) when is_binary(path), do: Path.dirname(path)
+  defp parent_dir(_path), do: nil
 
   defp candidate_worker_hosts(%{project_runtime: runtime}, _preferred_host, _configured_hosts)
        when runtime in ["local", :local],
