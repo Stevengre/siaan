@@ -599,6 +599,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @doc false
+  @spec terminate_running_issue_for_test(State.t(), String.t(), boolean()) :: State.t()
+  def terminate_running_issue_for_test(%State{} = state, issue_id, cleanup_workspace)
+      when is_binary(issue_id) and is_boolean(cleanup_workspace) do
+    terminate_running_issue(state, issue_id, cleanup_workspace)
+  end
+
+  @doc false
   @spec dispatch_watched_issue_for_test(
           Issue.t(),
           [String.t()],
@@ -701,7 +708,7 @@ defmodule SymphonyElixir.Orchestrator do
         release_issue_claim(state, issue_id)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
-        state = record_session_completion_totals(state, running_entry, "terminated")
+        state = maybe_record_terminated_session(state, running_entry)
         worker_host = Map.get(running_entry, :worker_host)
 
         if cleanup_workspace do
@@ -752,7 +759,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
     elapsed_ms = stall_elapsed_ms(running_entry, now)
 
-    if is_integer(elapsed_ms) and elapsed_ms > timeout_ms do
+    if Map.get(running_entry, :busy, true) and is_integer(elapsed_ms) and elapsed_ms > timeout_ms do
       identifier = Map.get(running_entry, :identifier, issue_id)
       session_id = running_entry_session_id(running_entry)
 
@@ -1201,6 +1208,7 @@ defmodule SymphonyElixir.Orchestrator do
        ) do
     running_entry
     |> Map.put(:busy, true)
+    |> Map.put(:completion_recorded, false)
     |> Map.put(:issue, issue)
     |> Map.put(:identifier, issue.identifier)
     |> Map.put(:session_id, nil)
@@ -1230,6 +1238,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp mark_runner_idle(running_entry) when is_map(running_entry) do
     running_entry
     |> Map.put(:busy, false)
+    |> Map.put(:completion_recorded, true)
     |> Map.put(:session_id, nil)
     |> Map.put(:last_codex_message, nil)
     |> Map.put(:last_codex_event, nil)
@@ -2210,6 +2219,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pop_running_entry(state, issue_id) do
     {Map.get(state.running, issue_id), %{state | running: Map.delete(state.running, issue_id)}}
+  end
+
+  defp maybe_record_terminated_session(state, %{completion_recorded: true, busy: false}),
+    do: state
+
+  defp maybe_record_terminated_session(state, running_entry) when is_map(running_entry) do
+    record_session_completion_totals(state, running_entry, "terminated")
   end
 
   defp record_session_completion_totals(state, running_entry, result)
