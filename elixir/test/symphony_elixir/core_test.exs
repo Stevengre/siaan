@@ -1860,7 +1860,7 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
-  test "agent runner reuses an existing physical thread on review re-entry without resending the full bootstrap prompt" do
+  test "agent runner sends fresh-session continuation guidance on review re-entry" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1898,6 +1898,9 @@ defmodule SymphonyElixir.CoreTest do
           2)
             ;;
           3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-review-reuse"}}}'
+            ;;
+          4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-review-reuse"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             ;;
@@ -1945,14 +1948,13 @@ defmodule SymphonyElixir.CoreTest do
                  issue,
                  nil,
                  issue_state_fetcher: state_fetcher,
-                 issue_turn_count: 6,
-                 resume_thread_id: "thread-existing"
+                 issue_turn_count: 6
                )
 
       lines = File.read!(trace_file) |> String.split("\n", trim: true)
 
       assert length(Enum.filter(lines, &String.starts_with?(&1, "RUN:"))) == 1
-      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+      assert Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
 
       turn_texts =
         lines
@@ -1966,9 +1968,9 @@ defmodule SymphonyElixir.CoreTest do
         end)
 
       assert length(turn_texts) == 1
-      refute Enum.at(turn_texts, 0) =~ "You are an agent for this repository."
-      assert Enum.at(turn_texts, 0) =~ "same physical Codex session/thread"
-      assert Enum.at(turn_texts, 0) =~ "issue-session turn #7"
+      assert Enum.at(turn_texts, 0) =~ "You are an agent for this repository."
+      assert Enum.at(turn_texts, 0) =~ "fresh physical Codex session for an existing issue session"
+      assert Enum.at(turn_texts, 0) =~ "Previous issue-session turns completed: 6"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)

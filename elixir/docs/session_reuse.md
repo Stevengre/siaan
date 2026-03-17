@@ -20,17 +20,19 @@ This preserves issue-level observability such as total turns and aggregate token
 
 ## Physical Codex Session Reuse
 
-Physical reuse attempts to continue on the same Codex thread when an issue returns from
-`status:review` to `status:in-progress`.
+Symphony records the physical Codex thread id for observability, but it does not currently reuse
+that thread across redispatches.
 
-When Symphony has a persisted `physical_session_id`, it starts a fresh app-server connection and
-tries the next `turn/start` against that existing thread id.
+Today each agent dispatch owns its own Codex app-server port and `AgentRunner` always stops that
+session at the end of the run. Closing the app-server tears down the underlying Codex process, so
+the prior thread is no longer resumable on the next dispatch.
 
-- If Codex accepts the thread id, Symphony keeps the same `physical_session_id` and sends only
-  continuation guidance instead of replaying the full bootstrap prompt.
-- If Codex rejects the thread id, Symphony deterministically falls back to `thread/start`,
-  records `physical_session_reuse_decision=started_new_physical_session`, and stores the exact
-  fallback reason for observability.
+On `status:review -> status:in-progress`, Symphony still reuses the logical `issue_session_id`, but
+it starts a fresh physical Codex session and records why:
+
+- `missing_previous_physical_session_id`: no earlier physical thread id was persisted
+- `ephemeral_app_server_lifecycle`: a prior physical thread id existed, but the previous app-server
+  process was already torn down and cannot be resumed today
 
 ## Observability
 

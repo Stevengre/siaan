@@ -21,7 +21,6 @@ defmodule SymphonyElixir.Codex.AppServer do
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
           thread_id: String.t(),
-          resume_thread_id: String.t() | nil,
           physical_session_reuse_decision: String.t(),
           physical_session_fallback_reason: String.t() | nil,
           tracker_kind: String.t() | nil,
@@ -44,7 +43,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
     codex_command = Keyword.get(opts, :codex_command) || Config.settings!().codex.command
-    resume_thread_id = normalize_resume_thread_id(Keyword.get(opts, :resume_thread_id))
     allow_external_workspace = Keyword.get(opts, :allow_external_workspace, false)
 
     with {:ok, expanded_workspace} <-
@@ -59,8 +57,7 @@ defmodule SymphonyElixir.Codex.AppServer do
                port,
                expanded_workspace,
                session_policies,
-               tracker_kind,
-               resume_thread_id
+               tracker_kind
              ) do
         {:ok,
          %{
@@ -71,7 +68,6 @@ defmodule SymphonyElixir.Codex.AppServer do
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
            thread_id: thread_state.thread_id,
-           resume_thread_id: thread_state.resume_thread_id,
            physical_session_reuse_decision: thread_state.physical_session_reuse_decision,
            physical_session_fallback_reason: thread_state.physical_session_fallback_reason,
            tracker_kind: tracker_kind,
@@ -103,7 +99,6 @@ defmodule SymphonyElixir.Codex.AppServer do
         opts \\ []
       ) do
     on_message = Keyword.get(opts, :on_message, &default_on_message/1)
-    fallback_prompt = Keyword.get(opts, :fallback_prompt)
 
     tool_executor =
       Keyword.get(opts, :tool_executor, fn tool, arguments ->
@@ -119,7 +114,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       tracker_kind: tracker_kind
     }
 
-    case start_turn_with_fallback(session, prompt, fallback_prompt, turn_context) do
+    case start_turn_for_session(session, prompt, turn_context) do
       {:ok, updated_session, turn_id} ->
         session_id = "#{updated_session.thread_id}-#{turn_id}"
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
@@ -312,33 +307,21 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies, tracker_kind, resume_thread_id) do
+  defp do_start_session(port, workspace, session_policies, tracker_kind) do
     case send_initialize(port) do
       :ok ->
-        initialize_thread_state(port, workspace, session_policies, tracker_kind, resume_thread_id)
+        initialize_thread_state(port, workspace, session_policies, tracker_kind)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp initialize_thread_state(_port, _workspace, _session_policies, _tracker_kind, resume_thread_id)
-       when is_binary(resume_thread_id) do
-    {:ok,
-     %{
-       thread_id: resume_thread_id,
-       resume_thread_id: resume_thread_id,
-       physical_session_reuse_decision: "attempting_physical_session_reuse",
-       physical_session_fallback_reason: nil
-     }}
-  end
-
-  defp initialize_thread_state(port, workspace, session_policies, tracker_kind, _resume_thread_id) do
+  defp initialize_thread_state(port, workspace, session_policies, tracker_kind) do
     with {:ok, thread_id} <- start_thread(port, workspace, session_policies, tracker_kind) do
       {:ok,
        %{
          thread_id: thread_id,
-         resume_thread_id: nil,
          physical_session_reuse_decision: "started_new_physical_session",
          physical_session_fallback_reason: nil
        }}
@@ -408,7 +391,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_turn_with_fallback(%{port: port, thread_id: thread_id} = session, prompt, fallback_prompt, context) do
+  defp start_turn_for_session(%{port: port, thread_id: thread_id} = session, prompt, context) do
     case start_turn(
            port,
            thread_id,
@@ -419,89 +402,11 @@ defmodule SymphonyElixir.Codex.AppServer do
            context.turn_sandbox_policy
          ) do
       {:ok, turn_id} ->
-        {:ok, mark_physical_session_reuse(session), turn_id}
+        {:ok, session, turn_id}
 
-      {:error, reason} = error ->
-        maybe_fallback_to_new_thread(session, error, reason, fallback_prompt, context)
+      {:error, _reason} = error ->
+        error
     end
-  end
-
-  defp maybe_fallback_to_new_thread(
-         %{port: port, resume_thread_id: resume_thread_id} = session,
-         _error,
-         reason,
-         fallback_prompt,
-         context
-       )
-       when is_binary(resume_thread_id) and is_binary(fallback_prompt) do
-    if definitive_resume_rejection?(reason) do
-      fallback_reason = "resume_turn_start_failed: #{inspect(reason)}"
-
-      Logger.warning("Falling back to a new physical Codex session for #{issue_context(context.issue)} previous_thread_id=#{resume_thread_id} reason=#{fallback_reason}")
-
-      with {:ok, new_thread_id} <-
-             start_thread(
-               port,
-               context.workspace,
-               %{approval_policy: context.approval_policy, thread_sandbox: context.thread_sandbox},
-               context.tracker_kind
-             ),
-           {:ok, turn_id} <-
-             start_turn(
-               port,
-               new_thread_id,
-               fallback_prompt,
-               context.issue,
-               context.workspace,
-               context.approval_policy,
-               context.turn_sandbox_policy,
-               next_request_id()
-             ) do
-        {:ok, start_new_physical_session(session, new_thread_id, fallback_reason), turn_id}
-      end
-    else
-      {:error, reason}
-    end
-  end
-
-  defp maybe_fallback_to_new_thread(_session, error, _reason, _fallback_prompt, _context), do: error
-
-  defp definitive_resume_rejection?({:response_error, error}) do
-    missing_thread_error?(error)
-  end
-
-  defp definitive_resume_rejection?(_reason), do: false
-
-  defp missing_thread_error?(%{"code" => code}) when code in [-32_001, "thread_not_found"], do: true
-
-  defp missing_thread_error?(%{"message" => message}) when is_binary(message) do
-    normalized_message = String.downcase(message)
-
-    (String.contains?(normalized_message, "thread") and
-       String.contains?(normalized_message, "not found")) or
-      String.contains?(normalized_message, "unknown thread")
-  end
-
-  defp missing_thread_error?(%{"error" => nested_error}) when is_map(nested_error),
-    do: missing_thread_error?(nested_error)
-
-  defp missing_thread_error?(_error), do: false
-
-  defp mark_physical_session_reuse(%{resume_thread_id: resume_thread_id} = session)
-       when is_binary(resume_thread_id) do
-    session
-    |> Map.put(:physical_session_reuse_decision, "reused_physical_session")
-    |> Map.put(:physical_session_fallback_reason, nil)
-  end
-
-  defp mark_physical_session_reuse(session), do: session
-
-  defp start_new_physical_session(session, thread_id, fallback_reason) do
-    session
-    |> Map.put(:thread_id, thread_id)
-    |> Map.put(:resume_thread_id, nil)
-    |> Map.put(:physical_session_reuse_decision, "started_new_physical_session")
-    |> Map.put(:physical_session_fallback_reason, fallback_reason)
   end
 
   defp await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
@@ -1201,19 +1106,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp default_on_message(_message), do: :ok
-
-  defp normalize_resume_thread_id(thread_id) when is_binary(thread_id) do
-    case String.trim(thread_id) do
-      "" -> nil
-      normalized -> normalized
-    end
-  end
-
-  defp normalize_resume_thread_id(_thread_id), do: nil
-
-  defp next_request_id do
-    System.unique_integer([:positive, :monotonic]) + @turn_start_id
-  end
 
   defp tool_call_name(params) when is_map(params) do
     case Map.get(params, "tool") || Map.get(params, :tool) || Map.get(params, "name") || Map.get(params, :name) do

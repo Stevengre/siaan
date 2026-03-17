@@ -336,8 +336,8 @@ defmodule SymphonyElixir.SessionStatsTest do
       execution_transition: "retry_continuation",
       session_reuse_policy: "reuse_issue_session",
       session_reuse_decision: "reused_issue_session",
-      physical_session_reuse_decision: "reused_physical_session",
-      physical_session_fallback_reason: nil,
+      physical_session_reuse_decision: "started_new_physical_session",
+      physical_session_fallback_reason: "ephemeral_app_server_lifecycle",
       codex_thread_id: "thread-1",
       physical_session_count: 2,
       issue_session_turn_count: 5,
@@ -356,8 +356,8 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert summary.execution_transition == "retry_continuation"
     assert summary.session_reuse_policy == "reuse_issue_session"
     assert summary.session_reuse_decision == "reused_issue_session"
-    assert summary.physical_session_reuse_decision == "reused_physical_session"
-    assert summary.physical_session_fallback_reason == nil
+    assert summary.physical_session_reuse_decision == "started_new_physical_session"
+    assert summary.physical_session_fallback_reason == "ephemeral_app_server_lifecycle"
     assert summary.physical_session_id == "thread-1"
     assert summary.physical_session_count == 2
     assert summary.issue_session_turn_count == 5
@@ -367,8 +367,8 @@ defmodule SymphonyElixir.SessionStatsTest do
     assert record["execution_transition"] == "retry_continuation"
     assert record["session_reuse_policy"] == "reuse_issue_session"
     assert record["session_reuse_decision"] == "reused_issue_session"
-    assert record["physical_session_reuse_decision"] == "reused_physical_session"
-    assert record["physical_session_fallback_reason"] == nil
+    assert record["physical_session_reuse_decision"] == "started_new_physical_session"
+    assert record["physical_session_fallback_reason"] == "ephemeral_app_server_lifecycle"
     assert record["physical_session_id"] == "thread-1"
     assert record["physical_session_count"] == 2
     assert record["issue_session_turn_count"] == 5

@@ -119,6 +119,8 @@ defmodule SymphonyElixir.AppServerTest do
             codex_command: "missing-binary app-server",
             allow_external_workspace: true
           )
+        rescue
+          error in ArgumentError -> {:error, error}
         catch
           :exit, reason -> {:exit, reason}
         end
@@ -244,7 +246,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server reuses an existing physical Codex thread when turn/start accepts it" do
+  test "app server always starts a fresh physical Codex thread for a new app-server session" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -285,7 +287,10 @@ defmodule SymphonyElixir.AppServerTest do
           2)
             ;;
           3)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-reused"}}}'
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-fresh"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-fresh"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             exit 0
             ;;
@@ -303,147 +308,32 @@ defmodule SymphonyElixir.AppServerTest do
       issue = %Issue{
         id: "issue-thread-reuse",
         identifier: "MT-1001A",
-        title: "Reuse physical thread",
-        description: "Keep the same thread id",
+        title: "Fresh physical thread",
+        description: "Start a new thread per app-server session",
         state: "In Progress",
         url: "https://example.org/issues/MT-1001A",
         labels: ["backend"]
       }
 
       assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-existing")
-      assert session.thread_id == "thread-existing"
-      assert session.resume_thread_id == "thread-existing"
+      assert session.thread_id == "thread-fresh"
+      assert session.physical_session_reuse_decision == "started_new_physical_session"
+      assert session.physical_session_fallback_reason == nil
 
-      assert {:ok, result} = AppServer.run_turn(session, "Resume this thread", issue)
-      assert result.thread_id == "thread-existing"
-      assert result.physical_session_reuse_decision == "reused_physical_session"
-      assert result.physical_session_fallback_reason == nil
-      assert result.app_session.thread_id == "thread-existing"
-      assert result.app_session.resume_thread_id == "thread-existing"
-
-      lines = File.read!(trace_file) |> String.split("\n", trim: true)
-      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
-    after
-      File.rm_rf(test_root)
-    end
-  end
-
-  test "app server falls back to a fresh physical Codex thread when resume fails" do
-    test_root =
-      Path.join(
-        System.tmp_dir!(),
-        "symphony-elixir-app-server-thread-fallback-#{System.unique_integer([:positive])}"
-      )
-
-    try do
-      workspace_root = Path.join(test_root, "workspaces")
-      workspace = Path.join(workspace_root, "MT-1001B")
-      codex_binary = Path.join(test_root, "fake-codex")
-      trace_file = Path.join(test_root, "codex-thread-fallback.trace")
-      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
-
-      on_exit(fn ->
-        if is_binary(previous_trace) do
-          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
-        else
-          System.delete_env("SYMP_TEST_CODEx_TRACE")
-        end
-      end)
-
-      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
-      File.mkdir_p!(workspace)
-
-      File.write!(codex_binary, """
-      #!/bin/sh
-      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-thread-fallback.trace}"
-      count=0
-      current_id=""
-
-      while IFS= read -r line; do
-        count=$((count + 1))
-        printf 'JSON:%s\\n' "$line" >> "$trace_file"
-        request_id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p')
-
-        if [ -n "$request_id" ]; then
-          current_id="$request_id"
-        fi
-
-        case "$count" in
-          1)
-            printf '%s\\n' '{"id":1,"result":{}}'
-            ;;
-          2)
-            ;;
-          3)
-            printf '{"id":%s,"error":{"message":"thread not found"}}\n' "$current_id"
-            ;;
-          4)
-            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-fresh"}}}'
-            ;;
-          5)
-            printf '{"id":%s,"result":{"turn":{"id":"turn-fresh"}}}\n' "$current_id"
-            printf '%s\\n' '{"method":"turn/completed"}'
-            exit 0
-            ;;
-        esac
-      done
-      """)
-
-      File.chmod!(codex_binary, 0o755)
-
-      write_workflow_file!(Workflow.workflow_file_path(),
-        workspace_root: workspace_root,
-        codex_command: "#{codex_binary} app-server"
-      )
-
-      issue = %Issue{
-        id: "issue-thread-fallback",
-        identifier: "MT-1001B",
-        title: "Fallback to fresh physical thread",
-        description: "Resume thread no longer exists",
-        state: "In Progress",
-        url: "https://example.org/issues/MT-1001B",
-        labels: ["backend"]
-      }
-
-      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-stale")
-
-      assert {:ok, result} =
-               AppServer.run_turn(
-                 session,
-                 "Resume this thread",
-                 issue,
-                 fallback_prompt: "Fresh session fallback prompt"
-               )
-
+      assert {:ok, result} = AppServer.run_turn(session, "Start a fresh thread", issue)
       assert result.thread_id == "thread-fresh"
       assert result.physical_session_reuse_decision == "started_new_physical_session"
-      assert result.physical_session_fallback_reason =~ "resume_turn_start_failed"
-      assert result.physical_session_fallback_reason =~ "thread not found"
+      assert result.physical_session_fallback_reason == nil
       assert result.app_session.thread_id == "thread-fresh"
-      assert result.app_session.resume_thread_id == nil
 
       lines = File.read!(trace_file) |> String.split("\n", trim: true)
       assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
-      assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-stale\""))
-      assert Enum.any?(lines, &String.contains?(&1, "\"threadId\":\"thread-fresh\""))
-
-      turn_start_ids =
-        lines
-        |> Enum.filter(&String.contains?(&1, "\"method\":\"turn/start\""))
-        |> Enum.map(fn line ->
-          [_, id] = Regex.run(~r/"id":(\d+)/, line)
-          id
-        end)
-
-      assert length(turn_start_ids) == 2
-      assert Enum.uniq(turn_start_ids) == turn_start_ids
     after
       File.rm_rf(test_root)
     end
   end
 
-  test "app server does not fall back to a fresh thread when resume turn/start times out" do
+  test "app server surfaces turn/start timeouts without starting an extra thread" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -484,6 +374,9 @@ defmodule SymphonyElixir.AppServerTest do
           2)
             ;;
           3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-fresh"}}}'
+            ;;
+          4)
             sleep 1
             ;;
         esac
@@ -500,14 +393,14 @@ defmodule SymphonyElixir.AppServerTest do
       issue = %Issue{
         id: "issue-thread-timeout",
         identifier: "MT-1001C",
-        title: "Do not fallback on resume timeout",
-        description: "A late stale completion must not be misattributed to a fallback thread",
+        title: "Surface turn timeout",
+        description: "Return the timeout from turn/start",
         state: "In Progress",
         url: "https://example.org/issues/MT-1001C",
         labels: ["backend"]
       }
 
-      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-stale")
+      assert {:ok, session} = AppServer.start_session(workspace)
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
@@ -518,15 +411,14 @@ defmodule SymphonyElixir.AppServerTest do
       assert {:error, :response_timeout} =
                AppServer.run_turn(
                  session,
-                 "Resume this thread",
-                 issue,
-                 fallback_prompt: "Fresh session fallback prompt"
+                 "Wait for the turn response",
+                 issue
                )
 
       AppServer.stop_session(session)
 
       lines = File.read!(trace_file) |> String.split("\n", trim: true)
-      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+      assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
 
       turn_start_ids =
         lines
