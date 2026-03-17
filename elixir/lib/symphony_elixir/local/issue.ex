@@ -20,10 +20,7 @@ defmodule SymphonyElixir.Local.Issue do
   @spec scan_root(Path.t(), Path.t(), map()) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
   def scan_root(root_path, project_dir, workflow)
       when is_binary(root_path) and is_binary(project_dir) do
-    states =
-      root_path
-      |> File.ls!()
-      |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
+    states = workflow_states(root_path, workflow)
 
     Enum.reduce_while(states, {:ok, []}, fn state, {:ok, issues} ->
       case scan_state(root_path, state, project_dir, workflow) do
@@ -39,10 +36,7 @@ defmodule SymphonyElixir.Local.Issue do
           {:ok, TrackerIssue.t()} | {:error, term()}
   def load_by_slug(root_path, slug, project_dir, workflow)
       when is_binary(root_path) and is_binary(slug) and is_binary(project_dir) do
-    states =
-      root_path
-      |> File.ls!()
-      |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
+    states = workflow_states(root_path, workflow)
 
     Enum.reduce_while(states, {:error, {:issue_not_found, slug}}, fn state, _acc ->
       case load_slug_from_state(state, root_path, slug, project_dir, workflow) do
@@ -113,7 +107,7 @@ defmodule SymphonyElixir.Local.Issue do
         |> Map.get(:activities, [])
         |> Enum.find_value(fn
           %Workflow.Activity{type: :skill, name: "siaan-inprogress"} ->
-            Path.join(project_dir, "elixir/priv/skills/siaan-inprogress.md")
+            skill_template_path("siaan-inprogress.md")
 
           _ ->
             nil
@@ -148,6 +142,23 @@ defmodule SymphonyElixir.Local.Issue do
       Path.join([root_path, state, slug, "issue.md"])
     else
       Path.join([root_path, state, "#{slug}.md"])
+    end
+  end
+
+  defp workflow_states(root_path, workflow) when is_map(workflow) do
+    workflow
+    |> Map.keys()
+    |> Enum.filter(&File.dir?(Path.join(root_path, &1)))
+  end
+
+  defp skill_template_path(file_name) when is_binary(file_name) do
+    case :code.priv_dir(:symphony_elixir) do
+      priv_dir when is_list(priv_dir) ->
+        path = Path.join([List.to_string(priv_dir), "skills", file_name])
+        if File.exists?(path), do: path, else: nil
+
+      _ ->
+        nil
     end
   end
 

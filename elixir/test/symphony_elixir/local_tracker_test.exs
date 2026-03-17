@@ -357,6 +357,41 @@ defmodule SymphonyElixir.LocalTrackerTest do
              LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/bad.md"))
   end
 
+  test "local issue scan ignores sibling directories that are not workflow states" do
+    issue_root = tmp_dir!("local-scan-states-only")
+    project_dir = Path.join(issue_root, "repo")
+    workflow = %{"ready" => %{activities: [], transitions: []}}
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      Path.join([issue_root, "ready", "queued.md"]),
+      """
+      ---
+      title: Queued
+      status: ready
+      ---
+      queued body
+      """
+    )
+
+    File.write!(
+      Path.join(project_dir, "README.md"),
+      """
+      ---
+      title: [unterminated
+      ---
+      """
+    )
+
+    assert {:ok, [issue]} = LocalIssue.scan_root(issue_root, project_dir, workflow)
+    assert issue.id == "queued"
+
+    assert {:ok, same_issue} = LocalIssue.load_by_slug(issue_root, "queued", project_dir, workflow)
+    assert same_issue.id == "queued"
+  end
+
   test "local adapter filters candidate issues by adapter assignee and states" do
     issue_root = tmp_dir!("local-filtered-state")
     config_path = Path.join(issue_root, "config.toml")
@@ -962,6 +997,51 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert prompt =~ "Issue path: /tmp/issue.md"
     assert prompt =~ "Workpad path: /tmp/workpad.md"
     assert prompt =~ "status: review"
+  end
+
+  test "local issue uses app priv skill templates even when the tracked project is external" do
+    issue_root = tmp_dir!("local-external-project-template")
+    project_dir = Path.join(issue_root, "external-project")
+    slug = "external-template"
+
+    workflow = %{
+      "in-progress" => %{
+        activities: [%LocalWorkflow.Activity{type: :skill, name: "siaan-inprogress"}],
+        transitions: []
+      }
+    }
+
+    File.mkdir_p!(Path.join([issue_root, "in-progress", slug]))
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      Path.join([issue_root, "in-progress", slug, "issue.md"]),
+      """
+      ---
+      identifier: GH-42
+      title: External project template
+      status: in-progress
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "in-progress", slug, "workpad.md"]),
+      """
+      ---
+      status: in-progress
+      ---
+      """
+    )
+
+    assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
+    assert is_binary(issue.prompt_template_path)
+    assert File.exists?(issue.prompt_template_path)
+    refute String.starts_with?(issue.prompt_template_path, project_dir)
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt =~ "Issue path: #{Path.join([issue_root, "in-progress", slug, "issue.md"])}"
   end
 
   test "prompt builder local-template path still includes allowlist context" do
