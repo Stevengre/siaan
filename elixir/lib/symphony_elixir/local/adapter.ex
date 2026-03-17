@@ -383,8 +383,13 @@ defmodule SymphonyElixir.Local.Adapter do
   end
 
   defp passes_adapter_filters?(issue, adapter_config) when is_map(adapter_config) do
-    filters = Map.get(adapter_config, "filters", %{})
-    passes_state_filter?(issue, filters) and passes_assignee_filter?(issue, filters)
+    case Map.get(adapter_config, "filters", %{}) do
+      filters when is_map(filters) ->
+        passes_state_filter?(issue, filters) and passes_assignee_filter?(issue, filters)
+
+      _ ->
+        false
+    end
   end
 
   defp passes_state_filter?(issue, filters) do

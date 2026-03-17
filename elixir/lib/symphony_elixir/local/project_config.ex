@@ -19,7 +19,8 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          {:ok, document} <- parse_document(contents),
          {:ok, project} <- fetch_project(document, project_name),
          {:ok, dir} <- fetch_required_path(project, project_name, "dir"),
-         {:ok, workflow} <- fetch_required_path(project, project_name, "workflow") do
+         {:ok, workflow} <- fetch_required_path(project, project_name, "workflow"),
+         {:ok, adapter} <- validate_adapter(project, project_name) do
       resolved_dir = resolve_path(config_path, dir)
 
       {:ok,
@@ -28,7 +29,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          dir: resolved_dir,
          workflow: resolve_path(config_path, workflow, resolved_dir),
          runtime: normalize_runtime(Map.get(project, "runtime")),
-         adapter: Map.get(project, "adapter", %{})
+         adapter: adapter
        }}
     end
   end
@@ -53,6 +54,26 @@ defmodule SymphonyElixir.Local.ProjectConfig do
 
       _ ->
         {:error, {:missing_project_field, project_name, key}}
+    end
+  end
+
+  defp validate_adapter(project, project_name) when is_map(project) do
+    case Map.get(project, "adapter", %{}) do
+      adapter when is_map(adapter) ->
+        validate_adapter_filters(adapter, project_name)
+
+      value ->
+        {:error, {:invalid_project_field_type, project_name, "adapter", :map, value}}
+    end
+  end
+
+  defp validate_adapter_filters(adapter, project_name) when is_map(adapter) do
+    case Map.get(adapter, "filters", %{}) do
+      filters when is_map(filters) ->
+        {:ok, adapter}
+
+      value ->
+        {:error, {:invalid_project_field_type, project_name, "adapter.filters", :map, value}}
     end
   end
 
