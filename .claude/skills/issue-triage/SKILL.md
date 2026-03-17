@@ -50,6 +50,12 @@ Resolution order: `projects.<name>` → `global` → built-in defaults (`issue_l
 - Load `issue-config` skill for frontmatter schema, status rules, and directory structure.
 - Ensure `~/.config/skills/issue-config/triage/` exists.
 - Load config from `~/.config/skills/issue-triage/config.toml` (or create it on first run).
+- Ensure `~/.config/skills/issue-config/config.toml` has a project entry for the current repo with at least:
+  ```toml
+  [projects.<name>]
+  dir = "/path/to/<name>"
+  runtime = "local"
+  ```
 
 ### 2. First Draft — Guess Boldly
 

@@ -139,7 +139,11 @@ The TUI reads the `project` field, looks up the project directory from `config.t
 # ~/.config/skills/issue-config/config.toml
 [projects.siaan]
 dir = "/Users/steven/Desktop/projs/siaan"
+runtime = "local"
 ```
+
+`runtime = "local"` means execution happens from the configured project directory on the
+local machine. It does not dispatch the execution-stage skill to remote worker hosts.
 
 ### Allowed transitions
 

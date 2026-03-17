@@ -1160,7 +1160,7 @@ defmodule SymphonyElixir.CoreTest do
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, nil) == "worker-b"
+    assert Orchestrator.select_worker_host_for_test(state, %Issue{}, nil) == "worker-b"
   end
 
   test "select_worker_host_for_test returns no_worker_capacity when every ssh host is full" do
@@ -1176,7 +1176,7 @@ defmodule SymphonyElixir.CoreTest do
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, nil) == :no_worker_capacity
+    assert Orchestrator.select_worker_host_for_test(state, %Issue{}, nil) == :no_worker_capacity
   end
 
   test "select_worker_host_for_test keeps the preferred ssh host when it still has capacity" do
@@ -1192,7 +1192,48 @@ defmodule SymphonyElixir.CoreTest do
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
+    assert Orchestrator.select_worker_host_for_test(state, %Issue{}, "worker-a") == "worker-a"
+  end
+
+  test "select_worker_host_for_test keeps local-runtime issues off ssh workers" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_hosts: ["worker-a", "worker-b"],
+      worker_max_concurrent_agents_per_host: 1
+    )
+
+    state = %Orchestrator.State{
+      running: %{
+        "issue-1" => %{worker_host: "worker-a"}
+      }
+    }
+
+    issue = %Issue{
+      id: "issue-local-runtime",
+      identifier: "GH-42",
+      project_runtime: "local"
+    }
+
+    assert Orchestrator.select_worker_host_for_test(state, issue, "worker-a") == nil
+  end
+
+  test "worker_slots_available_for_test does not block local-runtime issues on full ssh hosts" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_hosts: ["worker-a", "worker-b"],
+      worker_max_concurrent_agents_per_host: 1
+    )
+
+    state = %Orchestrator.State{
+      running: %{
+        "issue-1" => %{worker_host: "worker-a"},
+        "issue-2" => %{worker_host: "worker-b"}
+      }
+    }
+
+    local_issue = %Issue{id: "local-issue", identifier: "GH-42", project_runtime: "local"}
+    remote_issue = %Issue{id: "remote-issue", identifier: "GH-43"}
+
+    assert Orchestrator.worker_slots_available_for_test(state, local_issue) == true
+    assert Orchestrator.worker_slots_available_for_test(state, remote_issue) == false
   end
 
   defp assert_due_offset_between(due_at_ms, earliest_ms, latest_ms, delay_ms) do
@@ -1872,6 +1913,240 @@ defmodule SymphonyElixir.CoreTest do
       assert length(Regex.scan(~r/"method":"turn\/start"/, trace)) == 2
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner uses the configured project directory for local runtime issues" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-local-runtime-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      project_dir = Path.join(test_root, "project")
+      issue_dir = Path.join(test_root, "issues/in-progress/proof-issue")
+      issue_path = Path.join(issue_dir, "issue.md")
+      workpad_path = Path.join(issue_dir, "workpad.md")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(project_dir)
+      File.mkdir_p!(issue_dir)
+
+      File.write!(
+        issue_path,
+        """
+        ---
+        identifier: GH-42
+        title: Orchestrator local-first
+        status: in-progress
+        ---
+        Issue body
+        """
+      )
+
+      File.write!(workpad_path, "---\nstatus: in-progress\n---\n")
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/codex.trace}"
+      count=0
+      printf 'CWD:%s\\n' "$PWD" >> "$trace_file"
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-local"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-local"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEX_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "local",
+        tracker_local_config_path: Path.join(test_root, "config.toml"),
+        tracker_local_project: "siaan",
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        tracker_active_states: ["status:in-progress"]
+      )
+
+      issue = %Issue{
+        id: "proof-issue",
+        identifier: "GH-42",
+        title: "Orchestrator local-first",
+        description: "Local runtime dispatch proof",
+        state: "status:in-progress",
+        issue_dir: issue_dir,
+        issue_path: issue_path,
+        workpad_path: workpad_path,
+        project_dir: project_dir,
+        project_runtime: "local",
+        prompt_template_path: Path.expand("priv/skills/siaan-inprogress.md", File.cwd!()),
+        base_branch: "main",
+        current_branch: "gh-42-local-first-dsl"
+      }
+
+      test_pid = self()
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 test_pid,
+                 issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "status:review"}]} end
+               )
+
+      assert_receive {:worker_runtime_info, "proof-issue", %{workspace_path: runtime_path}}, 500
+      assert {:ok, canonical_project_dir} = SymphonyElixir.PathSafety.canonicalize(project_dir)
+      assert runtime_path == canonical_project_dir
+
+      trace_lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      assert Enum.member?(trace_lines, "CWD:#{canonical_project_dir}")
+
+      prompt_text =
+        trace_lines
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&String.trim_leading(&1, "JSON:"))
+        |> Enum.map(&Jason.decode!/1)
+        |> Enum.find_value(fn payload ->
+          if payload["method"] == "turn/start" do
+            get_in(payload, ["params", "input"])
+            |> Enum.map_join("\n", &Map.get(&1, "text", ""))
+          end
+        end)
+
+      assert prompt_text =~ "Issue path: #{issue_path}"
+      assert prompt_text =~ "Workpad path: #{workpad_path}"
+      assert prompt_text =~ "Project directory: #{project_dir}"
+      assert prompt_text =~ "Base branch: main"
+      assert prompt_text =~ "Current branch: gh-42-local-first-dsl"
+      assert prompt_text =~ "status: review"
+    after
+      System.delete_env("SYMP_TEST_CODEX_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner keeps local-runtime issues off configured ssh workers" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-local-runtime-hosts-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      project_dir = Path.join(test_root, "project")
+      issue_dir = Path.join(test_root, "issues/in-progress/proof-issue")
+      issue_path = Path.join(issue_dir, "issue.md")
+      workpad_path = Path.join(issue_dir, "workpad.md")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(project_dir)
+      File.mkdir_p!(issue_dir)
+
+      File.write!(
+        issue_path,
+        """
+        ---
+        identifier: GH-42
+        title: Orchestrator local-first
+        status: in-progress
+        ---
+        Issue body
+        """
+      )
+
+      File.write!(workpad_path, "---\nstatus: in-progress\n---\n")
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-local-host"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-local-host"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "local",
+        tracker_local_config_path: Path.join(test_root, "config.toml"),
+        tracker_local_project: "siaan",
+        workspace_root: workspace_root,
+        worker_ssh_hosts: ["worker-a", "worker-b"],
+        codex_command: "#{codex_binary} app-server",
+        tracker_active_states: ["status:in-progress"]
+      )
+
+      issue = %Issue{
+        id: "proof-issue",
+        identifier: "GH-42",
+        title: "Orchestrator local-first",
+        description: "Local runtime worker host proof",
+        state: "status:in-progress",
+        issue_dir: issue_dir,
+        issue_path: issue_path,
+        workpad_path: workpad_path,
+        project_dir: project_dir,
+        project_runtime: "local",
+        prompt_template_path: Path.expand("priv/skills/siaan-inprogress.md", File.cwd!())
+      }
+
+      test_pid = self()
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 test_pid,
+                 issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "status:review"}]} end
+               )
+
+      assert_receive {:worker_runtime_info, "proof-issue", %{worker_host: worker_host, workspace_path: runtime_path}}, 500
+      assert worker_host == nil
+      assert {:ok, canonical_project_dir} = SymphonyElixir.PathSafety.canonicalize(project_dir)
+      assert runtime_path == canonical_project_dir
+    after
       File.rm_rf(test_root)
     end
   end

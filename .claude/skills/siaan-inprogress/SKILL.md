@@ -26,7 +26,14 @@ The orchestrator renders and passes these values into the prompt template:
 
 ## Working directory
 
-The orchestrator runs the agent from the configured project directory.
+The orchestrator runs the agent from the configured project directory when the project
+config sets `runtime = "local"`.
+
+If that project directory is missing or unreadable, dispatch fails before the skill
+starts.
+
+`runtime = "local"` is local-machine-only. The orchestrator will not dispatch this
+skill to remote worker hosts.
 
 ## File permissions
 

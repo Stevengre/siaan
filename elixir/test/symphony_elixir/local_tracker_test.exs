@@ -439,6 +439,43 @@ defmodule SymphonyElixir.LocalTrackerTest do
              LocalIssue.read_frontmatter_safe(Path.join(issue_root, "ready/bad.md"))
   end
 
+  test "local issue helpers preserve project runtime metadata on loaded issues" do
+    issue_root = tmp_dir!("local-issue-runtime")
+    project_dir = Path.join(issue_root, "repo")
+    workflow = %{"in-progress" => %{activities: [], transitions: []}}
+    slug = "runtime-aware-issue"
+
+    File.mkdir_p!(Path.join([issue_root, "in-progress", slug]))
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      Path.join([issue_root, "in-progress", slug, "issue.md"]),
+      """
+      ---
+      identifier: GH-42
+      title: Runtime-aware issue
+      status: in-progress
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "in-progress", slug, "workpad.md"]),
+      """
+      ---
+      status: in-progress
+      ---
+      """
+    )
+
+    assert {:ok, issue} =
+             LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow, "local")
+
+    assert issue.project_dir == project_dir
+    assert issue.project_runtime == "local"
+  end
+
   test "local issue scan ignores collapsed workpad sidecars in file states" do
     issue_root = tmp_dir!("local-issue-sidecar-scan")
     project_dir = Path.expand("..", File.cwd!())
@@ -1113,6 +1150,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert prompt =~ "Issue path: /tmp/issue.md"
     assert prompt =~ "Workpad path: /tmp/workpad.md"
+    assert prompt =~ "it is not dispatched to remote worker hosts"
     assert prompt =~ "status: review"
   end
 

@@ -17,13 +17,14 @@ defmodule SymphonyElixir.Local.Issue do
   def tracker_state_from_storage_state(state_name) when is_binary(state_name),
     do: "status:#{state_name}"
 
-  @spec scan_root(Path.t(), Path.t(), map()) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
-  def scan_root(root_path, project_dir, workflow)
+  @spec scan_root(Path.t(), Path.t(), map(), String.t() | nil) ::
+          {:ok, [TrackerIssue.t()]} | {:error, term()}
+  def scan_root(root_path, project_dir, workflow, project_runtime \\ nil)
       when is_binary(root_path) and is_binary(project_dir) do
     states = workflow_states(root_path, workflow)
 
     Enum.reduce_while(states, {:ok, []}, fn state, {:ok, issues} ->
-      case scan_state(root_path, state, project_dir, workflow) do
+      case scan_state(root_path, state, project_dir, workflow, project_runtime) do
         {:ok, state_issues} -> {:cont, {:ok, issues ++ state_issues}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -32,14 +33,14 @@ defmodule SymphonyElixir.Local.Issue do
     error in [File.Error] -> {:error, error}
   end
 
-  @spec load_by_slug(Path.t(), String.t(), Path.t(), map()) ::
+  @spec load_by_slug(Path.t(), String.t(), Path.t(), map(), String.t() | nil) ::
           {:ok, TrackerIssue.t()} | {:error, term()}
-  def load_by_slug(root_path, slug, project_dir, workflow)
+  def load_by_slug(root_path, slug, project_dir, workflow, project_runtime \\ nil)
       when is_binary(root_path) and is_binary(slug) and is_binary(project_dir) do
     states = workflow_states(root_path, workflow)
 
     Enum.reduce_while(states, {:error, {:issue_not_found, slug}}, fn state, _acc ->
-      case load_slug_from_state(state, root_path, slug, project_dir, workflow) do
+      case load_slug_from_state(state, root_path, slug, project_dir, workflow, project_runtime) do
         {:ok, issue} -> {:halt, {:ok, issue}}
         :skip -> {:cont, {:error, {:issue_not_found, slug}}}
         {:error, _reason} = error -> {:halt, error}
@@ -49,17 +50,17 @@ defmodule SymphonyElixir.Local.Issue do
     error in [File.Error] -> {:error, error}
   end
 
-  defp load_slug_from_state(state, root_path, slug, project_dir, workflow) do
+  defp load_slug_from_state(state, root_path, slug, project_dir, workflow, project_runtime) do
     path = issue_path_for_state(root_path, state, slug)
 
     if issue_document_path?(state, path) and File.exists?(path) do
-      build_issue(root_path, state, slug, path, project_dir, workflow)
+      build_issue(root_path, state, slug, path, project_dir, workflow, project_runtime)
     else
       :skip
     end
   end
 
-  defp scan_state(root_path, state, project_dir, workflow) do
+  defp scan_state(root_path, state, project_dir, workflow, project_runtime) do
     state_path = Path.join(root_path, state)
 
     entries =
@@ -80,7 +81,7 @@ defmodule SymphonyElixir.Local.Issue do
       end
 
     Enum.reduce_while(entries, {:ok, []}, fn {slug, issue_path}, {:ok, issues} ->
-      case build_issue(root_path, state, slug, issue_path, project_dir, workflow) do
+      case build_issue(root_path, state, slug, issue_path, project_dir, workflow, project_runtime) do
         {:ok, issue} -> {:cont, {:ok, [issue | issues]}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -91,7 +92,7 @@ defmodule SymphonyElixir.Local.Issue do
     end
   end
 
-  defp build_issue(root_path, state, slug, issue_path, project_dir, workflow) do
+  defp build_issue(root_path, state, slug, issue_path, project_dir, workflow, project_runtime) do
     with {:ok, {frontmatter, body}} <- read_frontmatter_safe(issue_path) do
       issue_dir = Path.dirname(issue_path)
 
@@ -130,6 +131,7 @@ defmodule SymphonyElixir.Local.Issue do
          issue_dir: issue_dir,
          workpad_path: workpad_path,
          project_dir: project_dir,
+         project_runtime: project_runtime,
          prompt_template_path: skill_template,
          base_branch: Map.get(frontmatter, "base-branch"),
          current_branch: Map.get(frontmatter, "current-branch")

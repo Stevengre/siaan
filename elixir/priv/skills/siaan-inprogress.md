@@ -16,6 +16,7 @@ Execution contract:
 - Treat `{{ issue.issue_path }}` as read-only.
 - Write progress, validation, and transition intent to `{{ issue.workpad_path }}`.
 - Keep `{{ issue.workpad_path }}` as valid markdown with YAML frontmatter bounded by opening and closing `---` lines.
+- This stage runs on the local machine from `{{ issue.project_dir }}`; it is not dispatched to remote worker hosts.
 - Do not move issue files or directories.
 - Do not update remote issue status directly.
 - When the execution work is complete, express transition intent by writing this exact frontmatter shape at the top of `workpad.md`:

@@ -41,8 +41,10 @@ defmodule SymphonyElixir.Codex.AppServer do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
     codex_command = Keyword.get(opts, :codex_command) || Config.settings!().codex.command
+    allow_external_workspace = Keyword.get(opts, :allow_external_workspace, false)
 
-    with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
+    with {:ok, expanded_workspace} <-
+           validate_workspace_cwd(workspace, worker_host, allow_external_workspace),
          {:ok, port} <- start_port(expanded_workspace, worker_host, codex_command) do
       metadata = port_metadata(port, worker_host)
       tracker_kind = Config.settings!().tracker.kind
@@ -149,7 +151,10 @@ defmodule SymphonyElixir.Codex.AppServer do
     stop_port(port)
   end
 
-  defp validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
+  defp validate_workspace_cwd(workspace, worker_host, allow_external_workspace)
+
+  defp validate_workspace_cwd(workspace, nil, allow_external_workspace)
+       when is_binary(workspace) and is_boolean(allow_external_workspace) do
     expanded_workspace = Path.expand(workspace)
     expanded_root = Path.expand(Config.settings!().workspace.root)
     expanded_root_prefix = expanded_root <> "/"
@@ -165,6 +170,9 @@ defmodule SymphonyElixir.Codex.AppServer do
         String.starts_with?(canonical_workspace <> "/", canonical_root_prefix) ->
           {:ok, canonical_workspace}
 
+        allow_external_workspace ->
+          {:ok, canonical_workspace}
+
         String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
           {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
 
@@ -177,7 +185,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp validate_workspace_cwd(workspace, worker_host)
+  defp validate_workspace_cwd(workspace, worker_host, _allow_external_workspace)
        when is_binary(workspace) and is_binary(worker_host) do
     cond do
       String.trim(workspace) == "" ->

@@ -12,7 +12,11 @@ defmodule SymphonyElixir.AgentRunner do
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     worker_hosts =
-      candidate_worker_hosts(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+      candidate_worker_hosts(
+        issue,
+        Keyword.get(opts, :worker_host),
+        Config.settings!().worker.ssh_hosts
+      )
 
     Logger.info("Starting agent run for #{issue_context(issue)} worker_hosts=#{inspect(worker_hosts_for_log(worker_hosts))}")
 
@@ -97,9 +101,14 @@ defmodule SymphonyElixir.AgentRunner do
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
     issue_turn_count = Keyword.get(opts, :issue_turn_count, 0)
     codex_command = Keyword.get(opts, :codex_command)
+    allow_external_workspace = Map.get(issue, :project_runtime) in ["local", :local]
 
     with {:ok, session} <-
-           AppServer.start_session(workspace, worker_host: worker_host, codex_command: codex_command) do
+           AppServer.start_session(workspace,
+             worker_host: worker_host,
+             codex_command: codex_command,
+             allow_external_workspace: allow_external_workspace
+           ) do
       try do
         run_context = %{
           workspace: workspace,
@@ -212,9 +221,13 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp active_issue_state?(_state_name), do: false
 
-  defp candidate_worker_hosts(nil, []), do: [nil]
+  defp candidate_worker_hosts(%{project_runtime: runtime}, _preferred_host, _configured_hosts)
+       when runtime in ["local", :local],
+       do: [nil]
 
-  defp candidate_worker_hosts(preferred_host, configured_hosts) when is_list(configured_hosts) do
+  defp candidate_worker_hosts(_issue, nil, []), do: [nil]
+
+  defp candidate_worker_hosts(_issue, preferred_host, configured_hosts) when is_list(configured_hosts) do
     hosts =
       configured_hosts
       |> Enum.map(&String.trim/1)

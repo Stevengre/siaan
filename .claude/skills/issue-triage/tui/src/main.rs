@@ -76,13 +76,16 @@ fn exec_in_project_dir(
         }
         None => {
             let name = project_name.unwrap_or("(unknown)");
-            eprintln!(
-                "No project dir configured. Add to ~/.config/skills/issue-config/config.toml:\n\n[projects.{}]\ndir = \"/path/to/{}\"",
-                name, name
-            );
+            eprintln!("{}", missing_project_dir_message(name));
             Ok(())
         }
     }
+}
+
+fn missing_project_dir_message(project_name: &str) -> String {
+    format!(
+        "No project dir configured. Add to ~/.config/skills/issue-config/config.toml:\n\n[projects.{project_name}]\ndir = \"/path/to/{project_name}\"\nruntime = \"local\""
+    )
 }
 
 fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Action> {
@@ -111,5 +114,19 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<Ac
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::missing_project_dir_message;
+
+    #[test]
+    fn missing_project_dir_message_includes_local_runtime_hint() {
+        let message = missing_project_dir_message("siaan");
+
+        assert!(message.contains("[projects.siaan]"));
+        assert!(message.contains("dir = \"/path/to/siaan\""));
+        assert!(message.contains("runtime = \"local\""));
     }
 }

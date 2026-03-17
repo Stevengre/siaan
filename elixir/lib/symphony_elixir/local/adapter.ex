@@ -16,7 +16,12 @@ defmodule SymphonyElixir.Local.Adapter do
   def fetch_candidate_issues do
     with {:ok, context} <- load_context(),
          {:ok, issues} <-
-           Issue.scan_root(context.root_path, context.project.dir, context.workflow) do
+           Issue.scan_root(
+             context.root_path,
+             context.project.dir,
+             context.workflow,
+             context.project.runtime
+           ) do
       active_states =
         Config.settings!().tracker.active_states
         |> Enum.map(&normalize_tracker_state/1)
@@ -45,7 +50,12 @@ defmodule SymphonyElixir.Local.Adapter do
 
     with {:ok, context} <- load_context(),
          {:ok, issues} <-
-           Issue.scan_root(context.root_path, context.project.dir, context.workflow) do
+           Issue.scan_root(
+             context.root_path,
+             context.project.dir,
+             context.workflow,
+             context.project.runtime
+           ) do
       with {:ok, transitioned_issues} <-
              issues
              |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
@@ -75,7 +85,13 @@ defmodule SymphonyElixir.Local.Adapter do
 
     with {:ok, context} <- load_context(),
          {:ok, issue} <-
-           Issue.load_by_slug(context.root_path, issue_id, context.project.dir, context.workflow),
+           Issue.load_by_slug(
+             context.root_path,
+             issue_id,
+             context.project.dir,
+             context.workflow,
+             context.project.runtime
+           ),
          {:ok, transition} <-
            Workflow.first_matching_transition_to(
              context.workflow,
@@ -105,7 +121,13 @@ defmodule SymphonyElixir.Local.Adapter do
   end
 
   defp fetch_issue_state(slug, context) do
-    case Issue.load_by_slug(context.root_path, slug, context.project.dir, context.workflow) do
+    case Issue.load_by_slug(
+           context.root_path,
+           slug,
+           context.project.dir,
+           context.workflow,
+           context.project.runtime
+         ) do
       {:ok, issue} ->
         case maybe_apply_transition(issue, context) do
           {:ok, transitioned_issue} -> [transitioned_issue]
@@ -181,7 +203,8 @@ defmodule SymphonyElixir.Local.Adapter do
         context.root_path,
         issue.issue_slug,
         context.project.dir,
-        context.workflow
+        context.workflow,
+        context.project.runtime
       )
     end
   end
