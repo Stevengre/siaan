@@ -1353,7 +1353,6 @@ defmodule SymphonyElixir.CoreTest do
 
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
-
     write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
 
     created_at = DateTime.from_naive!(~N[2026-02-26 18:06:48], "Etc/UTC")
@@ -2116,6 +2115,39 @@ defmodule SymphonyElixir.CoreTest do
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)
     end
+  end
+
+  test "orchestrator restart terminates lingering persistent agent runners" do
+    issue = %Issue{
+      id: "issue-persistent-runner-restart",
+      identifier: "MT-248B",
+      title: "Restart cleanup",
+      description: "Ensure persistent runners do not survive orchestrator restarts",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-248B",
+      labels: []
+    }
+
+    assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
+    assert {:ok, pid} = AgentRunner.start(issue, self())
+    assert Process.alive?(pid)
+
+    assert Enum.any?(
+             DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
+             fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
+           )
+
+    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+    assert is_pid(orchestrator_pid)
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+    assert {:ok, restarted_orchestrator_pid} =
+             Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+    assert is_pid(restarted_orchestrator_pid)
+    assert restarted_orchestrator_pid != orchestrator_pid
+    refute Process.alive?(pid)
+    assert DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor) == []
   end
 
   test "agent runner stops continuing once agent.max_turns is reached" do

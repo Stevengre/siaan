@@ -55,6 +55,7 @@ defmodule SymphonyElixir.Orchestrator do
   def init(_opts) do
     now_ms = System.monotonic_time(:millisecond)
     config = Config.settings!()
+    terminate_lingering_persistent_runners()
 
     state = %State{
       poll_interval_ms: config.polling.interval_ms,
@@ -262,6 +263,28 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp handle_normal_runner_down(state, _running_entry, issue_id, _session_id, false) do
     release_issue_claim(state, issue_id)
+  end
+
+  defp terminate_lingering_persistent_runners do
+    case Process.whereis(SymphonyElixir.AgentRunnerSupervisor) do
+      pid when is_pid(pid) ->
+        lingering_children =
+          SymphonyElixir.AgentRunnerSupervisor
+          |> DynamicSupervisor.which_children()
+          |> Enum.flat_map(fn
+            {_id, child_pid, :worker, [AgentRunner]} when is_pid(child_pid) -> [child_pid]
+            _other -> []
+          end)
+
+        if lingering_children != [] do
+          Logger.warning("Orchestrator restart detected with lingering persistent runners; terminating #{length(lingering_children)} runner(s)")
+
+          Enum.each(lingering_children, &AgentRunner.stop/1)
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   defp maybe_record_runner_completion(state, running_entry, reason, true) do
