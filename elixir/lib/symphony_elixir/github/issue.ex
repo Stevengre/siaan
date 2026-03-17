@@ -3,7 +3,7 @@ defmodule SymphonyElixir.GitHub.Issue do
   Normalized GitHub issue representation used by the GitHub tracker integration.
   """
 
-  alias SymphonyElixir.Linear.Issue, as: TrackerIssue
+  alias SymphonyElixir.TrackerIssue
 
   defstruct [
     :id,

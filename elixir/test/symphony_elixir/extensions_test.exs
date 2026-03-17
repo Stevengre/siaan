@@ -127,11 +127,36 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
-  test "workflow store init stops on missing workflow file" do
+  test "workflow store init stops on missing runtime config path" do
     missing_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "MISSING_WORKFLOW.md")
     Workflow.set_workflow_file_path(missing_path)
 
     assert {:stop, {:missing_workflow_file, ^missing_path, :enoent}} = WorkflowStore.init([])
+  end
+
+  test "runtime source store invalidates explicit reload failures but recovers after restore" do
+    runtime_store = SymphonyElixir.RuntimeSourceStore
+    workflow_path = Workflow.workflow_file_path()
+    missing_path = Path.join(Path.dirname(workflow_path), "MISSING_RUNTIME_WORKFLOW.md")
+
+    assert {:ok, %{prompt: "You are an agent for this repository."}} =
+             SymphonyElixir.RuntimeSource.current()
+
+    Workflow.set_workflow_file_path(missing_path)
+
+    assert {:error, {:missing_workflow_file, ^missing_path, :enoent}} =
+             runtime_store.force_reload()
+
+    assert {:error, {:missing_workflow_file, ^missing_path, :enoent}} =
+             runtime_store.current()
+
+    write_workflow_file!(workflow_path, prompt: "Recovered runtime prompt")
+    Workflow.set_workflow_file_path(workflow_path)
+
+    assert :ok = runtime_store.force_reload()
+
+    assert {:ok, %{prompt: "Recovered runtime prompt"}} =
+             SymphonyElixir.RuntimeSource.current()
   end
 
   test "workflow store start_link and poll callback cover missing-file error paths" do
@@ -185,7 +210,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
     Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "memory")
 
     assert Config.settings!().tracker.kind == "memory"
     assert SymphonyElixir.Tracker.adapter() == Memory
@@ -201,13 +226,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert :ok = Memory.create_comment("issue-1", "quiet")
     assert :ok = Memory.update_issue_state("issue-1", "Quiet")
 
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
+    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
   end
 
   test "tracker github-specific delegation falls back on non-github adapters" do
     for tracker_kind <- ["memory", "linear"] do
-      write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: tracker_kind)
+      write_workflow_file!(RuntimeConfig.path(), tracker_kind: tracker_kind)
 
       assert {:ok, false} = SymphonyElixir.Tracker.has_actionable_pr_feedback?("1", ["reviewer"])
       assert {:ok, false} = SymphonyElixir.Tracker.has_pr_approval?("1")
@@ -220,7 +245,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   end
 
   test "tracker github-specific delegation fails fast when github token is missing" do
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       tracker_kind: "github",
       tracker_repo_owner: "acme",
       tracker_repo_name: "repo",

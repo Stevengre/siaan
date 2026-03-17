@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, Linear.Issue}
+  alias SymphonyElixir.{Config, TrackerIssue}
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
@@ -103,7 +103,7 @@ defmodule SymphonyElixir.Linear.Client do
   }
   """
 
-  @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
+  @spec fetch_candidate_issues() :: {:ok, [TrackerIssue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     tracker = Config.settings!().tracker
     project_slug = tracker.project_slug
@@ -122,7 +122,7 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
+  @spec fetch_issues_by_states([String.t()]) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
   def fetch_issues_by_states(state_names) when is_list(state_names) do
     normalized_states = Enum.map(state_names, &to_string/1) |> Enum.uniq()
 
@@ -145,7 +145,7 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
+  @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) when is_list(issue_ids) do
     ids = Enum.uniq(issue_ids)
 
@@ -185,13 +185,13 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   @doc false
-  @spec normalize_issue_for_test(map()) :: Issue.t() | nil
+  @spec normalize_issue_for_test(map()) :: TrackerIssue.t() | nil
   def normalize_issue_for_test(issue) when is_map(issue) do
     normalize_issue(issue, nil)
   end
 
   @doc false
-  @spec normalize_issue_for_test(map(), String.t() | nil) :: Issue.t() | nil
+  @spec normalize_issue_for_test(map(), String.t() | nil) :: TrackerIssue.t() | nil
   def normalize_issue_for_test(issue, assignee) when is_map(issue) do
     assignee_filter =
       case assignee do
@@ -213,7 +213,7 @@ defmodule SymphonyElixir.Linear.Client do
   def next_page_cursor_for_test(page_info) when is_map(page_info), do: next_page_cursor(page_info)
 
   @doc false
-  @spec merge_issue_pages_for_test([[Issue.t()]]) :: [Issue.t()]
+  @spec merge_issue_pages_for_test([[TrackerIssue.t()]]) :: [TrackerIssue.t()]
   def merge_issue_pages_for_test(issue_pages) when is_list(issue_pages) do
     issue_pages
     |> Enum.reduce([], &prepend_page_issues/2)
@@ -222,7 +222,7 @@ defmodule SymphonyElixir.Linear.Client do
 
   @doc false
   @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
-          {:ok, [Issue.t()]} | {:error, term()}
+          {:ok, [TrackerIssue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
       when is_list(issue_ids) and is_function(graphql_fun, 2) do
     ids = Enum.uniq(issue_ids)
@@ -318,7 +318,7 @@ defmodule SymphonyElixir.Linear.Client do
     fallback_index = map_size(issue_order_index)
 
     Enum.sort_by(issues, fn
-      %Issue{id: issue_id} -> Map.get(issue_order_index, issue_id, fallback_index)
+      %TrackerIssue{id: issue_id} -> Map.get(issue_order_index, issue_id, fallback_index)
       _ -> fallback_index
     end)
   end
@@ -454,7 +454,7 @@ defmodule SymphonyElixir.Linear.Client do
   defp normalize_issue(issue, assignee_filter) when is_map(issue) do
     assignee = issue["assignee"]
 
-    %Issue{
+    %TrackerIssue{
       id: issue["id"],
       identifier: issue["identifier"],
       title: issue["title"],

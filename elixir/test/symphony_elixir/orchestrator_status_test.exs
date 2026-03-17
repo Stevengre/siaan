@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -22,6 +24,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "ready issues transition to in-progress before normal dispatch" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
     issue = %Issue{
       id: "issue-ready-dispatch",
       identifier: "GH-500",
@@ -65,6 +74,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "ready issues are not dispatched when the transition to in-progress fails" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
     issue = %Issue{
       id: "issue-ready-dispatch-error",
       identifier: "GH-501",
@@ -84,6 +100,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "ready issues are not dispatched when the transitioned issue cannot be refreshed" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
     issue = %Issue{
       id: "issue-ready-refresh-error",
       identifier: "GH-501A",
@@ -108,6 +131,141 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert_receive {:update_issue_state_called, "issue-ready-refresh-error", "status:in-progress"}
     assert_receive {:fetch_issue_states_called, ["issue-ready-refresh-error"]}
+  end
+
+  test "dispatch target state is derived from configured ready label and active states" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_ready_label: "queued",
+      tracker_active_states: ["queued", "working", "reviewing"]
+    )
+
+    issue = %Issue{
+      id: "issue-custom-ready-dispatch",
+      identifier: "GH-501B",
+      title: "Custom ready transition",
+      description: "Use config-derived active state targets",
+      state: "queued",
+      url: "https://example.org/issues/GH-501B"
+    }
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, nil) == "queued_to_working"
+
+    assert {:ok, transitioned_issue} =
+             Orchestrator.transition_issue_for_dispatch_for_test(
+               issue,
+               fn issue_id, state_name ->
+                 send(self(), {:update_issue_state_called, issue_id, state_name})
+                 :ok
+               end,
+               fn [_issue_id] ->
+                 {:ok, [%{issue | state: "working"}]}
+               end
+             )
+
+    assert_receive {:update_issue_state_called, "issue-custom-ready-dispatch", "working"}
+    assert transitioned_issue.state == "working"
+  end
+
+  test "local tracker dispatch target is derived from workflow yaml transitions" do
+    issue_root = tmp_dir!("orchestrator-local-dispatch-target")
+    project_dir = Path.join(issue_root, "project")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "project"
+      workflow = "workflow.yaml"
+      runtime = "local"
+
+      [projects.siaan.adapter]
+      type = "github"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      queued:
+        transitions:
+          - to: working
+            when:
+              - \"true\"
+
+      working:
+        activities:
+          - skill: custom-worker
+      """
+    )
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready"]
+    )
+
+    issue = %Issue{
+      id: "issue-local-ready-dispatch",
+      identifier: "GH-501D",
+      title: "Local workflow dispatch transition",
+      description: "Use workflow yaml transitions instead of runtime ready config",
+      state: "status:queued",
+      url: "https://example.org/issues/GH-501D"
+    }
+
+    assert Orchestrator.resolve_dispatch_transition_for_test(issue, nil) == "queued_to_working"
+
+    assert {:ok, transitioned_issue} =
+             Orchestrator.transition_issue_for_dispatch_for_test(
+               issue,
+               fn issue_id, state_name ->
+                 send(self(), {:update_issue_state_called, issue_id, state_name})
+                 :ok
+               end,
+               fn [_issue_id] ->
+                 {:ok, [%{issue | state: "status:working"}]}
+               end
+             )
+
+    assert_receive {:update_issue_state_called, "issue-local-ready-dispatch", "status:working"}
+    assert transitioned_issue.state == "status:working"
+  end
+
+  test "resume dispatch transition and profile names derive from the current active state" do
+    configure_execution_profile_workspace!(
+      tracker_ready_label: "queued",
+      tracker_active_states: ["queued", "working", "reviewing"],
+      execution_profiles: %{
+        "resume_working" => %{
+          "session_reuse" => "reuse_issue_session",
+          "codex_command" => "codex --model gpt-5.3-spark app-server"
+        }
+      }
+    )
+
+    issue = %Issue{
+      id: "issue-custom-resume",
+      identifier: "GH-501C",
+      title: "Resume transition derivation",
+      description: "Use the active state for fallback dispatch names",
+      state: "working",
+      url: "https://example.org/issues/GH-501C"
+    }
+
+    transition = Orchestrator.resolve_dispatch_transition_for_test(issue, nil)
+    profile = Orchestrator.resolve_dispatch_profile_for_test(issue, transition)
+
+    assert transition == "resume_working"
+    assert profile.profile_name == "resume_working"
+    assert profile.session_reuse_policy == "reuse_issue_session"
+    assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
   end
 
   test "dispatch profile defaults start new issue sessions for ready transitions" do
@@ -135,6 +293,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "ready-state dispatch transition overrides queued retry metadata" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
     issue = %Issue{
       id: "issue-ready-retry-override",
       identifier: "GH-502A",
@@ -241,7 +406,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
         assert :ok =
-                 Orchestrator.dispatch_watched_issue_for_test(
+                 GitHubAdapter.dispatch_watched_issue_for_test(
                    issue,
                    ["ci failed"],
                    fn issue_id, state_name ->

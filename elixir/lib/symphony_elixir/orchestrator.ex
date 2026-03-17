@@ -1,14 +1,14 @@
 defmodule SymphonyElixir.Orchestrator do
   @moduledoc """
-  Polls Linear and dispatches repository copies to Codex-backed workers.
+  Polls tracker issues and dispatches repository copies to Codex-backed workers.
   """
 
   use GenServer
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, SessionStats, StatusDashboard, Tracker, Workspace}
-  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.{AgentRunner, Config, DispatchLifecycle, SessionStats, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.TrackerIssue, as: Issue
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -234,47 +234,47 @@ defmodule SymphonyElixir.Orchestrator do
     state = reconcile_running_issues(state)
 
     with :ok <- Config.validate!(),
-         state <- check_watch_states(state),
+         state <- reconcile_tracker_watch_states(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
     else
       {:error, :missing_linear_api_token} ->
-        Logger.error("Linear API token missing in WORKFLOW.md")
+        Logger.error("Tracker API token missing in runtime config")
         state
 
       {:error, :missing_linear_project_slug} ->
-        Logger.error("Linear project slug missing in WORKFLOW.md")
+        Logger.error("Tracker project slug missing in runtime config")
         state
 
       {:error, :missing_tracker_kind} ->
-        Logger.error("Tracker kind missing in WORKFLOW.md")
+        Logger.error("Tracker kind missing in runtime config")
 
         state
 
       {:error, {:unsupported_tracker_kind, kind}} ->
-        Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
+        Logger.error("Unsupported tracker kind in runtime config: #{inspect(kind)}")
 
         state
 
       {:error, {:invalid_workflow_config, message}} ->
-        Logger.error("Invalid WORKFLOW.md config: #{message}")
+        Logger.error("Invalid runtime config: #{message}")
         state
 
       {:error, {:missing_workflow_file, path, reason}} ->
-        Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
+        Logger.error("Missing runtime config at #{path}: #{inspect(reason)}")
         state
 
       {:error, :workflow_front_matter_not_a_map} ->
-        Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
+        Logger.error("Failed to parse runtime config: legacy markdown front matter must decode to a map")
         state
 
       {:error, {:workflow_parse_error, reason}} ->
-        Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
+        Logger.error("Failed to parse runtime config: #{inspect(reason)}")
         state
 
       {:error, reason} ->
-        Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+        Logger.error("Failed to fetch tracker issues: #{inspect(reason)}")
         state
 
       false ->
@@ -307,140 +307,15 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp check_watch_states(%State{} = state) do
-    watch_states = watch_state_set()
-
-    if MapSet.size(watch_states) == 0 do
-      state
-    else
-      watch_state_names =
-        watch_states
-        |> MapSet.to_list()
-
-      case Tracker.fetch_issues_by_states(watch_state_names) do
-        {:ok, issues} ->
-          transition_watched_issues(issues, state)
-
-        {:error, reason} ->
-          Logger.debug("Failed to fetch watch_states issues: #{inspect(reason)}")
-          state
-      end
-    end
-  end
-
-  defp transition_watched_issues([], state), do: state
-
-  defp transition_watched_issues([issue | rest], state) do
-    process_watched_issue(issue)
-
-    transition_watched_issues(rest, state)
-  end
-
-  defp process_watched_issue(issue) do
-    if watched_issue_merge_candidate?(issue) do
-      evaluate_watched_issue(issue)
-    else
-      Logger.debug("Watch state skip: #{issue_context(issue)} state=#{inspect(issue.state)} not open/non-terminal")
-    end
-  end
-
-  defp evaluate_watched_issue(issue) do
-    case Tracker.check_auto_merge_readiness(issue.id) do
-      {:ok, :ready, pr_number} ->
-        Logger.info("Auto-merge: #{issue_context(issue)} PR ##{pr_number} is ready; merging")
-        handle_ready_watch_issue(issue, pr_number)
-
-      {:ok, :needs_agent, reasons} ->
-        handle_watch_issue_blockers(issue, reasons)
+  defp reconcile_tracker_watch_states(%State{} = state) do
+    case Tracker.reconcile_watch_states() do
+      :ok ->
+        state
 
       {:error, reason} ->
-        Logger.debug("Failed to check auto-merge readiness for #{issue_context(issue)}: #{inspect(reason)}")
+        Logger.debug("Failed to reconcile tracker watch states: #{inspect(reason)}")
+        state
     end
-  end
-
-  defp handle_ready_watch_issue(issue, pr_number) do
-    case Tracker.auto_merge_pr(pr_number) do
-      :ok ->
-        Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
-
-      {:error, reason} ->
-        Logger.warning("Auto-merge failed for #{issue_context(issue)} PR ##{pr_number}: #{inspect(reason)}; dispatching agent")
-        dispatch_watched_issue(issue, ["auto-merge failed: #{inspect(reason)}"])
-    end
-  end
-
-  defp handle_watch_issue_blockers(issue, reasons) do
-    # Only dispatch agent if there's actually something actionable (not just waiting)
-    if actionable_blocker?(reasons) do
-      Logger.info("Watch state dispatch: #{issue_context(issue)} needs agent: #{Enum.join(reasons, ", ")}")
-      dispatch_watched_issue(issue, reasons)
-    else
-      Logger.debug("Watch state: #{issue_context(issue)} waiting: #{Enum.join(reasons, ", ")}")
-    end
-  end
-
-  defp watched_issue_merge_candidate?(%Issue{state: state_name}) when is_binary(state_name) do
-    normalized_state = normalize_issue_state(state_name)
-
-    normalized_state != "closed" and not terminal_issue_state?(state_name, terminal_state_set())
-  end
-
-  defp watched_issue_merge_candidate?(_issue), do: false
-
-  defp dispatch_watched_issue(issue, reasons) do
-    dispatch_watched_issue(
-      issue,
-      reasons,
-      &Tracker.update_issue_state/2,
-      &SessionStats.mark_pending_transition/3
-    )
-  end
-
-  defp dispatch_watched_issue(
-         issue,
-         reasons,
-         update_issue_state_fun,
-         mark_pending_transition_fun
-       )
-       when is_function(update_issue_state_fun, 2) and is_function(mark_pending_transition_fun, 3) do
-    case update_issue_state_fun.(issue.id, "status:in-progress") do
-      :ok ->
-        case mark_pending_transition_fun.(issue.id, issue.identifier, "review_to_in_progress") do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("Unable to persist pending transition for #{issue_context(issue)} transition=review_to_in_progress: #{inspect(reason)}")
-
-            :ok
-        end
-
-        Logger.info("Watch state transition complete: #{issue_context(issue)} -> status:in-progress (#{Enum.join(reasons, ", ")})")
-
-      {:error, err} ->
-        Logger.warning("Failed to transition watched issue #{issue_context(issue)}: #{inspect(err)}")
-    end
-  end
-
-  # Blockers that need agent action vs. just waiting
-  defp actionable_blocker?(reasons) do
-    Enum.any?(reasons, fn reason ->
-      reason not in ["no PR approval", "CI checks pending", "no linked PR found", "mergeability pending"]
-    end)
-  end
-
-  defp watch_state_set do
-    (Config.settings!().tracker.watch_states || [])
-    |> Enum.filter(&is_binary/1)
-    |> Enum.map(&normalize_issue_state/1)
-    |> Enum.filter(&(&1 != ""))
-    |> MapSet.new()
-  end
-
-  @doc false
-  @spec actionable_blocker_for_test([String.t()]) :: boolean()
-  def actionable_blocker_for_test(reasons) when is_list(reasons) do
-    actionable_blocker?(reasons)
   end
 
   @doc false
@@ -541,24 +416,6 @@ defmodule SymphonyElixir.Orchestrator do
   def record_session_completion_totals_for_test(%State{} = state, running_entry, result)
       when is_map(running_entry) and is_binary(result) do
     record_session_completion_totals(state, running_entry, result)
-  end
-
-  @doc false
-  @spec dispatch_watched_issue_for_test(
-          Issue.t(),
-          [String.t()],
-          (String.t(), String.t() -> term()),
-          (String.t(), String.t() | nil, String.t() -> term())
-        ) :: :ok | {:error, term()}
-  def dispatch_watched_issue_for_test(
-        %Issue{} = issue,
-        reasons,
-        update_issue_state_fun,
-        mark_pending_transition_fun
-      )
-      when is_list(reasons) and is_function(update_issue_state_fun, 2) and
-             is_function(mark_pending_transition_fun, 3) do
-    dispatch_watched_issue(issue, reasons, update_issue_state_fun, mark_pending_transition_fun)
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
@@ -885,7 +742,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp terminal_state_set do
-    Config.settings!().tracker.terminal_states
+    Tracker.terminal_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -893,7 +750,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp active_state_set do
-    Config.settings!().tracker.active_states
+    Tracker.active_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -1033,31 +890,33 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp resolve_dispatch_transition(%Issue{state: issue_state} = issue, explicit_transition)
        when is_binary(issue_state) do
-    cond do
-      normalize_issue_state(issue_state) == "status:ready" ->
-        "ready_to_in_progress"
-
-      is_binary(explicit_transition) and String.trim(explicit_transition) != "" ->
-        String.trim(explicit_transition)
-
-      true ->
-        SessionStats.consume_pending_transition(issue.id) || "resume_in_progress"
-    end
+    DispatchLifecycle.resolve_dispatch_transition(issue, explicit_transition)
   end
 
   defp resolve_dispatch_transition(_issue, explicit_transition) when is_binary(explicit_transition) do
-    case String.trim(explicit_transition) do
-      "" -> "resume_in_progress"
-      trimmed -> trimmed
-    end
+    DispatchLifecycle.resolve_dispatch_transition(nil, explicit_transition)
   end
 
-  defp resolve_dispatch_transition(_issue, _explicit_transition), do: "resume_in_progress"
+  defp resolve_dispatch_transition(_issue, _explicit_transition),
+    do: DispatchLifecycle.resolve_dispatch_transition(nil, nil)
 
   defp resolve_dispatch_profile(%Issue{} = issue, transition_name) do
     existing_issue_session = SessionStats.load_issue_session(issue.id)
-    default_profile_name = default_profile_name_for_transition(transition_name, existing_issue_session)
-    profile_name = pick_profile_name(existing_issue_session, transition_name, default_profile_name)
+
+    default_profile_name =
+      DispatchLifecycle.default_profile_name_for_transition(
+        issue,
+        transition_name,
+        existing_issue_session
+      )
+
+    profile_name =
+      DispatchLifecycle.pick_profile_name(
+        existing_issue_session,
+        transition_name,
+        default_profile_name
+      )
+
     profile = Config.execution_profile(profile_name)
 
     issue_session =
@@ -1083,38 +942,10 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp default_profile_name_for_transition("review_to_in_progress", _issue_session),
-    do: "review_to_in_progress"
-
-  defp default_profile_name_for_transition(_transition_name, %{"execution_profile" => profile_name})
-       when is_binary(profile_name) and profile_name != "",
-       do: profile_name
-
-  defp default_profile_name_for_transition(_transition_name, _issue_session),
-    do: "ready_to_in_progress"
-
-  defp pick_profile_name(issue_session, transition_name, default_profile_name) do
-    case {transition_name, issue_session} do
-      {"review_to_in_progress", _} ->
-        "review_to_in_progress"
-
-      {"ready_to_in_progress", _} ->
-        "ready_to_in_progress"
-
-      {transition, %{"execution_profile" => profile_name}}
-      when transition in ["retry_continuation", "stall_recovery", "resume_in_progress"] and
-             is_binary(profile_name) and profile_name != "" ->
-        profile_name
-
-      _ ->
-        default_profile_name
-    end
-  end
-
   defp build_issue_session(issue, existing_issue_session, profile_name, profile, transition_name) do
     reuse_existing? =
       profile.session_reuse == "reuse_issue_session" and is_map(existing_issue_session) and
-        transition_name != "ready_to_in_progress"
+        not DispatchLifecycle.initial_dispatch_transition_name?(transition_name)
 
     now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
@@ -1268,40 +1099,15 @@ defmodule SymphonyElixir.Orchestrator do
        )
        when is_binary(issue_state) and is_function(update_issue_state_fun, 2) and
               is_function(fetch_issue_states_fun, 1) do
-    case normalize_issue_state(issue_state) do
-      "status:ready" ->
-        case update_issue_state_fun.(issue.id, "status:in-progress") do
-          :ok ->
-            refresh_transitioned_issue(issue, fetch_issue_states_fun)
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      _ ->
-        {:ok, issue}
-    end
+    DispatchLifecycle.prepare_issue_for_dispatch(
+      issue,
+      update_issue_state_fun,
+      fetch_issue_states_fun
+    )
   end
 
   defp transition_issue_for_dispatch(issue, _update_issue_state_fun, _fetch_issue_states_fun),
     do: {:ok, issue}
-
-  defp refresh_transitioned_issue(%Issue{id: issue_id}, fetch_issue_states_fun)
-       when is_binary(issue_id) and is_function(fetch_issue_states_fun, 1) do
-    case fetch_issue_states_fun.([issue_id]) do
-      {:ok, [%Issue{} = refreshed_issue | _]} ->
-        {:ok, refreshed_issue}
-
-      {:ok, []} ->
-        {:error, {:issue_state_refresh_failed, :issue_not_found}}
-
-      {:error, reason} ->
-        {:error, {:issue_state_refresh_failed, reason}}
-    end
-  end
-
-  defp refresh_transitioned_issue(issue, _fetch_issue_states_fun),
-    do: {:ok, %{issue | state: "status:in-progress"}}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{

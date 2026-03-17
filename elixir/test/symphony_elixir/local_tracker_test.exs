@@ -1667,10 +1667,115 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
     assert is_binary(issue.prompt_template_path)
     assert File.exists?(issue.prompt_template_path)
+    assert [%{name: "siaan-inprogress", prompt_template_path: prompt_path}] = issue.skill_prompts
+    assert prompt_path == issue.prompt_template_path
     refute String.starts_with?(issue.prompt_template_path, project_dir)
 
     prompt = PromptBuilder.build_prompt(issue)
     assert prompt =~ "Issue path: #{Path.join([issue_root, "in-progress", slug, "issue.md"])}"
+  end
+
+  test "local issue resolves ordered multi-skill prompts for config-driven review states" do
+    issue_root = tmp_dir!("local-multi-skill-review")
+    project_dir = Path.join(issue_root, "project")
+    slug = "review-stage"
+
+    workflow = %{
+      "review" => %{
+        activities: [
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-reflect"},
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-consistency"},
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-review"}
+        ],
+        transitions: []
+      }
+    }
+
+    File.mkdir_p!(Path.join([issue_root, "review", slug]))
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      Path.join([issue_root, "review", slug, "issue.md"]),
+      """
+      ---
+      identifier: GH-47
+      title: Review stage pipeline
+      status: review
+      ---
+      body
+      """
+    )
+
+    File.write!(Path.join([issue_root, "review", slug, "workpad.md"]), "---\nstatus: review\n---\n")
+
+    assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
+
+    assert Enum.map(issue.skill_prompts, & &1.name) == [
+             "siaan-reflect",
+             "siaan-consistency",
+             "siaan-review"
+           ]
+
+    assert issue.prompt_template_path =~ "siaan-reflect.md"
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt =~ "Run the configured skill contracts in this exact order"
+    assert prompt =~ "## Skill: siaan-reflect"
+    assert prompt =~ "## Skill: siaan-consistency"
+    assert prompt =~ "## Skill: siaan-review"
+
+    {reflect_index, _} = :binary.match(prompt, "## Skill: siaan-reflect")
+    {consistency_index, _} = :binary.match(prompt, "## Skill: siaan-consistency")
+    {review_index, _} = :binary.match(prompt, "## Skill: siaan-review")
+
+    assert reflect_index < consistency_index
+    assert consistency_index < review_index
+  end
+
+  test "local issue can dispatch a project-defined skill without orchestrator code changes" do
+    issue_root = tmp_dir!("local-project-defined-skill")
+    project_dir = Path.join(issue_root, "project")
+    slug = "translate-task"
+    skill_dir = Path.join([project_dir, ".claude", "skills", "translate-issue"])
+
+    workflow = %{
+      "ready" => %{
+        activities: [%LocalWorkflow.Activity{type: :skill, name: "translate-issue"}],
+        transitions: []
+      }
+    }
+
+    File.mkdir_p!(Path.join([issue_root, "ready"]))
+    File.mkdir_p!(skill_dir)
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.md"]),
+      """
+      ---
+      identifier: GH-99
+      title: Translate artifact
+      status: ready
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join(skill_dir, "SKILL.md"),
+      """
+      Translate the issue content from `{{ issue.issue_path }}` and write the result to `{{ issue.workpad_path }}`.
+      """
+    )
+
+    assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
+    assert [%{name: "translate-issue", prompt_template_path: prompt_path}] = issue.skill_prompts
+    assert prompt_path == Path.join(skill_dir, "SKILL.md")
+    assert issue.prompt_template_path == prompt_path
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt =~ "## Skill: translate-issue"
+    assert prompt =~ "Translate the issue content"
+    assert prompt =~ Path.join([issue_root, "ready", "#{slug}.md"])
   end
 
   test "prompt builder local-template path still includes allowlist context" do

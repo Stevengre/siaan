@@ -1,16 +1,16 @@
 defmodule SymphonyElixir.PromptBuilder do
   @moduledoc """
-  Builds agent prompts from Linear issue data.
+  Builds agent prompts from tracker issue data.
   """
 
-  alias SymphonyElixir.{Config, Workflow}
+  alias SymphonyElixir.{Config, RuntimeSource}
 
   @render_opts [strict_variables: true, strict_filters: true]
 
-  @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
+  @spec build_prompt(SymphonyElixir.TrackerIssue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
     {template, allowlist} =
-      prompt_context!(issue, Workflow.current())
+      prompt_context!(issue, RuntimeSource.current())
 
     template
     |> Solid.render!(
@@ -24,9 +24,24 @@ defmodule SymphonyElixir.PromptBuilder do
     |> IO.iodata_to_binary()
   end
 
+  defp prompt_context!(%{skill_prompts: [_ | _] = skill_prompts}, _workflow_result) do
+    allowlist_values =
+      case RuntimeSource.current() do
+        {:ok, %{config: config}} -> allowlist_values(config)
+        _ -> []
+      end
+
+    {
+      skill_prompts
+      |> compose_skill_prompt_template!()
+      |> parse_template!(),
+      format_allowlist_values(allowlist_values)
+    }
+  end
+
   defp prompt_context!(%{prompt_template_path: path}, _workflow_result) when is_binary(path) do
     allowlist_values =
-      case Workflow.current() do
+      case RuntimeSource.current() do
         {:ok, %{config: config}} -> allowlist_values(config)
         _ -> []
       end
@@ -47,7 +62,7 @@ defmodule SymphonyElixir.PromptBuilder do
   end
 
   defp prompt_context!(_issue, {:error, reason}) do
-    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
+    raise RuntimeError, "runtime_config_unavailable: #{inspect(reason)}"
   end
 
   defp to_solid_map(map) when is_map(map) do
@@ -79,6 +94,30 @@ defmodule SymphonyElixir.PromptBuilder do
                 message: "template_parse_error: #{Exception.message(error)} template=#{inspect(prompt)}"
               },
               __STACKTRACE__
+  end
+
+  defp compose_skill_prompt_template!(skill_prompts) when is_list(skill_prompts) do
+    ordered_skills = Enum.map_join(skill_prompts, "\n", fn %{name: name} -> "- `#{name}`" end)
+
+    sections =
+      Enum.map_join(skill_prompts, "\n\n", fn %{name: name, prompt_template_path: path} ->
+        """
+        ## Skill: #{name}
+
+        #{File.read!(path)}
+        """
+      end)
+
+    """
+    You are executing a config-driven local workflow state.
+
+    Run the configured skill contracts in this exact order:
+    #{ordered_skills}
+
+    Complete each skill in sequence while respecting the file ownership rules described below.
+
+    #{sections}
+    """
   end
 
   defp allowlist_values(config) when is_map(config) do
