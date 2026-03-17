@@ -569,7 +569,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, []} = Adapter.fetch_candidate_issues()
   end
 
-  test "local adapter active states exclude sink workflow states" do
+  test "local adapter active states only include skill-dispatchable workflow states" do
     issue_root = tmp_dir!("local-active-states")
     config_path = Path.join(issue_root, "config.toml")
     workflow_path = Path.join(issue_root, "workflow.yaml")
@@ -598,6 +598,54 @@ defmodule SymphonyElixir.LocalTrackerTest do
         transitions:
           - to: review
       review:
+        activities:
+          - check: poll-ci-status
+            interval: 5m
+        transitions:
+          - to: done
+      done:
+        activities: []
+        transitions: []
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:fallback-ready"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert Adapter.active_states() == ["status:in-progress"]
+  end
+
+  test "local adapter active states fall back when workflow has no skill states" do
+    issue_root = tmp_dir!("local-active-states-fallback")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - check: blocked-resolved
+            interval: 5m
+        transitions:
+          - to: review
+      review:
         activities: []
         transitions: []
       done:
@@ -614,7 +662,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       tracker_terminal_states: ["status:done"]
     )
 
-    assert Enum.sort(Adapter.active_states()) == ["status:in-progress", "status:ready"]
+    assert Adapter.active_states() == ["status:fallback-ready"]
   end
 
   test "local issue helpers cover missing files and frontmatter fallbacks" do

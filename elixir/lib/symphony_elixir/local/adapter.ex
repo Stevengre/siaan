@@ -185,16 +185,10 @@ defmodule SymphonyElixir.Local.Adapter do
   end
 
   defp active_workflow_state?(workflow, state_name) when is_binary(state_name) do
-    case Map.get(workflow, state_name, %{activities: [], transitions: []}) do
-      %{activities: [_ | _]} ->
-        true
-
-      %{transitions: [_ | _]} ->
-        true
-
-      _ ->
-        false
-    end
+    workflow
+    |> Map.get(state_name, %{activities: []})
+    |> Map.get(:activities, [])
+    |> Enum.any?(&skill_activity?/1)
   end
 
   defp dispatch_entry_state(workflow) when is_map(workflow) do
