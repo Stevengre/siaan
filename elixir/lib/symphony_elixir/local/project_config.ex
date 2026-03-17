@@ -20,6 +20,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          {:ok, project} <- fetch_project(document, project_name),
          {:ok, dir} <- fetch_required_path(project, project_name, "dir"),
          {:ok, workflow} <- fetch_required_path(project, project_name, "workflow"),
+         {:ok, runtime} <- validate_runtime(project, project_name),
          {:ok, adapter} <- validate_adapter(project, project_name) do
       resolved_dir = resolve_path(config_path, dir)
 
@@ -28,7 +29,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          name: project_name,
          dir: resolved_dir,
          workflow: resolve_path(config_path, workflow, resolved_dir),
-         runtime: normalize_runtime(Map.get(project, "runtime")),
+         runtime: runtime,
          adapter: adapter
        }}
     end
@@ -91,6 +92,16 @@ defmodule SymphonyElixir.Local.ProjectConfig do
 
       value ->
         {:error, {:invalid_project_field_type, project_name, "adapter.filters.states", :string_list, value}}
+    end
+  end
+
+  defp validate_runtime(project, project_name) when is_map(project) do
+    case normalize_runtime(Map.get(project, "runtime")) do
+      {:ok, runtime} ->
+        {:ok, runtime}
+
+      {:error, value} ->
+        {:error, {:invalid_project_field_value, project_name, "runtime", ["local"], value}}
     end
   end
 
@@ -321,9 +332,19 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   defp expand_home("~"), do: System.user_home!()
   defp expand_home(path), do: path
 
-  defp normalize_runtime(value) when value in [nil, ""], do: "local"
-  defp normalize_runtime(value) when is_binary(value), do: value
-  defp normalize_runtime(_value), do: "local"
+  defp normalize_runtime(value) when value in [nil, ""], do: {:ok, "local"}
+
+  defp normalize_runtime(value) when is_binary(value) do
+    normalized = String.trim(value)
+
+    if normalized == "local" do
+      {:ok, "local"}
+    else
+      {:error, value}
+    end
+  end
+
+  defp normalize_runtime(value), do: {:error, value}
 
   defp present_path?(value) when is_binary(value), do: String.trim(value) != ""
   defp present_path?(_value), do: false

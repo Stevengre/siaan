@@ -202,6 +202,28 @@ defmodule SymphonyElixir.LocalTrackerTest do
              ProjectConfig.load(config_path, "siaan")
   end
 
+  test "project config rejects unsupported runtime values" do
+    root = tmp_dir!("local-project-config-runtime")
+    project_dir = Path.join(root, "repo")
+    config_path = Path.join(root, "config.toml")
+
+    File.mkdir_p!(Path.join(project_dir, ".claude"))
+    File.write!(Path.join(project_dir, ".claude/workflow.yaml"), "ready: {}\n")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = ".claude/workflow.yaml"
+      runtime = "locla"
+      """
+    )
+
+    assert {:error, {:invalid_project_field_value, "siaan", "runtime", ["local"], "locla"}} =
+             ProjectConfig.load(config_path, "siaan")
+  end
+
   test "workflow transition evaluation uses AND within a transition, OR across transitions, and first-match order" do
     workflow = %{
       "in-progress" => %{
