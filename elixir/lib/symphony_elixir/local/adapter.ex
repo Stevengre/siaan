@@ -190,7 +190,8 @@ defmodule SymphonyElixir.Local.Adapter do
         File.cp!(source, target_issue_path)
         update_frontmatter_status!(target_issue_path, target_state)
         File.rm!(source)
-        ensure_workpad(Path.join(target, "workpad.md"), target_state)
+        restore_or_initialize_workpad(issue, target_state, target)
+        restore_ready_artifacts(issue, target)
         :ok
 
       {true, false} ->
@@ -219,6 +220,33 @@ defmodule SymphonyElixir.Local.Adapter do
 
   defp ensure_workpad(path, target_state) do
     if File.exists?(path), do: :ok, else: File.write!(path, "---\nstatus: #{target_state}\n---\n")
+  end
+
+  defp restore_or_initialize_workpad(issue, target_state, target_dir) do
+    target_workpad = Path.join(target_dir, "workpad.md")
+
+    if File.exists?(issue.workpad_path) do
+      File.rename!(issue.workpad_path, target_workpad)
+    else
+      ensure_workpad(target_workpad, target_state)
+    end
+  end
+
+  defp restore_ready_artifacts(issue, target_dir) do
+    source_artifacts_dir = Path.join(Path.dirname(issue.issue_path), "#{issue.issue_slug}.artifacts")
+
+    if File.dir?(source_artifacts_dir) do
+      source_artifacts_dir
+      |> File.ls!()
+      |> Enum.each(fn artifact_name ->
+        File.rename!(
+          Path.join(source_artifacts_dir, artifact_name),
+          Path.join(target_dir, artifact_name)
+        )
+      end)
+
+      File.rmdir!(source_artifacts_dir)
+    end
   end
 
   defp collapse_issue_directory(issue, target_issue_path, target_state) do

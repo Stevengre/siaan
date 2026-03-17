@@ -533,6 +533,85 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert updated_issue.current_branch == "feature/local-branch"
   end
 
+  test "local adapter restores ready sidecars when transitioning back to in-progress" do
+    issue_root = tmp_dir!("local-ready-restore")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+    slug = "restored-local-issue"
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: in-progress
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: review
+            when: []
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.md"]),
+      """
+      ---
+      identifier: GH-42
+      title: Restored local issue
+      status: ready
+      ---
+      Ready body
+      """
+    )
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.workpad.md"]),
+      """
+      ---
+      status: ready
+      ---
+
+      - Prior work context.
+      """
+    )
+
+    File.mkdir_p!(Path.join([issue_root, "ready", "#{slug}.artifacts"]))
+    File.write!(Path.join([issue_root, "ready", "#{slug}.artifacts", "description-reviewer.md"]), "artifact")
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
+    assert File.exists?(Path.join([issue_root, "in-progress", slug, "issue.md"]))
+    assert File.exists?(Path.join([issue_root, "in-progress", slug, "workpad.md"]))
+    assert File.read!(Path.join([issue_root, "in-progress", slug, "workpad.md"])) =~ "Prior work context."
+    assert File.exists?(Path.join([issue_root, "in-progress", slug, "description-reviewer.md"]))
+    refute File.exists?(Path.join([issue_root, "ready", "#{slug}.workpad.md"]))
+    refute File.exists?(Path.join([issue_root, "ready", "#{slug}.artifacts"]))
+  end
+
   test "local adapter returns an error when a requested transition is not declared" do
     issue_root = tmp_dir!("local-missing-transition")
     config_path = Path.join(issue_root, "config.toml")
