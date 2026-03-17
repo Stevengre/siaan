@@ -1901,9 +1901,6 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(reason),
        do: reason
 
-  defp physical_session_fallback_reason_for_update(_existing, %{physical_session_fallback_reason: nil}),
-    do: nil
-
   defp physical_session_fallback_reason_for_update(existing, _update), do: existing
 
   defp turn_count_for_update(existing_count, existing_session_id, %{

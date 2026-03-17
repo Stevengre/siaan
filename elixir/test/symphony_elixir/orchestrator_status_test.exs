@@ -636,6 +636,97 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_run["cost"]["cost_estimate_available"] == true
   end
 
+  test "session_started updates preserve an existing physical-session fallback reason" do
+    issue_id = "issue-fallback-reason-preserved"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-201A",
+      title: "Fallback reason retention",
+      description: "Keep dispatch fallback reasons after session start",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-201A"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :FallbackReasonOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+    fallback_reason = "missing_previous_physical_session_id"
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      issue_id: issue.id,
+      issue_session_id: "issue-session-fallback",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "review_to_in_progress",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "started_new_issue_session",
+      physical_session_reuse_decision: "started_new_physical_session",
+      physical_session_fallback_reason: fallback_reason,
+      codex_command: "codex app-server",
+      codex_model: "gpt-5.3-codex",
+      codex_thread_id: nil,
+      physical_session_count: 0,
+      issue_session_turn_count: 0,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-new-turn-1",
+         thread_id: "thread-new",
+         physical_session_reuse_decision: "started_new_physical_session",
+         physical_session_fallback_reason: nil,
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+    assert snapshot_entry.session_id == "thread-new-turn-1"
+    assert snapshot_entry.physical_session_id == "thread-new"
+    assert snapshot_entry.physical_session_fallback_reason == fallback_reason
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    completed_state = :sys.get_state(pid)
+    assert [completed_run | _] = completed_state.completed_runs
+    assert completed_run["physical_session_fallback_reason"] == fallback_reason
+  end
+
   test "orchestrator keeps the newest completed history entries after restart" do
     issue_id = "issue-history-window"
     workspace_root = tmp_dir!("session-stats-history-window")
