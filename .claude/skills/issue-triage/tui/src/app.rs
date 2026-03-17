@@ -16,7 +16,8 @@ pub struct App {
     /// Index into selectable rows (skips headers)
     pub selected: usize,
     pub triage_dir: PathBuf,
-    pub collapsed: HashSet<String>,
+    pub collapsed_projects: HashSet<String>,
+    pub collapsed_issues: HashSet<String>,
     pub sort_mode: SortMode,
 }
 
@@ -27,14 +28,20 @@ impl App {
             issues,
             selected: 0,
             triage_dir,
-            collapsed: HashSet::new(),
+            collapsed_projects: HashSet::new(),
+            collapsed_issues: HashSet::new(),
             sort_mode: SortMode::Priority,
         })
     }
 
     /// Build the display rows from current issues, respecting collapsed state.
     pub fn display_rows(&self) -> Vec<DisplayRow<'_>> {
-        tree::build_display_rows(&self.issues, &self.collapsed, self.sort_mode)
+        tree::build_display_rows(
+            &self.issues,
+            &self.collapsed_projects,
+            &self.collapsed_issues,
+            self.sort_mode,
+        )
     }
 
     pub fn selectable_count(&self) -> usize {
@@ -67,33 +74,49 @@ impl App {
         }
     }
 
-    /// Toggle collapse on the project header that the selected issue belongs to,
-    /// or on the header itself if a header is selectable (it's not currently).
-    /// We find which project the current selection is under.
+    /// Toggle collapse for the selected issue subtree (when it has children),
+    /// otherwise toggle collapse for the issue's project group.
     pub fn toggle_collapse(&mut self) {
         let rows_before = self.display_rows();
         let row_idx = tree::selectable_to_row_index(&rows_before, self.selected);
 
-        // Walk backwards from current row to find its project header
+        let selected_issue_slug = rows_before.get(row_idx).and_then(|row| match row {
+            DisplayRow::IssueRow {
+                issue,
+                has_children,
+                ..
+            } if *has_children => Some(issue.slug.clone()),
+            _ => None,
+        });
+
+        if let Some(slug) = selected_issue_slug {
+            if self.collapsed_issues.contains(&slug) {
+                self.collapsed_issues.remove(&slug);
+            } else {
+                self.collapsed_issues.insert(slug);
+            }
+
+            let rows_after = self.display_rows();
+            self.selected = nearest_selectable_index(&rows_after, row_idx).unwrap_or_default();
+            return;
+        }
+
+        // Walk backwards from current row to find its project header.
         let project = rows_before[..=row_idx].iter().rev().find_map(|r| match r {
             DisplayRow::ProjectHeader { name, .. } => Some(name.to_string()),
             _ => None,
         });
 
         if let Some(name) = project {
-            if self.collapsed.contains(&name) {
-                self.collapsed.remove(&name);
+            if self.collapsed_projects.contains(&name) {
+                self.collapsed_projects.remove(&name);
             } else {
-                self.collapsed.insert(name);
+                self.collapsed_projects.insert(name);
             }
 
             // Keep focus near previous visual position after folding/unfolding.
             let rows_after = self.display_rows();
-            if let Some(next_selected) = nearest_selectable_index(&rows_after, row_idx) {
-                self.selected = next_selected;
-            } else {
-                self.selected = 0;
-            }
+            self.selected = nearest_selectable_index(&rows_after, row_idx).unwrap_or_default();
         }
     }
 
@@ -298,7 +321,7 @@ agents:
         // Need to expand the first one, so let's toggle collapse on current selection's project
         // Actually the selection moved to the other project's issue, so toggling collapses that
         // Let's just verify we can expand by inserting the first project back
-        app.collapsed.clear();
+        app.collapsed_projects.clear();
         assert_eq!(app.selectable_count(), 2);
     }
 
@@ -323,22 +346,43 @@ agents:
     fn test_toggle_collapse_expands_when_already_collapsed() {
         let dir = setup_dir();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
-        app.collapsed.insert("test".to_string());
+        app.collapsed_issues.insert("issue-b".to_string());
         app.selected = 0;
 
-        // No selectable rows when collapsed; toggle should expand the header project.
+        // Selected epic is already folded; toggling expands it.
         app.toggle_collapse();
-        assert!(!app.collapsed.contains("test"));
+        assert!(!app.collapsed_issues.contains("issue-b"));
     }
 
     #[test]
-    fn test_toggle_collapse_with_single_project_can_leave_no_selectable_rows() {
+    fn test_toggle_collapse_expands_project_when_precollapsed() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.collapsed_projects.insert("test".to_string());
+        app.selected = 0;
+
+        app.toggle_collapse();
+        assert!(!app.collapsed_projects.contains("test"));
+    }
+
+    #[test]
+    fn test_toggle_collapse_with_single_project_keeps_selectable_rows() {
         let dir = setup_dir();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         app.selected = 0;
         app.toggle_collapse();
-        assert_eq!(app.selectable_count(), 0);
+        assert_eq!(app.selectable_count(), 1);
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn test_toggle_collapse_on_parent_issue_hides_children() {
+        let dir = setup_dir();
+        let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.selected = 0; // Beta epic
+        app.toggle_collapse();
+        assert_eq!(app.selectable_count(), 1);
+        assert!(app.collapsed_issues.contains("issue-b"));
     }
 
     #[test]
@@ -383,5 +427,11 @@ priority: p1
 
         app.cycle_sort();
         assert_eq!(app.sort_mode, SortMode::Priority);
+    }
+
+    #[test]
+    fn test_nearest_selectable_index_none_when_empty_rows() {
+        let rows: Vec<DisplayRow<'_>> = Vec::new();
+        assert_eq!(nearest_selectable_index(&rows, 0), None);
     }
 }

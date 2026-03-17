@@ -39,6 +39,8 @@ pub enum DisplayRow<'a> {
     IssueRow {
         issue: &'a Issue,
         depth: usize,
+        has_children: bool,
+        collapsed: bool,
     },
 }
 
@@ -117,7 +119,8 @@ fn project_sort_key(project: &str) -> (u8, String) {
 /// Build a flat display list with project grouping, hierarchy, collapse, and sorting.
 pub fn build_display_rows<'a>(
     issues: &'a [Issue],
-    collapsed: &HashSet<String>,
+    collapsed_projects: &HashSet<String>,
+    collapsed_issues: &HashSet<String>,
     sort_mode: SortMode,
 ) -> Vec<DisplayRow<'a>> {
     // Group by project (then sort project headers deterministically).
@@ -144,7 +147,7 @@ pub fn build_display_rows<'a>(
                 .is_some_and(|(name, _)| *name != "(no project)"));
 
     for (project, mut project_issues) in by_project {
-        let is_collapsed = collapsed.contains(project);
+        let is_collapsed = collapsed_projects.contains(project);
         let count = project_issues.len();
 
         if show_headers {
@@ -159,33 +162,64 @@ pub fn build_display_rows<'a>(
             continue;
         }
 
-        // Sort top-level issues
+        // Sort issues, then derive hierarchy edges for this project.
         sort_issues(&mut project_issues, sort_mode);
 
-        // Collect all slugs referenced as sub_issues
-        let child_slugs: HashSet<&str> = project_issues
-            .iter()
-            .filter_map(|i| i.frontmatter.sub_issues.as_ref())
-            .flat_map(|subs| subs.iter().map(|s| s.as_str()))
-            .collect();
-
-        // Top-level = not referenced as anyone's sub_issue
-        let top_level: Vec<&&Issue> = project_issues
-            .iter()
-            .filter(|i| !child_slugs.contains(i.slug.as_str()))
-            .collect();
-
         // Build slug → issue lookup
-        let slug_map: HashMap<&str, &&Issue> = project_issues
+        let slug_map: HashMap<&str, &Issue> = project_issues
             .iter()
+            .copied()
             .map(|i| (i.slug.as_str(), i))
             .collect();
 
+        let mut children_by_parent: HashMap<&str, Vec<&Issue>> = HashMap::new();
+        let mut child_slugs: HashSet<&str> = HashSet::new();
+
+        for parent in &project_issues {
+            if let Some(subs) = &parent.frontmatter.sub_issues {
+                let mut children: Vec<&Issue> = subs
+                    .iter()
+                    .filter_map(|slug| slug_map.get(slug.as_str()).copied())
+                    .collect();
+                if !children.is_empty() {
+                    sort_issues(&mut children, sort_mode);
+                    for child in &children {
+                        child_slugs.insert(child.slug.as_str());
+                    }
+                    children_by_parent.insert(parent.slug.as_str(), children);
+                }
+            }
+        }
+
+        // Top-level = not referenced as anyone's sub_issue
+        let mut top_level: Vec<&Issue> = project_issues
+            .iter()
+            .copied()
+            .filter(|i| !child_slugs.contains(i.slug.as_str()))
+            .collect();
+        sort_issues(&mut top_level, sort_mode);
+
         let mut visited = HashSet::new();
         for issue in top_level {
-            rows.push(DisplayRow::IssueRow { issue, depth: 0 });
+            let has_children = children_by_parent.contains_key(issue.slug.as_str());
+            let collapsed = has_children && collapsed_issues.contains(&issue.slug);
+            rows.push(DisplayRow::IssueRow {
+                issue,
+                depth: 0,
+                has_children,
+                collapsed,
+            });
             visited.insert(issue.slug.clone());
-            add_children(&mut rows, issue, &slug_map, 1, &mut visited);
+            if has_children && !collapsed {
+                add_children(
+                    &mut rows,
+                    issue,
+                    &children_by_parent,
+                    1,
+                    &mut visited,
+                    collapsed_issues,
+                );
+            }
         }
     }
 
@@ -195,24 +229,39 @@ pub fn build_display_rows<'a>(
 fn add_children<'a>(
     rows: &mut Vec<DisplayRow<'a>>,
     parent: &'a Issue,
-    slug_map: &HashMap<&str, &&'a Issue>,
+    children_by_parent: &HashMap<&str, Vec<&'a Issue>>,
     depth: usize,
     visited: &mut HashSet<String>,
+    collapsed_issues: &HashSet<String>,
 ) {
-    if let Some(subs) = &parent.frontmatter.sub_issues {
-        for slug in subs {
-            if !visited.insert(slug.clone()) {
-                continue;
-            }
-            if let Some(child) = slug_map.get(slug.as_str()) {
-                rows.push(DisplayRow::IssueRow {
-                    issue: child,
-                    depth,
-                });
-                if depth < 10 {
-                    add_children(rows, child, slug_map, depth + 1, visited);
-                }
-            }
+    let children = children_by_parent
+        .get(parent.slug.as_str())
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+
+    for child in children {
+        if !visited.insert(child.slug.clone()) {
+            continue;
+        }
+        let has_children = children_by_parent.contains_key(child.slug.as_str());
+        let collapsed = has_children && collapsed_issues.contains(&child.slug);
+
+        rows.push(DisplayRow::IssueRow {
+            issue: child,
+            depth,
+            has_children,
+            collapsed,
+        });
+
+        if has_children && !collapsed && depth < 10 {
+            add_children(
+                rows,
+                child,
+                children_by_parent,
+                depth + 1,
+                visited,
+                collapsed_issues,
+            );
         }
     }
 }
@@ -240,6 +289,10 @@ mod tests {
     use tempfile::TempDir;
 
     fn no_collapse() -> HashSet<String> {
+        HashSet::new()
+    }
+
+    fn no_issue_collapse() -> HashSet<String> {
         HashSet::new()
     }
 
@@ -308,7 +361,12 @@ Standalone body
     #[test]
     fn test_hierarchy_single_project() {
         let (_dir, issues) = setup_hierarchy();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         let headers: Vec<_> = rows
             .iter()
@@ -319,7 +377,7 @@ Standalone body
         let issue_rows: Vec<_> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth } => Some((issue.slug.as_str(), *depth)),
+                DisplayRow::IssueRow { issue, depth, .. } => Some((issue.slug.as_str(), *depth)),
                 _ => None,
             })
             .collect();
@@ -335,7 +393,12 @@ Standalone body
         let mut collapsed = HashSet::new();
         collapsed.insert("siaan".to_string());
 
-        let rows = build_display_rows(&issues, &collapsed, SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &collapsed,
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         // Only the header should remain
         assert_eq!(rows.len(), 1);
@@ -377,7 +440,12 @@ priority: p0
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         let headers: Vec<_> = rows
             .iter()
@@ -425,7 +493,12 @@ priority: p1
         let mut collapsed = HashSet::new();
         collapsed.insert("alpha".to_string());
 
-        let rows = build_display_rows(&issues, &collapsed, SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &collapsed,
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         // 2 headers + 1 issue (beta's)
         assert_eq!(selectable_count(&rows), 1);
     }
@@ -445,7 +518,12 @@ priority: p2
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         let headers: Vec<_> = rows
             .iter()
@@ -457,12 +535,19 @@ priority: p2
     #[test]
     fn test_sort_by_type() {
         let (_dir, issues) = setup_hierarchy();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Type);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Type,
+        );
 
         let top_level_types: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.display_type()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.display_type()),
                 _ => None,
             })
             .collect();
@@ -496,11 +581,18 @@ priority: p1
         )
         .unwrap();
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Type);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Type,
+        );
         let titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -544,11 +636,18 @@ type: task
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -593,11 +692,18 @@ priority: "   "
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -689,7 +795,12 @@ priority: p1
         )
         .unwrap();
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let headers: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
@@ -703,12 +814,19 @@ priority: p1
     #[test]
     fn test_sort_by_title() {
         let (_dir, issues) = setup_hierarchy();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Title);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Title,
+        );
 
         let top_level_titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -744,11 +862,18 @@ priority: p1
         )
         .unwrap();
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Title);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Title,
+        );
         let titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -781,11 +906,18 @@ priority: p1
         )
         .unwrap();
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Type);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Type,
+        );
         let titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth: 0 } => Some(issue.frontmatter.title.as_str()),
+                DisplayRow::IssueRow {
+                    issue, depth: 0, ..
+                } => Some(issue.frontmatter.title.as_str()),
                 _ => None,
             })
             .collect();
@@ -809,7 +941,12 @@ priority: p1
     #[test]
     fn test_selectable_count_and_index() {
         let (_dir, issues) = setup_hierarchy();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         assert_eq!(selectable_count(&rows), 4);
 
@@ -819,7 +956,12 @@ priority: p1
 
     #[test]
     fn test_empty_issues() {
-        let rows = build_display_rows(&[], &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &[],
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         assert!(rows.is_empty());
         assert_eq!(selectable_count(&rows), 0);
     }
@@ -842,7 +984,12 @@ sub_issues:
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
 
         let issue_rows: Vec<_> = rows.iter().filter(|r| r.is_selectable()).collect();
         assert_eq!(issue_rows.len(), 1);
@@ -877,7 +1024,12 @@ priority: p1
         )
         .unwrap();
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let issue_titles: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
@@ -930,17 +1082,127 @@ priority: p1
         .unwrap();
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let tuples: Vec<(&str, usize)> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth } => {
+                DisplayRow::IssueRow { issue, depth, .. } => {
                     Some((issue.frontmatter.title.as_str(), *depth))
                 }
                 _ => None,
             })
             .collect();
         assert_eq!(tuples, vec![("Epic", 0), ("Child", 1), ("Grand", 2)]);
+    }
+
+    #[test]
+    fn test_issue_collapse_hides_subtree_only() {
+        let (_dir, issues) = setup_hierarchy();
+        let mut collapsed_issues = HashSet::new();
+        collapsed_issues.insert("pipeline".to_string());
+
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &collapsed_issues,
+            SortMode::Priority,
+        );
+        let tuples: Vec<(&str, usize)> = rows
+            .iter()
+            .filter_map(|r| match r {
+                DisplayRow::IssueRow { issue, depth, .. } => {
+                    Some((issue.frontmatter.title.as_str(), *depth))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            tuples,
+            vec![("Standalone Feature", 0), ("Issue Pipeline", 0)]
+        );
+    }
+
+    #[test]
+    fn test_sort_mode_reorders_children() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("epic.md"),
+            r#"---
+project: p
+title: Epic
+type: epic
+priority: p1
+sub_issues:
+  - child-a
+  - child-b
+---
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("child-a.md"),
+            r#"---
+project: p
+title: Zebra
+type: task
+priority: p1
+---
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("child-b.md"),
+            r#"---
+project: p
+title: Alpha
+type: task
+priority: p2
+---
+"#,
+        )
+        .unwrap();
+
+        let issues = issue::list_issues(dir.path()).unwrap();
+        let rows_priority = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
+        let rows_title = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Title,
+        );
+
+        let children_priority: Vec<&str> = rows_priority
+            .iter()
+            .filter_map(|r| match r {
+                DisplayRow::IssueRow {
+                    issue, depth: 1, ..
+                } => Some(issue.frontmatter.title.as_str()),
+                _ => None,
+            })
+            .collect();
+        let children_title: Vec<&str> = rows_title
+            .iter()
+            .filter_map(|r| match r {
+                DisplayRow::IssueRow {
+                    issue, depth: 1, ..
+                } => Some(issue.frontmatter.title.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(children_priority, vec!["Zebra", "Alpha"]);
+        assert_eq!(children_title, vec!["Alpha", "Zebra"]);
     }
 
     #[test]
@@ -964,11 +1226,16 @@ priority: p1
         }
 
         let issues = issue::list_issues(dir.path()).unwrap();
-        let rows = build_display_rows(&issues, &no_collapse(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &no_collapse(),
+            &no_issue_collapse(),
+            SortMode::Priority,
+        );
         let tuples: Vec<(&str, usize)> = rows
             .iter()
             .filter_map(|r| match r {
-                DisplayRow::IssueRow { issue, depth } => {
+                DisplayRow::IssueRow { issue, depth, .. } => {
                     Some((issue.frontmatter.title.as_str(), *depth))
                 }
                 _ => None,
@@ -1068,7 +1335,12 @@ Body
         let issues = issue::list_issues(dir.path()).unwrap();
         assert_eq!(issues.len(), 4);
 
-        let rows = build_display_rows(&issues, &HashSet::new(), SortMode::Priority);
+        let rows = build_display_rows(
+            &issues,
+            &HashSet::new(),
+            &HashSet::new(),
+            SortMode::Priority,
+        );
         // Should not hang or OOM
         assert!(!rows.is_empty());
 

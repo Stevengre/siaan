@@ -76,17 +76,22 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             } => {
                 let arrow = if *collapsed { "▶" } else { "▼" };
                 Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(""),
                     Cell::from(format!("{} [{}] ({})", arrow, name, count)).style(
                         Style::default()
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
                 ])
             }
-            DisplayRow::IssueRow { issue, depth } => {
+            DisplayRow::IssueRow {
+                issue,
+                depth,
+                has_children,
+                collapsed,
+            } => {
                 let is_selected = i == selected_row_idx;
                 let style = if is_selected {
                     Style::default()
@@ -105,9 +110,25 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     _ => Color::White,
                 };
 
-                let indent = "  ".repeat(*depth);
-                let prefix = if *depth > 0 { "└ " } else { "" };
-                let title = format!("{}{}{}", indent, prefix, issue.frontmatter.title);
+                let visual_depth = (*depth).min(5);
+                let indent = " ".repeat(visual_depth * 2);
+                let marker = if *has_children {
+                    if *collapsed {
+                        "▸ "
+                    } else {
+                        "▾ "
+                    }
+                } else {
+                    "· "
+                };
+                let title = if *depth > 5 {
+                    format!(
+                        "{}{}[d{}] {}",
+                        indent, marker, depth, issue.frontmatter.title
+                    )
+                } else {
+                    format!("{}{}{}", indent, marker, issue.frontmatter.title)
+                };
 
                 Row::new(vec![
                     Cell::from(issue.display_type()).style(Style::default().fg(type_color)),
@@ -200,7 +221,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(" sort  "),
         Span::styled("Space", Style::default().fg(Color::Yellow)),
-        Span::raw(" fold  "),
+        Span::raw(" fold(issue/project)  "),
         Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(" quit"),
     ]);
