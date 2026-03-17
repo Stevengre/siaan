@@ -434,34 +434,58 @@ defmodule SymphonyElixir.Codex.AppServer do
          context
        )
        when is_binary(resume_thread_id) and is_binary(fallback_prompt) do
-    fallback_reason = "resume_turn_start_failed: #{inspect(reason)}"
+    if definitive_resume_rejection?(reason) do
+      fallback_reason = "resume_turn_start_failed: #{inspect(reason)}"
 
-    Logger.warning("Falling back to a new physical Codex session for #{issue_context(context.issue)} previous_thread_id=#{resume_thread_id} reason=#{fallback_reason}")
+      Logger.warning("Falling back to a new physical Codex session for #{issue_context(context.issue)} previous_thread_id=#{resume_thread_id} reason=#{fallback_reason}")
 
-    with {:ok, new_thread_id} <-
-           start_thread(
-             port,
-             context.workspace,
-             %{approval_policy: context.approval_policy, thread_sandbox: context.thread_sandbox},
-             context.tracker_kind
-           ),
-         {:ok, turn_id} <-
-           start_turn(
-             port,
-             new_thread_id,
-             fallback_prompt,
-             context.issue,
-             context.workspace,
-             context.approval_policy,
-             context.turn_sandbox_policy,
-             next_request_id()
-           ) do
-      {:ok, start_new_physical_session(session, new_thread_id, fallback_reason), turn_id}
+      with {:ok, new_thread_id} <-
+             start_thread(
+               port,
+               context.workspace,
+               %{approval_policy: context.approval_policy, thread_sandbox: context.thread_sandbox},
+               context.tracker_kind
+             ),
+           {:ok, turn_id} <-
+             start_turn(
+               port,
+               new_thread_id,
+               fallback_prompt,
+               context.issue,
+               context.workspace,
+               context.approval_policy,
+               context.turn_sandbox_policy,
+               next_request_id()
+             ) do
+        {:ok, start_new_physical_session(session, new_thread_id, fallback_reason), turn_id}
+      end
+    else
+      {:error, reason}
     end
   end
 
-  defp maybe_fallback_to_new_thread(_session, error, _reason, _fallback_prompt, _context),
-    do: error
+  defp maybe_fallback_to_new_thread(_session, error, _reason, _fallback_prompt, _context), do: error
+
+  defp definitive_resume_rejection?({:response_error, error}) do
+    missing_thread_error?(error)
+  end
+
+  defp definitive_resume_rejection?(_reason), do: false
+
+  defp missing_thread_error?(%{"code" => code}) when code in [-32_001, "thread_not_found"], do: true
+
+  defp missing_thread_error?(%{"message" => message}) when is_binary(message) do
+    normalized_message = String.downcase(message)
+
+    (String.contains?(normalized_message, "thread") and
+       String.contains?(normalized_message, "not found")) or
+      String.contains?(normalized_message, "unknown thread")
+  end
+
+  defp missing_thread_error?(%{"error" => nested_error}) when is_map(nested_error),
+    do: missing_thread_error?(nested_error)
+
+  defp missing_thread_error?(_error), do: false
 
   defp mark_physical_session_reuse(%{resume_thread_id: resume_thread_id} = session)
        when is_binary(resume_thread_id) do

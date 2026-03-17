@@ -443,6 +443,100 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server does not fall back to a fresh thread when resume turn/start times out" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-thread-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1001C")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-thread-timeout.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-thread-timeout.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            sleep 1
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_read_timeout_ms: 50
+      )
+
+      issue = %Issue{
+        id: "issue-thread-timeout",
+        identifier: "MT-1001C",
+        title: "Do not fallback on resume timeout",
+        description: "A late stale completion must not be misattributed to a fallback thread",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-1001C",
+        labels: ["backend"]
+      }
+
+      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-stale")
+
+      assert {:error, :response_timeout} =
+               AppServer.run_turn(
+                 session,
+                 "Resume this thread",
+                 issue,
+                 fallback_prompt: "Fresh session fallback prompt"
+               )
+
+      AppServer.stop_session(session)
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      refute Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+
+      turn_start_ids =
+        lines
+        |> Enum.filter(&String.contains?(&1, "\"method\":\"turn/start\""))
+        |> Enum.map(fn line ->
+          [_, id] = Regex.run(~r/"id":(\d+)/, line)
+          id
+        end)
+
+      assert turn_start_ids == ["3"]
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server marks request-for-input events as a hard failure" do
     test_root =
       Path.join(
