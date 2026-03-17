@@ -91,6 +91,16 @@ defmodule SymphonyElixir.LocalTrackerTest do
     File.write!(config_path, "[projects.other]\ndir = \"/tmp\"\n")
     assert {:error, {:missing_project, "siaan"}} = ProjectConfig.load(config_path, "siaan")
 
+    File.write!(config_path, "[projects.siaan]\ndir = \"/tmp\"\n")
+
+    assert {:error, {:missing_project_field, "siaan", "workflow"}} =
+             ProjectConfig.load(config_path, "siaan")
+
+    File.write!(config_path, "[projects.siaan]\nworkflow = \"workflow.yaml\"\n")
+
+    assert {:error, {:missing_project_field, "siaan", "dir"}} =
+             ProjectConfig.load(config_path, "siaan")
+
     File.write!(config_path, "[projects.siaan]\ninvalid-line\n")
 
     assert {:error, {:invalid_toml, 2, :invalid_assignment}} =
@@ -192,6 +202,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     File.write!(workflow_path, "ready:\n")
     assert {:error, {:invalid_state_config, "ready", nil}} = LocalWorkflow.load(workflow_path)
+
+    File.write!(workflow_path, "ready:\n  activities:\n  transitions:\n")
+
+    assert {:error, {:invalid_state_list, "ready", "activities", nil}} =
+             LocalWorkflow.load(workflow_path)
   end
 
   test "local adapter transitions an in-progress issue to review from workpad intent when conditions pass" do

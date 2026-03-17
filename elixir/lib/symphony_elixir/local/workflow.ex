@@ -96,22 +96,24 @@ defmodule SymphonyElixir.Local.Workflow do
 
   defp normalize(_decoded), do: {:error, :workflow_not_a_map}
 
-  defp normalize_state_config(_state_name, state_config) when is_map(state_config) do
-    activities =
-      state_config
-      |> Map.get("activities", [])
-      |> Enum.map(&normalize_activity/1)
-
-    transitions =
-      state_config
-      |> Map.get("transitions", [])
-      |> Enum.map(&normalize_transition/1)
-
-    {:ok, %{activities: activities, transitions: transitions}}
+  defp normalize_state_config(state_name, state_config) when is_map(state_config) do
+    with {:ok, activities} <-
+           normalize_list_field(state_name, state_config, "activities", &normalize_activity/1),
+         {:ok, transitions} <-
+           normalize_list_field(state_name, state_config, "transitions", &normalize_transition/1) do
+      {:ok, %{activities: activities, transitions: transitions}}
+    end
   end
 
   defp normalize_state_config(state_name, state_config) do
     {:error, {:invalid_state_config, to_string(state_name), state_config}}
+  end
+
+  defp normalize_list_field(state_name, state_config, key, mapper) when is_function(mapper, 1) do
+    case Map.get(state_config, key, []) do
+      values when is_list(values) -> {:ok, Enum.map(values, mapper)}
+      value -> {:error, {:invalid_state_list, to_string(state_name), key, value}}
+    end
   end
 
   defp normalize_activity(%{"skill" => name}) do

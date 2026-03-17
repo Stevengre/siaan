@@ -17,14 +17,16 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   def load(config_path, project_name) when is_binary(config_path) and is_binary(project_name) do
     with {:ok, contents} <- File.read(config_path),
          {:ok, document} <- parse_document(contents),
-         {:ok, project} <- fetch_project(document, project_name) do
-      resolved_dir = resolve_path(config_path, Map.get(project, "dir"))
+         {:ok, project} <- fetch_project(document, project_name),
+         {:ok, dir} <- fetch_required_path(project, project_name, "dir"),
+         {:ok, workflow} <- fetch_required_path(project, project_name, "workflow") do
+      resolved_dir = resolve_path(config_path, dir)
 
       {:ok,
        %__MODULE__{
          name: project_name,
          dir: resolved_dir,
-         workflow: resolve_path(config_path, Map.get(project, "workflow"), resolved_dir),
+         workflow: resolve_path(config_path, workflow, resolved_dir),
          runtime: Map.get(project, "runtime"),
          adapter: Map.get(project, "adapter", %{})
        }}
@@ -39,6 +41,20 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   end
 
   defp fetch_project(_document, project_name), do: {:error, {:missing_project, project_name}}
+
+  defp fetch_required_path(project, project_name, key) when is_map(project) do
+    case Map.get(project, key) do
+      value when is_binary(value) ->
+        if String.trim(value) == "" do
+          {:error, {:missing_project_field, project_name, key}}
+        else
+          {:ok, value}
+        end
+
+      _ ->
+        {:error, {:missing_project_field, project_name, key}}
+    end
+  end
 
   defp parse_document(contents) when is_binary(contents) do
     lines = String.split(contents, ~r/\R/, trim: false)
@@ -209,7 +225,6 @@ defmodule SymphonyElixir.Local.ProjectConfig do
   end
 
   defp resolve_path(config_path, path), do: resolve_path(config_path, path, nil)
-  defp resolve_path(_config_path, nil, _base_dir), do: nil
 
   defp resolve_path(config_path, path, base_dir) when is_binary(path) do
     expanded_path = expand_home(path)
