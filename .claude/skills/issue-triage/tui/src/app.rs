@@ -24,12 +24,22 @@ pub struct App {
 impl App {
     pub fn new(triage_dir: PathBuf) -> Result<Self> {
         let issues = issue::list_issues(&triage_dir)?;
+        let collapsed_issues: HashSet<String> = issues
+            .iter()
+            .filter(|i| {
+                i.frontmatter
+                    .sub_issues
+                    .as_ref()
+                    .is_some_and(|subs| !subs.is_empty())
+            })
+            .map(|i| i.slug.clone())
+            .collect();
         Ok(Self {
             issues,
             selected: 0,
             triage_dir,
             collapsed_projects: HashSet::new(),
-            collapsed_issues: HashSet::new(),
+            collapsed_issues,
             sort_mode: SortMode::Priority,
         })
     }
@@ -279,15 +289,16 @@ agents:
         let app = App::new(dir.path().to_path_buf()).unwrap();
         let rows = app.display_rows();
 
-        // header + epic(depth=0) + alpha(depth=1) = 3
-        assert_eq!(rows.len(), 3);
-        assert_eq!(app.selectable_count(), 2);
+        // default collapse: header + epic(depth=0)
+        assert_eq!(rows.len(), 2);
+        assert_eq!(app.selectable_count(), 1);
     }
 
     #[test]
     fn test_app_navigation() {
         let dir = setup_dir();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
+        app.collapsed_issues.clear();
         assert_eq!(app.selected, 0);
         app.next();
         assert_eq!(app.selected, 1);
@@ -394,7 +405,7 @@ agents:
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         app.selected = 0;
         app.toggle_collapse();
-        assert_eq!(app.selectable_count(), 1);
+        assert_eq!(app.selectable_count(), 2);
         assert_eq!(app.selected, 0);
     }
 
@@ -403,8 +414,16 @@ agents:
         let dir = setup_dir();
         let mut app = App::new(dir.path().to_path_buf()).unwrap();
         app.selected = 0; // Beta epic
+        app.collapsed_issues.clear();
         app.toggle_collapse();
         assert_eq!(app.selectable_count(), 1);
+        assert!(app.collapsed_issues.contains("issue-b"));
+    }
+
+    #[test]
+    fn test_new_defaults_to_collapsed_subtrees() {
+        let dir = setup_dir();
+        let app = App::new(dir.path().to_path_buf()).unwrap();
         assert!(app.collapsed_issues.contains("issue-b"));
     }
 
