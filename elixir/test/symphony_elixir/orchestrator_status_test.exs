@@ -191,10 +191,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.profile_name == "review_to_in_progress"
     assert profile.session_reuse_policy == "reuse_issue_session"
     assert profile.session_reuse_decision == "reused_issue_session"
+    assert profile.physical_session_reuse_decision == "started_new_physical_session"
+    assert profile.physical_session_fallback_reason == "ephemeral_app_server_lifecycle"
     assert profile.issue_session_id == "existing-issue-session"
     assert profile.issue_turn_count == 3
     assert profile.physical_session_count == 1
-    assert profile.codex_thread_id == "thread-existing"
+    assert profile.codex_thread_id == nil
     assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
   end
 
@@ -222,6 +224,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.profile_name == "review_to_in_progress"
     assert profile.session_reuse_policy == "reuse_issue_session"
     assert profile.session_reuse_decision == "started_new_issue_session"
+    assert profile.physical_session_reuse_decision == "started_new_physical_session"
+    assert profile.physical_session_fallback_reason == "missing_previous_physical_session_id"
     assert is_binary(profile.issue_session_id)
     assert profile.issue_session_id != ""
     assert profile.issue_turn_count == 0
@@ -356,12 +360,18 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert retry_profile.session_reuse_decision == "reused_issue_session"
     assert retry_profile.issue_turn_count == 4
     assert retry_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+    assert retry_profile.physical_session_reuse_decision == "started_new_physical_session"
+    assert retry_profile.physical_session_fallback_reason == nil
+    assert retry_profile.codex_thread_id == nil
 
     assert stall_profile.profile_name == "review_to_in_progress"
     assert stall_profile.issue_session_id == "issue-session-retry"
     assert stall_profile.session_reuse_decision == "reused_issue_session"
     assert stall_profile.issue_turn_count == 4
     assert stall_profile.codex_command == "codex --model gpt-5.3-spark app-server"
+    assert stall_profile.physical_session_reuse_decision == "started_new_physical_session"
+    assert stall_profile.physical_session_fallback_reason == nil
+    assert stall_profile.codex_thread_id == nil
   end
 
   test "completion-time issue-session persistence failures log warnings without aborting completion totals" do
@@ -626,6 +636,97 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_run["cost"]["cost_estimate_available"] == true
   end
 
+  test "session_started updates preserve an existing physical-session fallback reason" do
+    issue_id = "issue-fallback-reason-preserved"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-201A",
+      title: "Fallback reason retention",
+      description: "Keep dispatch fallback reasons after session start",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-201A"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :FallbackReasonOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+    fallback_reason = "missing_previous_physical_session_id"
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      issue_id: issue.id,
+      issue_session_id: "issue-session-fallback",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "review_to_in_progress",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "started_new_issue_session",
+      physical_session_reuse_decision: "started_new_physical_session",
+      physical_session_fallback_reason: fallback_reason,
+      codex_command: "codex app-server",
+      codex_model: "gpt-5.3-codex",
+      codex_thread_id: nil,
+      physical_session_count: 0,
+      issue_session_turn_count: 0,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-new-turn-1",
+         thread_id: "thread-new",
+         physical_session_reuse_decision: "started_new_physical_session",
+         physical_session_fallback_reason: nil,
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+    assert snapshot_entry.session_id == "thread-new-turn-1"
+    assert snapshot_entry.physical_session_id == "thread-new"
+    assert snapshot_entry.physical_session_fallback_reason == fallback_reason
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    completed_state = :sys.get_state(pid)
+    assert [completed_run | _] = completed_state.completed_runs
+    assert completed_run["physical_session_fallback_reason"] == fallback_reason
+  end
+
   test "orchestrator keeps the newest completed history entries after restart" do
     issue_id = "issue-history-window"
     workspace_root = tmp_dir!("session-stats-history-window")
@@ -695,6 +796,107 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              completed_state.completed_runs,
              &(&1["issue_identifier"] == "MT-HISTORY-#{history_limit}")
            )
+  end
+
+  test "terminal cleanup does not append a second completion record for idle persistent runners" do
+    workspace_root = tmp_dir!("session-history-single-completion")
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      workspace_root: workspace_root
+    )
+
+    issue_id = "issue-single-completion"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-SINGLE",
+      title: "Single completion history",
+      description: "Terminal cleanup should not double count completed persistent runs",
+      state: "status:review",
+      url: "https://example.org/issues/MT-SINGLE"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :SingleCompletionOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = Process.monitor(worker_pid)
+    started_at = DateTime.add(DateTime.utc_now(), -2, :second)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      issue_id: issue.id,
+      issue_session_id: "issue-session-single",
+      execution_profile: "review_to_in_progress",
+      execution_transition: "review_to_in_progress",
+      session_reuse_policy: "reuse_issue_session",
+      session_reuse_decision: "reused_issue_session",
+      physical_session_reuse_decision: "reused_physical_session",
+      physical_session_fallback_reason: nil,
+      codex_command: "codex app-server",
+      codex_model: "gpt-5.3-codex",
+      codex_thread_id: "thread-single",
+      physical_session_count: 1,
+      issue_session_turn_count: 1,
+      persistent_runner: false,
+      busy: true,
+      session_id: "thread-single-turn-1",
+      turn_count: 1,
+      last_codex_message: nil,
+      last_codex_timestamp: started_at,
+      last_codex_event: :notification,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:agent_runner_dispatch_complete, issue_id})
+    Process.sleep(50)
+
+    state_after_completion = :sys.get_state(pid)
+    assert length(state_after_completion.completed_runs) == 1
+    assert SymphonyElixir.SessionStats.load_recent_history() |> length() == 1
+
+    final_state =
+      pid
+      |> :sys.get_state()
+      |> put_in([Access.key(:running), issue_id, Access.key(:issue), Access.key(:state)], "status:done")
+      |> Orchestrator.terminate_running_issue_for_test(issue_id, true)
+
+    refute Map.has_key?(final_state.running, issue_id)
+    assert final_state.completed_runs |> length() == 1
+
+    [history_record] = SymphonyElixir.SessionStats.load_recent_history()
+    assert history_record["result"] == "completed"
+
+    send(worker_pid, :stop)
   end
 
   test "orchestrator snapshot tracks turn completed usage when present" do
@@ -1457,6 +1659,116 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 8_800
     assert remaining_ms <= 10_500
+  end
+
+  test "orchestrator does not restart idle persistent runners during watch-state stalls" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 1_000
+    )
+
+    issue_id = "issue-idle-review"
+    orchestrator_name = Module.concat(__MODULE__, :IdleReviewOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "MT-IDLE",
+      issue: %Issue{id: issue_id, identifier: "MT-IDLE", state: "status:review"},
+      session_id: nil,
+      busy: false,
+      persistent_runner: true,
+      completion_recorded: true,
+      last_codex_message: nil,
+      last_codex_timestamp: stale_activity_at,
+      last_codex_event: :notification,
+      started_at: stale_activity_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(worker_pid)
+    assert %{^issue_id => refreshed_entry} = state.running
+    assert refreshed_entry.busy == false
+    assert state.retry_attempts == %{}
+
+    send(worker_pid, :done)
+  end
+
+  test "terminate_running_issue ignores stale dead persistent-runner pids" do
+    issue_id = "issue-dead-persistent-runner"
+    orchestrator_name = Module.concat(__MODULE__, :DeadPersistentRunnerOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    ref = Process.monitor(worker_pid)
+    send(worker_pid, :stop)
+    assert_receive {:DOWN, ^ref, :process, ^worker_pid, :normal}
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: ref,
+      identifier: "MT-DEAD",
+      issue: %Issue{id: issue_id, identifier: "MT-DEAD", state: "Done"},
+      session_id: nil,
+      busy: false,
+      persistent_runner: true,
+      completion_recorded: true,
+      started_at: DateTime.utc_now()
+    }
+
+    initial_state = :sys.get_state(pid)
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    state =
+      pid
+      |> :sys.get_state()
+      |> Orchestrator.terminate_running_issue_for_test(issue_id, true)
+
+    refute Map.has_key?(state.running, issue_id)
+    refute MapSet.member?(state.claimed, issue_id)
   end
 
   test "status dashboard renders offline marker to terminal" do

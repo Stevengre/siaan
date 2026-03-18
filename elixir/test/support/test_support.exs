@@ -51,7 +51,14 @@ defmodule SymphonyElixir.TestSupport do
         SymphonyElixir.TestSupport.ensure_workflow_store_running!()
 
         if Process.whereis(SymphonyElixir.WorkflowStore) do
-          SymphonyElixir.WorkflowStore.force_reload()
+          try do
+            SymphonyElixir.WorkflowStore.force_reload()
+          catch
+            :exit, _reason ->
+              SymphonyElixir.TestSupport.ensure_test_application_started!()
+              SymphonyElixir.TestSupport.ensure_workflow_store_running!()
+              SymphonyElixir.WorkflowStore.force_reload()
+          end
         end
 
         stop_default_http_server()
@@ -108,12 +115,24 @@ defmodule SymphonyElixir.TestSupport do
   end
 
   def ensure_workflow_store_running! do
+    ensure_test_application_started!()
+
     if Process.whereis(SymphonyElixir.WorkflowStore) do
       :ok
     else
-      case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+      try do
+        case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+        end
+      catch
+        :exit, _reason ->
+          ensure_test_application_started!()
+
+          case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+          end
       end
     end
   end
