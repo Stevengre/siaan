@@ -391,7 +391,19 @@ defmodule SymphonyElixir.Orchestrator do
     MapSet.member?(watch_state_set(), normalize_issue_state(state_name))
   end
 
-  defp keep_live_session_state?(_state_name), do: false
+  defp keep_idle_watch_state_runner?(%State{} = state, %Issue{id: issue_id, state: state_name})
+       when is_binary(issue_id) and is_binary(state_name) do
+    keep_live_session_state?(state_name) and idle_running_entry?(Map.get(state.running, issue_id))
+  end
+
+  defp keep_idle_watch_state_runner?(_state, _issue), do: false
+
+  defp idle_running_entry?(running_entry) when is_map(running_entry) do
+    Map.get(running_entry, :busy, true) == false
+  end
+
+  defp idle_running_entry?(_running_entry), do: false
+
   @doc false
   @spec reconcile_issue_states_for_test([Issue.t()], term()) :: term()
   def reconcile_issue_states_for_test(issues, %State{} = state) when is_list(issues) do
@@ -527,7 +539,7 @@ defmodule SymphonyElixir.Orchestrator do
 
         terminate_running_issue(state, issue.id, false)
 
-      active_issue_state?(issue.state, active_states) or keep_live_session_state?(issue.state) ->
+      active_issue_state?(issue.state, active_states) or keep_idle_watch_state_runner?(state, issue) ->
         refresh_running_issue_state(state, issue)
 
       true ->

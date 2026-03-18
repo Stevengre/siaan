@@ -1859,7 +1859,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       issue: %Issue{id: issue_id, identifier: "MT-IDLE", state: "status:review"},
       session_id: nil,
       busy: false,
-      persistent_runner: true,
+      persistent_runner: false,
       completion_recorded: true,
       last_codex_message: nil,
       last_codex_timestamp: stale_activity_at,
@@ -1883,6 +1883,65 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert state.retry_attempts == %{}
 
     send(worker_pid, :done)
+  end
+
+  test "orchestrator stops busy runners when an issue moves to a watch state" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      tracker_watch_states: ["status:review"]
+    )
+
+    issue_id = "issue-busy-review"
+    orchestrator_name = Module.concat(__MODULE__, :BusyReviewOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    started_at = DateTime.add(DateTime.utc_now(), -2, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: Process.monitor(worker_pid),
+      identifier: "MT-BUSY-REVIEW",
+      issue: %Issue{id: issue_id, identifier: "MT-BUSY-REVIEW", state: "status:in-progress"},
+      issue_id: issue_id,
+      issue_session_id: "issue-session-busy-review",
+      session_id: "thread-busy-review-turn-1",
+      busy: true,
+      persistent_runner: false,
+      completion_recorded: false,
+      last_codex_message: nil,
+      last_codex_timestamp: started_at,
+      last_codex_event: :notification,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    reviewed_issue = %Issue{id: issue_id, identifier: "MT-BUSY-REVIEW", state: "status:review"}
+
+    state =
+      Orchestrator.reconcile_issue_states_for_test([reviewed_issue], :sys.get_state(pid))
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+    refute MapSet.member?(state.claimed, issue_id)
   end
 
   test "terminate_running_issue ignores stale dead persistent-runner pids" do
