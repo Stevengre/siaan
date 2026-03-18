@@ -19,6 +19,7 @@ defmodule SymphonyElixir.AgentRunner do
       :worker_host,
       :codex_update_recipient,
       :session,
+      port_pending_line: "",
       base_opts: []
     ]
   end
@@ -120,6 +121,23 @@ defmodule SymphonyElixir.AgentRunner do
         Logger.error("Persistent agent dispatch failed for #{issue_context(issue)}: #{inspect(reason)}")
         {:stop, reason, state}
     end
+  end
+
+  @impl true
+  def handle_info({port, {:data, {:noeol, chunk}}}, %State{session: %{port: port}} = state) do
+    {:noreply, %{state | port_pending_line: state.port_pending_line <> to_string(chunk)}}
+  end
+
+  def handle_info({port, {:data, {:eol, chunk}}}, %State{session: %{port: port}} = state) do
+    line = state.port_pending_line <> to_string(chunk)
+
+    log_idle_port_message(line, state.issue)
+    {:noreply, %{state | port_pending_line: ""}}
+  end
+
+  def handle_info({port, {:exit_status, status}}, %State{session: %{port: port}} = state) do
+    Logger.warning("Persistent app-server exited while idle for #{issue_context(state.issue)}: #{inspect(status)}")
+    {:stop, {:app_server_exit, status}, %{state | port_pending_line: ""}}
   end
 
   @impl true
@@ -499,5 +517,25 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp issue_context(%TrackerIssue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
+  end
+
+  defp log_idle_port_message(line, issue) when is_binary(line) do
+    payload = String.trim(line)
+
+    if payload != "" do
+      case Jason.decode(payload) do
+        {:ok, %{"method" => method}} when is_binary(method) ->
+          Logger.debug("Ignoring idle app-server notification for #{issue_context(issue)}: #{method}")
+
+        {:ok, %{"id" => id}} ->
+          Logger.debug("Ignoring idle app-server response for #{issue_context(issue)}: #{inspect(id)}")
+
+        {:ok, decoded} ->
+          Logger.debug("Ignoring idle app-server payload for #{issue_context(issue)}: #{inspect(decoded)}")
+
+        {:error, _reason} ->
+          Logger.debug("Ignoring idle app-server stream line for #{issue_context(issue)}: #{payload}")
+      end
+    end
   end
 end
