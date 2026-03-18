@@ -6,14 +6,14 @@ defmodule SymphonyElixir.RuntimeSourceStore do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.RuntimeSource
+  alias SymphonyElixir.{RuntimeConfig, RuntimeSource}
 
   @poll_interval_ms 1_000
 
   defmodule State do
     @moduledoc false
 
-    defstruct [:module, :runtime, :error]
+    defstruct [:module, :runtime, :error, :path, :stamp]
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -60,15 +60,15 @@ defmodule SymphonyElixir.RuntimeSourceStore do
 
   @impl true
   def handle_call(:current, _from, %State{} = state) do
-    case reload_state(state) do
-      {:ok, new_state} ->
-        {:reply, {:ok, new_state.runtime}, new_state}
+    case maybe_reload_current_state(state) do
+      {:ok, %State{runtime: runtime} = new_state} ->
+        {:reply, {:ok, runtime}, new_state}
 
       {:error, reason, %State{runtime: nil} = new_state} ->
         {:reply, {:error, reason}, new_state}
 
-      {:error, _reason, new_state} ->
-        {:reply, {:ok, new_state.runtime}, new_state}
+      {:error, _reason, %State{runtime: runtime} = new_state} ->
+        {:reply, {:ok, runtime}, new_state}
     end
   end
 
@@ -97,25 +97,84 @@ defmodule SymphonyElixir.RuntimeSourceStore do
     Process.send_after(self(), :poll, @poll_interval_ms)
   end
 
+  defp maybe_reload_current_state(%State{} = state) do
+    cond do
+      runtime_source_stale?(state) ->
+        reload_state(state)
+
+      is_nil(state.runtime) ->
+        {:error, state.error, state}
+
+      true ->
+        {:ok, state}
+    end
+  end
+
   defp reload_state(%State{} = state) do
     module = RuntimeSource.module()
 
     case module.current() do
       {:ok, runtime} ->
-        {:ok, %State{module: module, runtime: runtime, error: nil}}
+        {:ok, build_state(module, runtime, nil)}
 
       {:error, reason} ->
         log_reload_error(module, reason)
-        {:error, reason, %State{state | module: module, error: reason}}
+
+        {:error, reason,
+         %State{
+           state
+           | module: module,
+             error: reason,
+             path: runtime_path(module),
+             stamp: runtime_stamp(module)
+         }}
     end
   end
 
   defp load_state(module) when is_atom(module) do
     case module.current() do
-      {:ok, runtime} -> {:ok, %State{module: module, runtime: runtime, error: nil}}
+      {:ok, runtime} -> {:ok, build_state(module, runtime, nil)}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp build_state(module, runtime, error) when is_atom(module) do
+    %State{
+      module: module,
+      runtime: runtime,
+      error: error,
+      path: runtime_path(module),
+      stamp: runtime_stamp(module)
+    }
+  end
+
+  defp runtime_source_stale?(%State{module: module} = state) do
+    current_module = RuntimeSource.module()
+
+    cond do
+      current_module != module ->
+        true
+
+      current_module == RuntimeSource.FileSource ->
+        current_path = runtime_path(current_module)
+        current_path != state.path or runtime_stamp(current_module) != state.stamp
+
+      true ->
+        false
+    end
+  end
+
+  defp runtime_path(RuntimeSource.FileSource), do: RuntimeConfig.path()
+  defp runtime_path(_module), do: nil
+
+  defp runtime_stamp(RuntimeSource.FileSource) do
+    case File.stat(RuntimeConfig.path(), time: :posix) do
+      {:ok, stat} -> {stat.mtime, stat.size}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp runtime_stamp(_module), do: nil
 
   defp log_reload_error(module, reason) do
     Logger.error("Failed to reload runtime source module=#{inspect(module)} reason=#{inspect(reason)}; keeping last known good runtime")

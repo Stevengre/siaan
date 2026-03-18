@@ -18,9 +18,9 @@ defmodule SymphonyElixir.DispatchLifecycle do
 
   def transition_name(_from_state, _to_state), do: nil
 
-  @spec dispatch_target_state(String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(issue_state) do
-    Tracker.dispatch_target_state(issue_state)
+  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(issue_or_state) do
+    Tracker.dispatch_target_state(issue_or_state)
   end
 
   @spec dispatch_transition_required?(String.t() | nil) :: boolean()
@@ -115,7 +115,7 @@ defmodule SymphonyElixir.DispatchLifecycle do
       )
       when is_binary(issue_state) and is_function(update_issue_state_fun, 2) and
              is_function(fetch_issue_states_fun, 1) do
-    case dispatch_target_state(issue_state) do
+    case dispatch_target_state(issue) do
       target_state when is_binary(target_state) ->
         case update_issue_state_fun.(issue.id, target_state) do
           :ok ->

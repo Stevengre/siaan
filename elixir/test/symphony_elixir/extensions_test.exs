@@ -4,8 +4,10 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixir.TrackerIssue
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -77,6 +79,25 @@ defmodule SymphonyElixir.ExtensionsTest do
     end
   end
 
+  defmodule CountingRuntimeSource do
+    @behaviour SymphonyElixir.RuntimeSource
+
+    @impl true
+    def current do
+      case Application.get_env(:symphony_elixir, :counting_runtime_source_pid) do
+        pid when is_pid(pid) -> send(pid, :counting_runtime_source_current)
+        _ -> :ok
+      end
+
+      {:ok,
+       %{
+         config: %{"tracker" => %{}},
+         prompt: "Prompt from counting runtime source",
+         prompt_template: "Prompt from counting runtime source"
+       }}
+    end
+  end
+
   setup do
     linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
 
@@ -85,6 +106,24 @@ defmodule SymphonyElixir.ExtensionsTest do
         Application.delete_env(:symphony_elixir, :linear_client_module)
       else
         Application.put_env(:symphony_elixir, :linear_client_module, linear_client_module)
+      end
+    end)
+
+    :ok
+  end
+
+  setup do
+    runtime_source_module = Application.get_env(:symphony_elixir, :runtime_source_module)
+
+    on_exit(fn ->
+      if is_nil(runtime_source_module) do
+        Application.delete_env(:symphony_elixir, :runtime_source_module)
+      else
+        Application.put_env(:symphony_elixir, :runtime_source_module, runtime_source_module)
+      end
+
+      if Process.whereis(SymphonyElixir.RuntimeSourceStore) do
+        _ = SymphonyElixir.RuntimeSourceStore.force_reload()
       end
     end)
 
@@ -157,6 +196,54 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert {:ok, %{prompt: "Recovered runtime prompt"}} =
              SymphonyElixir.RuntimeSource.current()
+  end
+
+  test "runtime source store serves cached runtime on current reads" do
+    runtime_store = SymphonyElixir.RuntimeSourceStore
+
+    Application.put_env(:symphony_elixir, :runtime_source_module, CountingRuntimeSource)
+    Application.put_env(:symphony_elixir, :counting_runtime_source_pid, self())
+
+    on_exit(fn ->
+      Application.delete_env(:symphony_elixir, :counting_runtime_source_pid)
+    end)
+
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, runtime_store)
+    assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, runtime_store)
+    assert_receive :counting_runtime_source_current, 1_000
+
+    assert {:ok, %{prompt: "Prompt from counting runtime source"}} = runtime_store.current()
+    refute_receive :counting_runtime_source_current, 100
+
+    assert :ok = runtime_store.force_reload()
+    assert_receive :counting_runtime_source_current, 1_000
+  end
+
+  test "tracker adapters accept tracker issue structs when deriving dispatch targets" do
+    write_workflow_file!(RuntimeConfig.path(),
+      tracker_kind: "github",
+      tracker_ready_label: "status:ready",
+      tracker_active_states: ["status:ready", "status:in-progress"]
+    )
+
+    assert GitHubAdapter.dispatch_target_state(%TrackerIssue{state: "status:ready"}) ==
+             "status:in-progress"
+
+    write_workflow_file!(RuntimeConfig.path(),
+      tracker_kind: "memory",
+      tracker_ready_label: "Todo",
+      tracker_active_states: ["Todo", "In Progress"]
+    )
+
+    assert Memory.dispatch_target_state(%TrackerIssue{state: "Todo"}) == "In Progress"
+
+    write_workflow_file!(RuntimeConfig.path(),
+      tracker_kind: "linear",
+      tracker_ready_label: "Todo",
+      tracker_active_states: ["Todo", "In Progress"]
+    )
+
+    assert Adapter.dispatch_target_state(%TrackerIssue{state: "Todo"}) == "In Progress"
   end
 
   test "workflow store start_link and poll callback cover missing-file error paths" do

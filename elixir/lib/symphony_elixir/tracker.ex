@@ -15,7 +15,7 @@ defmodule SymphonyElixir.Tracker do
   @callback update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
   @callback active_states() :: [String.t()]
   @callback terminal_states() :: [String.t()]
-  @callback dispatch_target_state(String.t() | nil) :: String.t() | nil
+  @callback dispatch_target_state(term()) :: String.t() | nil
   @callback initial_dispatch_transition_name() :: String.t() | nil
   @callback reconcile_watch_states(
               (String.t(), String.t() -> term()),
@@ -57,9 +57,9 @@ defmodule SymphonyElixir.Tracker do
     adapter().terminal_states()
   end
 
-  @spec dispatch_target_state(String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(issue_state) do
-    adapter().dispatch_target_state(issue_state)
+  @spec dispatch_target_state(term()) :: String.t() | nil
+  def dispatch_target_state(issue_or_state) do
+    adapter().dispatch_target_state(issue_or_state)
   end
 
   @spec initial_dispatch_transition_name() :: String.t() | nil

@@ -49,7 +49,9 @@ defmodule SymphonyElixir.GitHub.Adapter do
   @spec terminal_states() :: [String.t()]
   def terminal_states, do: Config.settings!().tracker.terminal_states || []
 
-  @spec dispatch_target_state(String.t() | nil) :: String.t() | nil
+  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%TrackerIssue{state: issue_state}), do: dispatch_target_state(issue_state)
+
   def dispatch_target_state(issue_state) do
     normalized_issue_state = normalize_state(issue_state)
     ready_state = normalize_state(Config.settings!().tracker.ready_label)

@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Local.Adapter do
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.Local.{Issue, ProjectConfig, Workflow}
+  alias SymphonyElixir.TrackerIssue
 
   @directory_states MapSet.new(["in-progress", "review", "done"])
 
@@ -120,7 +121,20 @@ defmodule SymphonyElixir.Local.Adapter do
   @spec terminal_states() :: [String.t()]
   def terminal_states, do: Config.settings!().tracker.terminal_states || []
 
-  @spec dispatch_target_state(String.t() | nil) :: String.t() | nil
+  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%TrackerIssue{state: issue_state, issue_path: issue_path}) do
+    normalized_state = normalize_storage_state(issue_state)
+
+    with {:ok, context} <- load_context(),
+         true <- is_binary(issue_path),
+         {:ok, %Workflow.Transition{to: target_state}} <-
+           Workflow.first_matching_transition(context.workflow, normalized_state, issue_path) do
+      Issue.tracker_state_from_storage_state(target_state)
+    else
+      _ -> dispatch_target_state(issue_state)
+    end
+  end
+
   def dispatch_target_state(issue_state) when is_binary(issue_state) do
     normalized_state = normalize_storage_state(issue_state)
 

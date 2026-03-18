@@ -665,6 +665,101 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert Adapter.active_states() == ["status:fallback-ready"]
   end
 
+  test "local adapter dispatch target uses the first matching transition for the current issue" do
+    issue_root = tmp_dir!("local-dispatch-target")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.join(issue_root, "repo")
+    slug = "conditional-dispatch"
+
+    File.mkdir_p!(project_dir)
+    script_path = Path.join(issue_root, "match-transition.sh")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - check: preflight
+        transitions:
+          - to: blocked
+            when:
+              - #{script_path} blocked
+          - to: in-progress
+            when:
+              - #{script_path} in-progress
+      blocked:
+        activities:
+          - check: poll-blocked
+            interval: 5m
+        transitions: []
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions: []
+      """
+    )
+
+    File.write!(
+      script_path,
+      """
+      #!/bin/sh
+      set -eu
+
+      target="$1"
+      issue_path="$2"
+
+      case "$target" in
+        blocked)
+          test -f "$issue_path.blocked"
+          ;;
+        in-progress)
+          test -f "$issue_path"
+          ;;
+      esac
+      """
+    )
+
+    File.chmod!(script_path, 0o755)
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    issue_path = Path.join(issue_root, "ready/#{slug}.md")
+
+    File.write!(
+      issue_path,
+      """
+      ---
+      identifier: GH-47
+      title: Conditional dispatch
+      status: ready
+      ---
+      body
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert {:ok, [issue]} = Adapter.fetch_issue_states_by_ids([slug])
+    assert Adapter.dispatch_target_state(issue) == "status:in-progress"
+  end
+
   test "local issue helpers cover missing files and frontmatter fallbacks" do
     issue_root = tmp_dir!("local-issue-helper-coverage")
     project_dir = Path.expand("..", File.cwd!())
