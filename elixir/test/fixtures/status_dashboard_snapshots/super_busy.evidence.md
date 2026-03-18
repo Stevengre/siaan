@@ -9,10 +9,10 @@
 │ Next refresh: n/a
 ├─ Running
 │
-│   ID       STAGE          PID      AGE / TURN   TOKENS     ISSUE/PHYS             EVENT
+│   ID       STAGE          PID      AGE / TURN   TOKENS     ISSUE/PHYS             EVENT                          
 │   ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
-│ ● MT-101   running        4242     13m 5s / 11     120,450 n/a/n/a                turn completed (completed)
-│ ● MT-102   running        5252     6m 52s / 4       89,200 n/a/n/a                mix test --cover
+│ ● MT-101   running        4242     13m 5s / 11     120,450 n/a/n/a                turn completed (completed)     
+│ ● MT-102   running        5252     6m 52s / 4       89,200 n/a/n/a                mix test --cover               
 │
 ├─ Backoff queue
 │

@@ -9,7 +9,7 @@
 │ Next refresh: n/a
 ├─ Running
 │
-│   ID       STAGE          PID      AGE / TURN   TOKENS     ISSUE/PHYS             EVENT
+│   ID       STAGE          PID      AGE / TURN   TOKENS     ISSUE/PHYS             EVENT                          
 │   ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 │ ● MT-777   running        4242     1m 15s / 7        3,200 n/a/n/a                thread token usage updated (...
 │
