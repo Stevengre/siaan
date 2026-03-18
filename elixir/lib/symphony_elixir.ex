@@ -28,6 +28,7 @@ defmodule SymphonyElixir.Application do
       {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
       SymphonyElixir.RuntimeSourceStore,
       SymphonyElixir.RuntimeConfigStore,
+      {DynamicSupervisor, strategy: :one_for_one, name: SymphonyElixir.AgentRunnerSupervisor},
       SymphonyElixir.WorkflowStore,
       SymphonyElixir.Orchestrator,
       SymphonyElixir.HttpServer,

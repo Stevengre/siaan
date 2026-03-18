@@ -1392,6 +1392,34 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.worker_slots_available_for_test(state, isolated_issue) == true
   end
 
+  test "worker_slots_available_for_test blocks reusable runners on full worker hosts" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_hosts: ["worker-a", "worker-b"],
+      worker_max_concurrent_agents_per_host: 1
+    )
+
+    issue = %Issue{id: "reusable-issue", identifier: "GH-44"}
+
+    state = %Orchestrator.State{
+      running: %{
+        "busy-issue" => %{
+          busy: true,
+          worker_host: "worker-a",
+          issue: %Issue{id: "busy-issue", identifier: "GH-99"}
+        },
+        issue.id => %{
+          pid: self(),
+          busy: false,
+          persistent_runner: true,
+          worker_host: "worker-a",
+          issue: issue
+        }
+      }
+    }
+
+    assert Orchestrator.worker_slots_available_for_test(state, issue, "worker-a") == false
+  end
+
   defp assert_due_offset_between(due_at_ms, earliest_ms, latest_ms, delay_ms) do
     assert due_at_ms >= earliest_ms + delay_ms
     assert due_at_ms <= latest_ms + delay_ms
@@ -1482,7 +1510,6 @@ defmodule SymphonyElixir.CoreTest do
 
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
-
     write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
 
     created_at = DateTime.from_naive!(~N[2026-02-26 18:06:48], "Etc/UTC")
@@ -1985,6 +2012,334 @@ defmodule SymphonyElixir.CoreTest do
       assert Enum.at(turn_texts, 1) =~ "continuation turn #2 of 3"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner sends fresh-session continuation guidance on review re-entry" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-review-reuse-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+      run_id="$(date +%s%N)-$$"
+      printf 'RUN:%s\\n' "$run_id" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-review-reuse"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-review-reuse"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 3
+      )
+
+      state_fetcher = fn [_issue_id] ->
+        {:ok,
+         [
+           %Issue{
+             id: "issue-review-reuse",
+             identifier: "MT-248",
+             title: "Resume review re-entry",
+             description: "Keep prior thread context",
+             state: "Done"
+           }
+         ]}
+      end
+
+      issue = %Issue{
+        id: "issue-review-reuse",
+        identifier: "MT-248",
+        title: "Resume review re-entry",
+        description: "Keep prior thread context",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248",
+        labels: []
+      }
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 nil,
+                 issue_state_fetcher: state_fetcher,
+                 issue_turn_count: 6
+               )
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+
+      assert length(Enum.filter(lines, &String.starts_with?(&1, "RUN:"))) == 1
+      assert Enum.any?(lines, &String.contains?(&1, "\"method\":\"thread/start\""))
+
+      turn_texts =
+        lines
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&String.trim_leading(&1, "JSON:"))
+        |> Enum.map(&Jason.decode!/1)
+        |> Enum.filter(&(&1["method"] == "turn/start"))
+        |> Enum.map(fn payload ->
+          get_in(payload, ["params", "input"])
+          |> Enum.map_join("\n", &Map.get(&1, "text", ""))
+        end)
+
+      assert length(turn_texts) == 1
+      assert Enum.at(turn_texts, 0) =~ "You are an agent for this repository."
+      assert Enum.at(turn_texts, 0) =~ "fresh physical Codex session for an existing issue session"
+      assert Enum.at(turn_texts, 0) =~ "Previous issue-session turns completed: 6"
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "persistent agent runner reuses the same physical Codex session across dispatches" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-persistent-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+      printf 'RUN\\n' >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-persistent"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-persistent-1"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-persistent-2"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 1
+      )
+
+      issue = %Issue{
+        id: "issue-persistent-runner",
+        identifier: "MT-248A",
+        title: "Reuse persistent session",
+        description: "Keep the same physical session across dispatches",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248A",
+        labels: []
+      }
+
+      done_fetcher = fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
+
+      assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+      assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
+
+      assert Enum.any?(
+               DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
+               fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
+             )
+
+      AgentRunner.dispatch_turn(pid, issue, issue_state_fetcher: done_fetcher, max_turns: 1)
+
+      assert_receive(
+        {:codex_worker_update, "issue-persistent-runner",
+         %{
+           event: :session_started,
+           thread_id: "thread-persistent",
+           physical_session_reuse_decision: "started_new_physical_session"
+         }}
+      )
+
+      assert_receive {:agent_runner_dispatch_complete, "issue-persistent-runner"}
+
+      AgentRunner.dispatch_turn(
+        pid,
+        issue,
+        issue_state_fetcher: done_fetcher,
+        max_turns: 1,
+        issue_turn_count: 1,
+        reuse_physical_session: true
+      )
+
+      assert_receive(
+        {:codex_worker_update, "issue-persistent-runner",
+         %{
+           event: :session_started,
+           thread_id: "thread-persistent",
+           physical_session_reuse_decision: "reused_physical_session"
+         }}
+      )
+
+      assert_receive {:agent_runner_dispatch_complete, "issue-persistent-runner"}
+
+      AgentRunner.stop(pid)
+      refute Process.alive?(pid)
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      assert Enum.count(lines, &String.contains?(&1, "\"method\":\"thread/start\"")) == 1
+
+      turn_texts =
+        lines
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&String.trim_leading(&1, "JSON:"))
+        |> Enum.map(&Jason.decode!/1)
+        |> Enum.filter(&(&1["method"] == "turn/start"))
+        |> Enum.map(fn payload ->
+          get_in(payload, ["params", "input"])
+          |> Enum.map_join("\n", &Map.get(&1, "text", ""))
+        end)
+
+      assert length(turn_texts) == 2
+      assert Enum.at(turn_texts, 1) =~ "same physical Codex session/thread"
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "orchestrator restart terminates lingering persistent agent runners" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-elixir-agent-runner-restart-#{System.unique_integer([:positive])}")
+    workspace_root = Path.join(test_root, "workspaces")
+    codex_binary = Path.join(test_root, "fake-codex")
+
+    try do
+      File.mkdir_p!(workspace_root)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+
+      while IFS= read -r _line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-restart"}}}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 1
+      )
+
+      issue = %Issue{
+        id: "issue-persistent-runner-restart",
+        identifier: "MT-248B",
+        title: "Restart cleanup",
+        description: "Ensure persistent runners do not survive orchestrator restarts",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248B",
+        labels: []
+      }
+
+      assert Process.whereis(SymphonyElixir.AgentRunnerSupervisor) |> is_pid()
+      assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+      assert Process.alive?(pid)
+
+      assert Enum.any?(
+               DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor),
+               fn {_id, child_pid, :worker, [SymphonyElixir.AgentRunner]} -> child_pid == pid end
+             )
+
+      orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+      assert is_pid(orchestrator_pid)
+      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+      assert {:ok, restarted_orchestrator_pid} =
+               Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+      assert is_pid(restarted_orchestrator_pid)
+      assert restarted_orchestrator_pid != orchestrator_pid
+      refute Process.alive?(pid)
+      assert DynamicSupervisor.which_children(SymphonyElixir.AgentRunnerSupervisor) == []
+    after
       File.rm_rf(test_root)
     end
   end

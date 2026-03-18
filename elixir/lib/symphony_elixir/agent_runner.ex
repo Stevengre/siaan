@@ -3,11 +3,25 @@ defmodule SymphonyElixir.AgentRunner do
   Executes a single tracker issue in its workspace with Codex.
   """
 
+  use GenServer
   require Logger
   alias SymphonyElixir.Codex.AppServer
   alias SymphonyElixir.{Config, PromptBuilder, Tracker, TrackerIssue, Workspace}
 
   @type worker_host :: String.t() | nil
+
+  defmodule State do
+    @moduledoc false
+
+    defstruct [
+      :issue,
+      :workspace,
+      :worker_host,
+      :codex_update_recipient,
+      :session,
+      base_opts: []
+    ]
+  end
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
@@ -46,6 +60,76 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_on_worker_hosts(_issue, _codex_update_recipient, _opts, []), do: {:error, :no_worker_hosts_available}
 
+  @spec start_link(map(), pid() | nil, keyword()) :: GenServer.on_start()
+  def start_link(issue, codex_update_recipient \\ nil, opts \\ []) do
+    GenServer.start_link(__MODULE__, {issue, codex_update_recipient, opts})
+  end
+
+  @spec start(map(), pid() | nil, keyword()) :: GenServer.on_start()
+  def start(issue, codex_update_recipient \\ nil, opts \\ []) do
+    DynamicSupervisor.start_child(
+      SymphonyElixir.AgentRunnerSupervisor,
+      {__MODULE__, {issue, codex_update_recipient, opts}}
+    )
+  end
+
+  @spec dispatch_turn(pid(), map(), keyword()) :: :ok
+  def dispatch_turn(pid, issue, opts \\ []) when is_pid(pid) do
+    GenServer.cast(pid, {:dispatch_turn, issue, opts})
+  end
+
+  @spec stop(pid()) :: :ok
+  def stop(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      try do
+        GenServer.stop(pid, :normal)
+      catch
+        :exit, _reason -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @spec child_spec({map(), pid() | nil, keyword()}) :: Supervisor.child_spec()
+  def child_spec({issue, codex_update_recipient, opts}) do
+    %{
+      id: {__MODULE__, make_ref()},
+      start: {__MODULE__, :start_link, [issue, codex_update_recipient, opts]},
+      restart: :temporary,
+      type: :worker
+    }
+  end
+
+  @impl true
+  def init({issue, codex_update_recipient, opts}) do
+    case start_persistent_state(issue, codex_update_recipient, opts) do
+      {:ok, state} -> {:ok, state}
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def handle_cast({:dispatch_turn, issue, opts}, %State{} = state) do
+    case run_persistent_dispatch(state, issue, opts) do
+      {:ok, updated_state} ->
+        send_dispatch_completed(state.codex_update_recipient, issue)
+        {:noreply, updated_state}
+
+      {:error, reason} ->
+        Logger.error("Persistent agent dispatch failed for #{issue_context(issue)}: #{inspect(reason)}")
+        {:stop, reason, state}
+    end
+  end
+
+  @impl true
+  def terminate(_reason, %State{session: session}) when is_map(session) do
+    AppServer.stop_session(session)
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
@@ -65,6 +149,110 @@ defmodule SymphonyElixir.AgentRunner do
         {:error, reason}
     end
   end
+
+  defp start_persistent_state(issue, codex_update_recipient, opts) do
+    worker_hosts =
+      candidate_worker_hosts(
+        issue,
+        Keyword.get(opts, :worker_host),
+        Config.settings!().worker.ssh_hosts
+      )
+
+    start_persistent_on_worker_hosts(issue, codex_update_recipient, opts, worker_hosts)
+  end
+
+  defp start_persistent_on_worker_hosts(issue, codex_update_recipient, opts, [worker_host | rest]) do
+    case start_persistent_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
+      {:ok, state} ->
+        {:ok, state}
+
+      {:error, reason} when rest != [] ->
+        Logger.warning("Persistent agent init failed for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)} reason=#{inspect(reason)}; trying next worker host")
+        start_persistent_on_worker_hosts(issue, codex_update_recipient, opts, rest)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp start_persistent_on_worker_hosts(_issue, _codex_update_recipient, _opts, []),
+    do: {:error, :no_worker_hosts_available}
+
+  defp start_persistent_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
+    case Workspace.create_for_issue(issue, worker_host) do
+      {:ok, workspace} ->
+        send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
+        allow_external_workspace = Map.get(issue, :project_runtime) in ["local", :local]
+        writable_roots = local_runtime_writable_roots(issue, workspace)
+        codex_command = Keyword.get(opts, :codex_command)
+
+        with {:ok, session} <-
+               AppServer.start_session(
+                 workspace,
+                 worker_host: worker_host,
+                 codex_command: codex_command,
+                 allow_external_workspace: allow_external_workspace,
+                 writable_roots: writable_roots
+               ) do
+          {:ok,
+           %State{
+             issue: issue,
+             workspace: workspace,
+             worker_host: worker_host,
+             codex_update_recipient: codex_update_recipient,
+             session: session,
+             base_opts: opts
+           }}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp run_persistent_dispatch(%State{} = state, issue, opts) do
+    run_opts = Keyword.merge(state.base_opts, opts)
+    issue_state_fetcher = Keyword.get(run_opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+    max_turns = Keyword.get(run_opts, :max_turns, Config.settings!().agent.max_turns)
+    issue_turn_count = Keyword.get(run_opts, :issue_turn_count, 0)
+
+    session =
+      if Keyword.get(run_opts, :reuse_physical_session, false) do
+        AppServer.mark_physical_session_reuse(state.session)
+      else
+        state.session
+      end
+
+    try do
+      with :ok <- Workspace.run_before_run_hook(state.workspace, issue, state.worker_host),
+           {:ok, updated_session} <-
+             do_run_codex_turns(
+               session,
+               issue,
+               %{
+                 workspace: state.workspace,
+                 codex_update_recipient: state.codex_update_recipient,
+                 opts: run_opts,
+                 issue_state_fetcher: issue_state_fetcher,
+                 max_turns: max_turns,
+                 issue_turn_count: issue_turn_count
+               },
+               1
+             ) do
+        {:ok, %{state | issue: issue, session: updated_session}}
+      end
+    after
+      Workspace.run_after_run_hook(state.workspace, issue, state.worker_host)
+    end
+  end
+
+  defp send_dispatch_completed(recipient, %TrackerIssue{id: issue_id})
+       when is_pid(recipient) and is_binary(issue_id) do
+    send(recipient, {:agent_runner_dispatch_complete, issue_id})
+    :ok
+  end
+
+  defp send_dispatch_completed(_recipient, _issue), do: :ok
 
   defp codex_message_handler(recipient, issue) do
     fn message ->
@@ -105,7 +293,8 @@ defmodule SymphonyElixir.AgentRunner do
     writable_roots = local_runtime_writable_roots(issue, workspace)
 
     with {:ok, session} <-
-           AppServer.start_session(workspace,
+           AppServer.start_session(
+             workspace,
              worker_host: worker_host,
              codex_command: codex_command,
              allow_external_workspace: allow_external_workspace,
@@ -121,7 +310,10 @@ defmodule SymphonyElixir.AgentRunner do
           issue_turn_count: issue_turn_count
         }
 
-        do_run_codex_turns(session, issue, run_context, 1)
+        case do_run_codex_turns(session, issue, run_context, 1) do
+          {:ok, _updated_session} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
       after
         AppServer.stop_session(session)
       end
@@ -130,12 +322,13 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp do_run_codex_turns(app_session, issue, run_context, turn_number) do
     prompt =
-      build_turn_prompt(
+      build_turn_prompt_for_run(
         issue,
         run_context.opts,
         turn_number,
         run_context.max_turns,
-        run_context.issue_turn_count
+        run_context.issue_turn_count,
+        app_session
       )
 
     with {:ok, turn_session} <-
@@ -151,15 +344,15 @@ defmodule SymphonyElixir.AgentRunner do
         {:continue, refreshed_issue} when turn_number < run_context.max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{run_context.max_turns}")
 
-          do_run_codex_turns(app_session, refreshed_issue, run_context, turn_number + 1)
+          do_run_codex_turns(turn_session.app_session, refreshed_issue, run_context, turn_number + 1)
 
         {:continue, refreshed_issue} ->
           Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
-          :ok
+          {:ok, turn_session.app_session}
 
         {:done, _refreshed_issue} ->
-          :ok
+          {:ok, turn_session.app_session}
 
         {:error, reason} ->
           {:error, reason}
@@ -182,7 +375,25 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp build_turn_prompt(_issue, _opts, turn_number, max_turns, issue_turn_count) do
+  defp build_turn_prompt_for_run(issue, opts, 1, _max_turns, 0, _app_session) do
+    build_turn_prompt(issue, opts, 1, 0, 0)
+  end
+
+  defp build_turn_prompt_for_run(_issue, _opts, 1, max_turns, issue_turn_count, %{
+         physical_session_reuse_decision: "reused_physical_session"
+       }) do
+    build_reused_physical_session_prompt(issue_turn_count, max_turns)
+  end
+
+  defp build_turn_prompt_for_run(issue, opts, 1, max_turns, issue_turn_count, _app_session) do
+    build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count)
+  end
+
+  defp build_turn_prompt_for_run(_issue, _opts, turn_number, max_turns, issue_turn_count, _app_session) do
+    build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count)
+  end
+
+  defp build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count) do
     """
     Continuation guidance:
 
@@ -195,7 +406,20 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp continue_with_issue?(%TrackerIssue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
+  defp build_reused_physical_session_prompt(issue_turn_count, max_turns) do
+    """
+    Continuation guidance:
+
+    - The issue returned to active work on the same physical Codex session/thread.
+    - This is continuation turn #1 of #{max_turns} for the current agent run.
+    - This corresponds to issue-session turn ##{issue_turn_count + 1}.
+    - Resume from the current workspace and workpad state instead of restarting from scratch.
+    - The original task instructions and prior thread context are already present in this thread, so do not restate them before acting.
+    """
+  end
+
+  defp continue_with_issue?(%TrackerIssue{id: issue_id} = issue, issue_state_fetcher)
+       when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
       {:ok, [%TrackerIssue{} = refreshed_issue | _]} ->
         if active_issue_state?(refreshed_issue.state) do

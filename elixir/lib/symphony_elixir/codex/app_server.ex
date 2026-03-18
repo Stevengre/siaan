@@ -21,6 +21,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
           thread_id: String.t(),
+          physical_session_reuse_decision: String.t(),
+          physical_session_fallback_reason: String.t() | nil,
           tracker_kind: String.t() | nil,
           workspace: Path.t(),
           worker_host: String.t() | nil
@@ -50,7 +52,13 @@ defmodule SymphonyElixir.Codex.AppServer do
       tracker_kind = Config.settings!().tracker.kind
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
-           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, tracker_kind) do
+           {:ok, thread_state} <-
+             do_start_session(
+               port,
+               expanded_workspace,
+               session_policies,
+               tracker_kind
+             ) do
         {:ok,
          %{
            port: port,
@@ -59,7 +67,9 @@ defmodule SymphonyElixir.Codex.AppServer do
            auto_approve_requests: session_policies.approval_policy == "never",
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
-           thread_id: thread_id,
+           thread_id: thread_state.thread_id,
+           physical_session_reuse_decision: thread_state.physical_session_reuse_decision,
+           physical_session_fallback_reason: thread_state.physical_session_fallback_reason,
            tracker_kind: tracker_kind,
            workspace: expanded_workspace,
            worker_host: worker_host
@@ -80,10 +90,10 @@ defmodule SymphonyElixir.Codex.AppServer do
           approval_policy: approval_policy,
           auto_approve_requests: auto_approve_requests,
           turn_sandbox_policy: turn_sandbox_policy,
-          thread_id: thread_id,
           tracker_kind: tracker_kind,
+          thread_sandbox: thread_sandbox,
           workspace: workspace
-        },
+        } = session,
         prompt,
         issue,
         opts \\ []
@@ -95,9 +105,18 @@ defmodule SymphonyElixir.Codex.AppServer do
         DynamicTool.execute(tool, arguments, tracker_kind: tracker_kind)
       end)
 
-    case start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
-      {:ok, turn_id} ->
-        session_id = "#{thread_id}-#{turn_id}"
+    turn_context = %{
+      issue: issue,
+      workspace: workspace,
+      approval_policy: approval_policy,
+      thread_sandbox: thread_sandbox,
+      turn_sandbox_policy: turn_sandbox_policy,
+      tracker_kind: tracker_kind
+    }
+
+    case start_turn_for_session(session, prompt, turn_context) do
+      {:ok, updated_session, turn_id} ->
+        session_id = "#{updated_session.thread_id}-#{turn_id}"
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
 
         emit_message(
@@ -105,8 +124,10 @@ defmodule SymphonyElixir.Codex.AppServer do
           :session_started,
           %{
             session_id: session_id,
-            thread_id: thread_id,
-            turn_id: turn_id
+            thread_id: updated_session.thread_id,
+            turn_id: turn_id,
+            physical_session_reuse_decision: updated_session.physical_session_reuse_decision,
+            physical_session_fallback_reason: updated_session.physical_session_fallback_reason
           },
           metadata
         )
@@ -117,10 +138,13 @@ defmodule SymphonyElixir.Codex.AppServer do
 
             {:ok,
              %{
+               app_session: updated_session,
                result: result,
                session_id: session_id,
-               thread_id: thread_id,
-               turn_id: turn_id
+               thread_id: updated_session.thread_id,
+               turn_id: turn_id,
+               physical_session_reuse_decision: updated_session.physical_session_reuse_decision,
+               physical_session_fallback_reason: updated_session.physical_session_fallback_reason
              }}
 
           {:error, reason} ->
@@ -149,6 +173,13 @@ defmodule SymphonyElixir.Codex.AppServer do
   @spec stop_session(session()) :: :ok
   def stop_session(%{port: port}) when is_port(port) do
     stop_port(port)
+  end
+
+  @spec mark_physical_session_reuse(session()) :: session()
+  def mark_physical_session_reuse(session) when is_map(session) do
+    session
+    |> Map.put(:physical_session_reuse_decision, "reused_physical_session")
+    |> Map.put(:physical_session_fallback_reason, nil)
   end
 
   defp validate_workspace_cwd(workspace, worker_host, allow_external_workspace)
@@ -285,8 +316,22 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp do_start_session(port, workspace, session_policies, tracker_kind) do
     case send_initialize(port) do
-      :ok -> start_thread(port, workspace, session_policies, tracker_kind)
-      {:error, reason} -> {:error, reason}
+      :ok ->
+        initialize_thread_state(port, workspace, session_policies, tracker_kind)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp initialize_thread_state(port, workspace, session_policies, tracker_kind) do
+    with {:ok, thread_id} <- start_thread(port, workspace, session_policies, tracker_kind) do
+      {:ok,
+       %{
+         thread_id: thread_id,
+         physical_session_reuse_decision: "started_new_physical_session",
+         physical_session_fallback_reason: nil
+       }}
     end
   end
 
@@ -319,10 +364,19 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
+  defp start_turn(
+         port,
+         thread_id,
+         prompt,
+         issue,
+         workspace,
+         approval_policy,
+         turn_sandbox_policy,
+         request_id \\ @turn_start_id
+       ) do
     send_message(port, %{
       "method" => "turn/start",
-      "id" => @turn_start_id,
+      "id" => request_id,
       "params" => %{
         "threadId" => thread_id,
         "input" => [
@@ -338,9 +392,27 @@ defmodule SymphonyElixir.Codex.AppServer do
       }
     })
 
-    case await_response(port, @turn_start_id) do
+    case await_response(port, request_id) do
       {:ok, %{"turn" => %{"id" => turn_id}}} -> {:ok, turn_id}
       other -> other
+    end
+  end
+
+  defp start_turn_for_session(%{port: port, thread_id: thread_id} = session, prompt, context) do
+    case start_turn(
+           port,
+           thread_id,
+           prompt,
+           context.issue,
+           context.workspace,
+           context.approval_policy,
+           context.turn_sandbox_policy
+         ) do
+      {:ok, turn_id} ->
+        {:ok, session, turn_id}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
