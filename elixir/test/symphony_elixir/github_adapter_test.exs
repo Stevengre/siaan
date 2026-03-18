@@ -89,6 +89,31 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     def update_issue_state(_issue_id, _state_name), do: {:error, :boom}
   end
 
+  defmodule WaitingWatchGitHubClient do
+    def fetch_issues_by_states(states) do
+      send(self(), {:fetch_issues_by_states_called, states})
+
+      {:ok,
+       [
+         %GitHubIssue{
+           id: "47",
+           number: 47,
+           title: "Waiting review issue",
+           body: "Waiting only on GitHub-side merge readiness",
+           state: "status:review",
+           url: "https://github.com/acme/repo/issues/47",
+           labels: ["status:review", "siaan"],
+           assignees: ["octocat"]
+         }
+       ]}
+    end
+
+    def check_auto_merge_readiness("47") do
+      send(self(), {:check_auto_merge_readiness_called, "47"})
+      {:ok, :needs_agent, ["mergeability pending", "no PR approval"]}
+    end
+  end
+
   setup do
     previous_module = Application.get_env(:symphony_elixir, :github_client_module)
 
@@ -168,5 +193,36 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     assert {:ok, [:state_refresh]} = Adapter.fetch_issue_states_by_ids(["7"])
     assert {:error, :boom} = Adapter.create_comment("7", "hello")
     assert {:error, :boom} = Adapter.update_issue_state("7", "status:review")
+  end
+
+  test "reconcile_watch_states leaves review issues untouched for waiting-only blockers" do
+    Application.put_env(:symphony_elixir, :github_client_module, WaitingWatchGitHubClient)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_repo_owner: "acme",
+      tracker_repo_name: "repo",
+      tracker_api_token: "gh-token",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_watch_states: ["status:review"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert :ok =
+             Adapter.reconcile_watch_states(
+               fn issue_id, state_name ->
+                 send(self(), {:update_issue_state_called, issue_id, state_name})
+                 :ok
+               end,
+               fn issue_id, identifier, transition_name ->
+                 send(self(), {:mark_pending_transition_called, issue_id, identifier, transition_name})
+                 :ok
+               end
+             )
+
+    assert_receive {:fetch_issues_by_states_called, ["status:review"]}
+    assert_receive {:check_auto_merge_readiness_called, "47"}
+    refute_receive {:update_issue_state_called, _, _}
+    refute_receive {:mark_pending_transition_called, _, _, _}
   end
 end
