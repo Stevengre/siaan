@@ -2145,6 +2145,99 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "persistent agent runner ignores idle app-server startup notifications" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-idle-port-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+
+      while IFS= read -r _line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-idle-port"}}}'
+            printf '%s\\n' '{"method":"thread/started","params":{"threadId":"thread-idle-port"}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-idle-port"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 1
+      )
+
+      issue = %Issue{
+        id: "issue-idle-port",
+        identifier: "MT-248A",
+        title: "Ignore idle port notifications",
+        description: "Late startup notifications should not leak as unexpected messages",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248A",
+        labels: []
+      }
+
+      done_fetcher = fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
+
+      log =
+        capture_log(fn ->
+          assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+          Process.sleep(150)
+
+          AgentRunner.dispatch_turn(pid, issue, issue_state_fetcher: done_fetcher, max_turns: 1)
+
+          assert_receive(
+            {:codex_worker_update, "issue-idle-port",
+             %{
+               event: :session_started,
+               thread_id: "thread-idle-port",
+               physical_session_reuse_decision: "started_new_physical_session"
+             }}
+          )
+
+          assert_receive {:agent_runner_dispatch_complete, "issue-idle-port"}
+
+          AgentRunner.stop(pid)
+          refute Process.alive?(pid)
+        end)
+
+      refute log =~ "received unexpected message in handle_info/2"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "orchestrator restart terminates lingering persistent agent runners" do
     test_root = Path.join(System.tmp_dir!(), "symphony-elixir-agent-runner-restart-#{System.unique_integer([:positive])}")
     workspace_root = Path.join(test_root, "workspaces")
