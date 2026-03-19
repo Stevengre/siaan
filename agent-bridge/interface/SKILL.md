@@ -1,3 +1,11 @@
+---
+name: agent-bridge-interface
+description: >
+  Abstract behaviour contract for agent process bridges. Defines session
+  lifecycle, turn execution, and streamed message interfaces for orchestrator
+  integrations.
+---
+
 # Agent Bridge Interface
 
 Defines the agent bridge contract shared by orchestrator-facing bridge implementations.

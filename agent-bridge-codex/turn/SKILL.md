@@ -1,3 +1,10 @@
+---
+name: agent-bridge-codex-turn
+description: >
+  Codex bridge turn execution wrapper covering turn startup, streamed message
+  handling, completion waiting, timeout behavior, and failure propagation.
+---
+
 # Codex Turn Bridge
 
 Owns turn execution for the Codex bridge.

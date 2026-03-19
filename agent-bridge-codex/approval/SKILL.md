@@ -1,3 +1,10 @@
+---
+name: agent-bridge-codex-approval
+description: >
+  Codex bridge approval and dynamic-tool wrapper covering approval policy
+  evaluation, auto-approval, and supported dynamic tool dispatch behavior.
+---
+
 # Codex Approval Bridge
 
 Owns approval and dynamic-tool handling for Codex turn streams.
