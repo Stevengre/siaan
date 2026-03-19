@@ -53,7 +53,33 @@ extract_state_type() {
       return tolower(value)
     }
 
-    function print_inline_state_type(line, candidate) {
+    function normalize_scalar_value(value) {
+      sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
+      gsub(/^["'"'"']/, "", value)
+      gsub(/["'"'"']$/, "", value)
+      return tolower(value)
+    }
+
+    function section_name(line, section) {
+      section = line
+      sub(/^[[:space:]]*/, "", section)
+      sub(/:.*/, "", section)
+      return section
+    }
+
+    function capture_type(section, value) {
+      value = normalize_scalar_value(value)
+
+      if (section == "state" && state_type == "") {
+        state_type = value
+      }
+
+      if (section == "tracker" && tracker_type == "") {
+        tracker_type = value
+      }
+    }
+
+    function capture_inline_state_type(section, line, candidate) {
       candidate = line
 
       if (!match(candidate, /(type|kind):[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
@@ -61,13 +87,15 @@ extract_state_type() {
       }
 
       candidate = substr(candidate, RSTART, RLENGTH)
-      print normalize_type_value(candidate)
+      capture_type(section, normalize_type_value(candidate))
       return 1
     }
 
     BEGIN {
-      in_state = 0
-      state_indent = -1
+      current_section = ""
+      section_indent = -1
+      state_type = ""
+      tracker_type = ""
     }
 
     {
@@ -80,32 +108,41 @@ extract_state_type() {
     }
 
     /^[[:space:]]*(state|tracker):[[:space:]]*{/ {
-      if (print_inline_state_type($0)) {
-        exit
-      }
+      capture_inline_state_type(section_name($0), $0)
+      current_section = ""
+      section_indent = -1
 
       next
     }
 
     /^[[:space:]]*(state|tracker):[[:space:]]*$/ {
-      in_state = 1
-      state_indent = indent
+      current_section = section_name($0)
+      section_indent = indent
       next
     }
 
-    in_state {
-      if (indent <= state_indent) {
-        exit
+    current_section != "" {
+      if (indent <= section_indent) {
+        current_section = ""
+        section_indent = -1
       }
+    }
 
+    current_section != "" {
       if ($0 ~ /^[[:space:]]*(type|kind):[[:space:]]*/) {
         line = $0
         sub(/^[[:space:]]*(type|kind):[[:space:]]*/, "", line)
-        sub(/[[:space:]]*(#.*)?$/, "", line)
-        gsub(/^["'"'"']/, "", line)
-        gsub(/["'"'"']$/, "", line)
-        print tolower(line)
-        exit
+        capture_type(current_section, line)
+        current_section = ""
+        section_indent = -1
+      }
+    }
+
+    END {
+      if (state_type != "") {
+        print state_type
+      } else if (tracker_type != "") {
+        print tracker_type
       }
     }
   ' "$workflow_path"
