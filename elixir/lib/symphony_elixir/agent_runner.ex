@@ -6,8 +6,12 @@ defmodule SymphonyElixir.AgentRunner do
   use GenServer
   require Logger
   alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, PromptBuilder, StateSync, Workspace}
+  alias SymphonyElixir.Config
+  alias SymphonyElixir.PromptEngine.Continuation
+  alias SymphonyElixir.PromptEngine.Renderer
+  alias SymphonyElixir.StateSync
   alias SymphonyElixir.StateSync.Issue
+  alias SymphonyElixir.Workspace.Provisioner, as: Workspace
 
   @type worker_host :: String.t() | nil
 
@@ -379,62 +383,22 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp build_turn_prompt(issue, opts, 1, _max_turns, 0), do: PromptBuilder.build_prompt(issue, opts)
-
-  defp build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count) do
-    """
-    #{PromptBuilder.build_prompt(issue, opts)}
-
-    Ongoing issue-session guidance:
-
-    - This is a fresh physical Codex session for an existing issue session.
-    - Previous issue-session turns completed: #{issue_turn_count}.
-    - `agent.max_turns` still caps this physical agent run at #{max_turns} turns.
-    - Reuse the current workspace and workpad state instead of redoing completed investigation.
-    """
-  end
-
   defp build_turn_prompt_for_run(issue, opts, 1, _max_turns, 0, _app_session) do
-    build_turn_prompt(issue, opts, 1, 0, 0)
+    Continuation.build_turn_prompt(issue, opts, 1, 0, 0, %{}, Renderer)
   end
 
   defp build_turn_prompt_for_run(_issue, _opts, 1, max_turns, issue_turn_count, %{
          physical_session_reuse_decision: "reused_physical_session"
        }) do
-    build_reused_physical_session_prompt(issue_turn_count, max_turns)
+    Continuation.build_reused_physical_session_prompt(issue_turn_count, max_turns)
   end
 
   defp build_turn_prompt_for_run(issue, opts, 1, max_turns, issue_turn_count, _app_session) do
-    build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count)
+    Continuation.build_turn_prompt(issue, opts, 1, max_turns, issue_turn_count, %{}, Renderer)
   end
 
   defp build_turn_prompt_for_run(_issue, _opts, turn_number, max_turns, issue_turn_count, _app_session) do
-    build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count)
-  end
-
-  defp build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count) do
-    """
-    Continuation guidance:
-
-    - The previous Codex turn completed normally, but the tracker issue is still in an active state.
-    - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
-    - This corresponds to issue-session turn ##{issue_turn_count + turn_number}.
-    - Resume from the current workspace and workpad state instead of restarting from scratch.
-    - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
-    - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
-    """
-  end
-
-  defp build_reused_physical_session_prompt(issue_turn_count, max_turns) do
-    """
-    Continuation guidance:
-
-    - The issue returned to active work on the same physical Codex session/thread.
-    - This is continuation turn #1 of #{max_turns} for the current agent run.
-    - This corresponds to issue-session turn ##{issue_turn_count + 1}.
-    - Resume from the current workspace and workpad state instead of restarting from scratch.
-    - The original task instructions and prior thread context are already present in this thread, so do not restate them before acting.
-    """
+    Continuation.build_continuation_turn_prompt(turn_number, max_turns, issue_turn_count)
   end
 
   defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher)

@@ -39,6 +39,8 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.StateSync.Local.ProjectConfig,
           SymphonyElixir.StateSync.Local.Workflow,
           SymphonyElixir.PromptBuilder,
+          SymphonyElixir.PromptEngine.Continuation,
+          SymphonyElixir.PromptEngine.Renderer,
           SymphonyElixir.RuntimeConfig,
           SymphonyElixir.RuntimeConfigFile,
           SymphonyElixir.RuntimeConfigStore,
@@ -52,6 +54,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.SessionTracker.Persistence,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
+          SymphonyElixir.Workspace.Hooks,
+          SymphonyElixir.Workspace.Provisioner,
+          SymphonyElixir.Workspace.Provisioner.PathSafety,
           SymphonyElixirWeb.DashboardLive,
           SymphonyElixirWeb.Endpoint,
           SymphonyElixirWeb.ErrorHTML,
@@ -109,9 +114,9 @@ defmodule SymphonyElixir.MixProject do
     base_elixirc_paths() ++
       [
         "test/support",
-        Path.expand("../state-sync/test/lib", __DIR__),
-        Path.expand("../state-sync-github/test/lib", __DIR__),
-        Path.expand("../state-sync-local/test/lib", __DIR__)
+        external_elixir_path("../state-sync/test/lib"),
+        external_elixir_path("../state-sync-github/test/lib"),
+        external_elixir_path("../state-sync-local/test/lib")
       ]
   end
 
@@ -120,11 +125,19 @@ defmodule SymphonyElixir.MixProject do
   defp base_elixirc_paths do
     [
       "lib",
-      Path.expand("../state-sync/interface/lib", __DIR__),
-      Path.expand("../state-sync-github/adapter/lib", __DIR__),
-      Path.expand("../state-sync-github/merge-automation/lib", __DIR__),
-      Path.expand("../state-sync-local/adapter/lib", __DIR__)
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib"),
+      external_elixir_path("../state-sync/interface/lib"),
+      external_elixir_path("../state-sync-github/adapter/lib"),
+      external_elixir_path("../state-sync-github/merge-automation/lib"),
+      external_elixir_path("../state-sync-local/adapter/lib")
     ]
+  end
+
+  defp external_elixir_path(relative_path) when is_binary(relative_path) do
+    Path.expand(relative_path, __DIR__)
   end
 
   defp aliases do

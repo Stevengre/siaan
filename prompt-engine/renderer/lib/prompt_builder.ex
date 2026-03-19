@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.PromptBuilder do
+defmodule SymphonyElixir.PromptEngine.Renderer do
   @moduledoc """
   Builds agent prompts from tracker issue data.
   """
@@ -130,4 +130,12 @@ defmodule SymphonyElixir.PromptBuilder do
   end
 
   defp format_allowlist_values(values) when is_list(values), do: Enum.join(values, ", ")
+end
+
+defmodule SymphonyElixir.PromptBuilder do
+  @moduledoc false
+
+  alias SymphonyElixir.PromptEngine.Renderer
+
+  defdelegate build_prompt(issue, opts \\ []), to: Renderer
 end
