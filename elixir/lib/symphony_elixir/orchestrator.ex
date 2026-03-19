@@ -66,9 +66,13 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info({:worker_runtime_info, _issue_id, _runtime_info}, state), do: {:noreply, state}
 
   def handle_info({:codex_worker_update, issue_id, update}, state) do
-    state = Operations.handle_codex_update(state, issue_id, update)
-    Runtime.notify_dashboard()
-    {:noreply, state}
+    updated_state = Operations.handle_codex_update(state, issue_id, update)
+
+    if updated_state != state do
+      Runtime.notify_dashboard()
+    end
+
+    {:noreply, updated_state}
   end
 
   def handle_info({:agent_runner_dispatch_complete, issue_id}, state) do

@@ -1289,6 +1289,19 @@ defmodule SymphonyElixir.CoreTest do
              Orchestrator.handle_info({:DOWN, :not_a_ref, :process, self(), :normal}, state)
   end
 
+  test "ignored codex worker updates do not broadcast dashboard refreshes" do
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.subscribe()
+    state = %Orchestrator.State{running: %{}}
+
+    assert {:noreply, ^state} =
+             Orchestrator.handle_info(
+               {:codex_worker_update, "missing-issue", %{event: :notification, timestamp: DateTime.utc_now()}},
+               state
+             )
+
+    refute_receive :observability_updated, 50
+  end
+
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_hosts: ["worker-a", "worker-b"],
