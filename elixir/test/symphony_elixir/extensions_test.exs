@@ -278,16 +278,14 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive :poll, 1_100
 
     Workflow.set_workflow_file_path(manual_path)
-    File.rm!(manual_path)
+    assert File.rm(manual_path) in [:ok, {:error, :enoent}]
     assert {:noreply, removed_state} = WorkflowStore.handle_info(:poll, path_error_state)
     assert removed_state.workflow.prompt == "Manual workflow prompt"
     assert_receive :poll, 1_100
 
     Process.exit(manual_pid, :normal)
-    restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
-
-    assert match?({:ok, _pid}, restart_result) or
-             match?({:error, {:already_started, _pid}}, restart_result)
+    SymphonyElixir.TestSupport.ensure_workflow_store_running!()
+    assert Process.whereis(WorkflowStore)
 
     Workflow.set_workflow_file_path(existing_path)
     WorkflowStore.force_reload()
@@ -1032,13 +1030,6 @@ defmodule SymphonyElixir.ExtensionsTest do
   defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
 
   defp ensure_workflow_store_running do
-    if Process.whereis(WorkflowStore) do
-      :ok
-    else
-      case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-      end
-    end
+    SymphonyElixir.TestSupport.ensure_workflow_store_running!()
   end
 end
