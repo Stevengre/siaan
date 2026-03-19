@@ -1315,6 +1315,19 @@ defmodule SymphonyElixir.CoreTest do
     refute_receive :observability_updated, 50
   end
 
+  test "ignored dispatch completion updates do not broadcast dashboard refreshes" do
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.subscribe()
+    state = %Orchestrator.State{running: %{}}
+
+    assert {:noreply, ^state} =
+             Orchestrator.handle_info(
+               {:agent_runner_dispatch_complete, "missing-issue"},
+               state
+             )
+
+    refute_receive :observability_updated, 50
+  end
+
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_hosts: ["worker-a", "worker-b"],

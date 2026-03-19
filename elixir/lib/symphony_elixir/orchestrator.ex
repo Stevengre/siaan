@@ -80,9 +80,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_info({:agent_runner_dispatch_complete, issue_id}, state) do
-    state = Operations.handle_dispatch_complete(state, issue_id)
-    Runtime.notify_dashboard()
-    {:noreply, state}
+    updated_state = Operations.handle_dispatch_complete(state, issue_id)
+
+    if updated_state != state do
+      Runtime.notify_dashboard()
+    end
+
+    {:noreply, updated_state}
   end
 
   def handle_info({:retry_issue, issue_id, retry_token}, state) do
