@@ -84,7 +84,7 @@ def build_interactions() -> str:
 def build_diagrams(diagram_dir: Path) -> str:
     lines = []
     for filename in sorted(path.name for path in diagram_dir.glob("*.mmd")):
-        lines.append(f"- `{filename}`")
+        lines.append(f"- [{filename}]({filename})")
     return "\n".join(lines)
 
 

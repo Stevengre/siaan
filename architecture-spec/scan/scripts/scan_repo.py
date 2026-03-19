@@ -99,9 +99,9 @@ def parse_args() -> argparse.Namespace:
 
 def iter_files(root: Path) -> Iterable[Path]:
     for current_root, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        dirs[:] = sorted(d for d in dirs if d not in IGNORE_DIRS)
         base = Path(current_root)
-        for filename in files:
+        for filename in sorted(files):
             yield base / filename
 
 
@@ -207,7 +207,11 @@ def parse_doc_references(text: str, file_path: str, root: Path) -> List[dict]:
             if not raw_target or raw_target.startswith(("http://", "https://", "#")):
                 continue
             candidate = raw_target.split("#", 1)[0]
-            resolved = (Path(file_path).parent / candidate).resolve() if not Path(candidate).is_absolute() else Path(candidate)
+            base_dir = (root / file_path).parent
+            if candidate.startswith("/"):
+                resolved = (root / candidate.lstrip("/")).resolve()
+            else:
+                resolved = (base_dir / candidate).resolve()
             try:
                 exists = resolved.exists()
                 rel_target = resolved.relative_to(root).as_posix()
@@ -240,6 +244,13 @@ def main() -> int:
     for path in iter_files(root):
         rel = relative(path, root)
         suffix = path.suffix.lower()
+        should_scan_doc = suffix in DOC_EXTENSIONS and should_scan_path(rel)
+        language = language_for(path)
+        should_scan_code = bool(language and include_code_file(rel))
+
+        if not should_scan_doc and not should_scan_code:
+            continue
+
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -247,13 +258,10 @@ def main() -> int:
         except OSError:
             continue
 
-        if suffix in DOC_EXTENSIONS and should_scan_path(rel):
+        if should_scan_doc:
             doc_references.extend(parse_doc_references(text, rel, root))
 
-        language = language_for(path)
-        if not language:
-            continue
-        if not include_code_file(rel):
+        if not should_scan_code:
             continue
         language_counts[language] += 1
 
@@ -291,6 +299,7 @@ def main() -> int:
                         "evidence": dep,
                     }
                 )
+    relationships.sort(key=lambda item: (item["from"], item["to"], item["evidence"]))
 
     components: Dict[str, dict] = {}
     membership: Dict[str, str] = {}

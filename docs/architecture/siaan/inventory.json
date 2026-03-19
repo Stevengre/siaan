@@ -1,11 +1,11 @@
 {
   "inventory_version": 1,
-  "generated_at": "2026-03-19T00:47:59.736798+00:00",
+  "generated_at": "2026-03-19T03:30:07.392023+00:00",
   "repo_root": "/root/code/workspaces/siaan/GH-54",
   "languages": [
     {
       "name": "elixir",
-      "file_count": 57
+      "file_count": 63
     }
   ],
   "entrypoints": [
@@ -77,8 +77,13 @@
       "raw_dependencies": [
         "GenServer",
         "Logger",
-        "SymphonyElixir.",
-        "SymphonyElixir.Codex.AppServer"
+        "SymphonyElixir.Codex.AppServer",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.PromptEngine.Continuation",
+        "SymphonyElixir.PromptEngine.Renderer",
+        "SymphonyElixir.Tracker",
+        "SymphonyElixir.TrackerIssue",
+        "SymphonyElixir.Workspace.Provisioner"
       ]
     },
     {
@@ -133,7 +138,32 @@
         "Ecto.Changeset",
         "Ecto.Schema",
         "SymphonyElixir.Config.Schema",
-        "SymphonyElixir.PathSafety"
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "name": "SymphonyElixir.Dispatch.Retry",
+      "path": "elixir/lib/symphony_elixir/dispatch/retry.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/dispatch/retry.ex`.",
+      "raw_dependencies": [
+        "Bitwise",
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.Dispatch.Scheduler",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "name": "SymphonyElixir.Dispatch.Scheduler",
+      "path": "elixir/lib/symphony_elixir/dispatch/scheduler.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/dispatch/scheduler.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.",
+        "SymphonyElixir.TrackerIssue"
       ]
     },
     {
@@ -312,26 +342,16 @@
         "Bitwise",
         "GenServer",
         "Logger",
-        "SymphonyElixir.",
-        "SymphonyElixir.TrackerIssue"
-      ]
-    },
-    {
-      "id": "elixir.lib.symphony_elixir.path_safety.ex",
-      "name": "SymphonyElixir.PathSafety",
-      "path": "elixir/lib/symphony_elixir/path_safety.ex",
-      "language": "elixir",
-      "summary": "Source module from `elixir/lib/symphony_elixir/path_safety.ex`.",
-      "raw_dependencies": []
-    },
-    {
-      "id": "elixir.lib.symphony_elixir.prompt_builder.ex",
-      "name": "SymphonyElixir.PromptBuilder",
-      "path": "elixir/lib/symphony_elixir/prompt_builder.ex",
-      "language": "elixir",
-      "summary": "Builds agent prompts from tracker issue data.",
-      "raw_dependencies": [
-        "SymphonyElixir."
+        "SymphonyElixir.AgentRunner",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.Dispatch.",
+        "SymphonyElixir.DispatchLifecycle",
+        "SymphonyElixir.SessionStats",
+        "SymphonyElixir.SessionTracker.Metering",
+        "SymphonyElixir.StatusDashboard",
+        "SymphonyElixir.Tracker",
+        "SymphonyElixir.TrackerIssue",
+        "SymphonyElixir.Workspace.Provisioner"
       ]
     },
     {
@@ -402,6 +422,26 @@
       "path": "elixir/lib/symphony_elixir/session_stats.ex",
       "language": "elixir",
       "summary": "Source module from `elixir/lib/symphony_elixir/session_stats.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.SessionTracker."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "name": "SymphonyElixir.SessionTracker.Metering",
+      "path": "elixir/lib/symphony_elixir/session_tracker/metering.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/session_tracker/metering.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.Config"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
+      "name": "SymphonyElixir.SessionTracker.Persistence",
+      "path": "elixir/lib/symphony_elixir/session_tracker/persistence.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/session_tracker/persistence.ex`.",
       "raw_dependencies": [
         "Logger",
         "SymphonyElixir.Config"
@@ -487,17 +527,6 @@
       "summary": "Compatibility wrapper around `RuntimeConfigStore`.",
       "raw_dependencies": [
         "SymphonyElixir.RuntimeConfigStore"
-      ]
-    },
-    {
-      "id": "elixir.lib.symphony_elixir.workspace.ex",
-      "name": "SymphonyElixir.Workspace",
-      "path": "elixir/lib/symphony_elixir/workspace.ex",
-      "language": "elixir",
-      "summary": "Creates isolated per-issue workspaces for parallel Codex agents.",
-      "raw_dependencies": [
-        "Logger",
-        "SymphonyElixir."
       ]
     },
     {
@@ -607,20 +636,310 @@
       "language": "elixir",
       "summary": "Source module from `elixir/lib/symphony_elixir_web/static_assets.ex`.",
       "raw_dependencies": []
+    },
+    {
+      "id": "prompt_engine.continuation.lib.continuation.ex",
+      "name": "SymphonyElixir.PromptEngine.Continuation",
+      "path": "prompt-engine/continuation/lib/continuation.ex",
+      "language": "elixir",
+      "summary": "Source module from `prompt-engine/continuation/lib/continuation.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.PromptEngine.Renderer"
+      ]
+    },
+    {
+      "id": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "name": "SymphonyElixir.PromptEngine.Renderer",
+      "path": "prompt-engine/renderer/lib/prompt_builder.ex",
+      "language": "elixir",
+      "summary": "Builds agent prompts from tracker issue data.",
+      "raw_dependencies": [
+        "SymphonyElixir.",
+        "SymphonyElixir.PromptEngine.Renderer"
+      ]
+    },
+    {
+      "id": "workspace.hooks.lib.hooks.ex",
+      "name": "SymphonyElixir.Workspace.Hooks",
+      "path": "workspace/hooks/lib/hooks.ex",
+      "language": "elixir",
+      "summary": "Source module from `workspace/hooks/lib/hooks.ex`.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "workspace.provisioner.lib.path_safety.ex",
+      "name": "SymphonyElixir.Workspace.Provisioner.PathSafety",
+      "path": "workspace/provisioner/lib/path_safety.ex",
+      "language": "elixir",
+      "summary": "Source module from `workspace/provisioner/lib/path_safety.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
+    },
+    {
+      "id": "workspace.provisioner.lib.workspace.ex",
+      "name": "SymphonyElixir.Workspace.Provisioner",
+      "path": "workspace/provisioner/lib/workspace.ex",
+      "language": "elixir",
+      "summary": "Creates isolated per-issue workspaces for parallel Codex agents.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.Workspace.Hooks",
+        "SymphonyElixir.Workspace.Provisioner",
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
     }
   ],
   "source_relationships": [
     {
-      "from": "elixir.lib.symphony_elixir.workflow.ex",
-      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "from": "elixir.lib.mix.tasks.siaan.install.ex",
+      "to": "elixir.lib.symphony_elixir.install.runner.ex",
       "type": "imports",
-      "evidence": "SymphonyElixir.RuntimeConfig"
+      "evidence": "SymphonyElixir.Install.Runner"
+    },
+    {
+      "from": "elixir.lib.mix.tasks.specs.check.ex",
+      "to": "elixir.lib.symphony_elixir.specs_check.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SpecsCheck"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.codex.app_server.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Codex.AppServer"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.tracker.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Tracker"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "prompt_engine.continuation.lib.continuation.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Continuation"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
+      "to": "elixir.lib.symphony_elixir.github.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
+      "to": "elixir.lib.symphony_elixir.linear.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Linear.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.config.schema.ex",
+      "to": "elixir.lib.symphony_elixir.config.schema.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config.Schema"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.config.schema.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "to": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Dispatch.Scheduler"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.client.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.client.ex",
+      "to": "elixir.lib.symphony_elixir.github.issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Issue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.issue.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.http_server.ex",
+      "to": "elixir.lib.symphony_elixir_web.endpoint.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixirWeb.Endpoint"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.install.runner.ex",
+      "to": "elixir.lib.symphony_elixir.github.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.linear.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Linear.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.issue.ex",
+      "to": "elixir.lib.symphony_elixir.local.workflow.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Local.Workflow"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.issue.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.AgentRunner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.dispatch_lifecycle.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.DispatchLifecycle"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.session_stats.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SessionStats"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SessionTracker.Metering"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.status_dashboard.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.StatusDashboard"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.tracker.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Tracker"
     },
     {
       "from": "elixir.lib.symphony_elixir.orchestrator.ex",
       "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
       "type": "imports",
       "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.runtime_config_store.ex",
+      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.RuntimeConfig"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
     },
     {
       "from": "elixir.lib.symphony_elixir.status_dashboard.ex",
@@ -633,12 +952,6 @@
       "to": "elixir.lib.symphony_elixir_web.observability_pubsub.ex",
       "type": "imports",
       "evidence": "SymphonyElixirWeb.ObservabilityPubSub"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.http_server.ex",
-      "to": "elixir.lib.symphony_elixir_web.endpoint.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixirWeb.Endpoint"
     },
     {
       "from": "elixir.lib.symphony_elixir.tracker.ex",
@@ -665,154 +978,70 @@
       "evidence": "SymphonyElixir.Local.Adapter"
     },
     {
+      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.workflow.ex",
+      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.RuntimeConfig"
+    },
+    {
       "from": "elixir.lib.symphony_elixir.workflow_store.ex",
       "to": "elixir.lib.symphony_elixir.runtime_config_store.ex",
       "type": "imports",
       "evidence": "SymphonyElixir.RuntimeConfigStore"
     },
     {
-      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
-      "to": "elixir.lib.symphony_elixir.codex.app_server.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Codex.AppServer"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.session_stats.ex",
-      "to": "elixir.lib.symphony_elixir.config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.runtime_config_store.ex",
-      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.RuntimeConfig"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.local.issue.ex",
-      "to": "elixir.lib.symphony_elixir.local.workflow.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Local.Workflow"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.local.issue.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.github.issue.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.github.client.ex",
-      "to": "elixir.lib.symphony_elixir.config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.github.client.ex",
-      "to": "elixir.lib.symphony_elixir.github.issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.GitHub.Issue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.github.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
-      "to": "elixir.lib.symphony_elixir.config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.install.runner.ex",
-      "to": "elixir.lib.symphony_elixir.github.client.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.GitHub.Client"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.config.schema.ex",
-      "to": "elixir.lib.symphony_elixir.config.schema.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config.Schema"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.config.schema.ex",
-      "to": "elixir.lib.symphony_elixir.path_safety.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.PathSafety"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
-      "to": "elixir.lib.symphony_elixir.github.client.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.GitHub.Client"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
-      "to": "elixir.lib.symphony_elixir.linear.client.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Linear.Client"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.config.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Config"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.linear.client.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Linear.Client"
-    },
-    {
-      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
-      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.TrackerIssue"
-    },
-    {
-      "from": "elixir.lib.mix.tasks.specs.check.ex",
-      "to": "elixir.lib.symphony_elixir.specs_check.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.SpecsCheck"
-    },
-    {
-      "from": "elixir.lib.mix.tasks.siaan.install.ex",
-      "to": "elixir.lib.symphony_elixir.install.runner.ex",
-      "type": "imports",
-      "evidence": "SymphonyElixir.Install.Runner"
-    },
-    {
       "from": "elixir.lib.symphony_elixir_web.controllers.static_asset_controller.ex",
       "to": "elixir.lib.symphony_elixir_web.static_assets.ex",
       "type": "imports",
       "evidence": "SymphonyElixirWeb.StaticAssets"
+    },
+    {
+      "from": "prompt_engine.continuation.lib.continuation.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "workspace.provisioner.lib.path_safety.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.hooks.lib.hooks.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Hooks"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
     }
   ],
   "architecture_components": [
@@ -837,24 +1066,32 @@
     {
       "name": "dispatch",
       "summary": "Translates tracker state into execution transitions and routes work between adapters.",
-      "member_count": 8,
+      "member_count": 12,
       "members": [
+        "elixir.lib.symphony_elixir.dispatch.retry.ex",
+        "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
         "elixir.lib.symphony_elixir.dispatch_lifecycle.ex",
         "elixir.lib.symphony_elixir.github.adapter.ex",
         "elixir.lib.symphony_elixir.github.issue.ex",
         "elixir.lib.symphony_elixir.linear.adapter.ex",
         "elixir.lib.symphony_elixir.linear.issue.ex",
         "elixir.lib.symphony_elixir.local.adapter.ex",
+        "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+        "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
         "elixir.lib.symphony_elixir.tracker.ex",
         "elixir.lib.symphony_elixir.tracker_issue.ex"
       ],
       "paths": [
+        "elixir/lib/symphony_elixir/dispatch/retry.ex",
+        "elixir/lib/symphony_elixir/dispatch/scheduler.ex",
         "elixir/lib/symphony_elixir/dispatch_lifecycle.ex",
         "elixir/lib/symphony_elixir/github/adapter.ex",
         "elixir/lib/symphony_elixir/github/issue.ex",
         "elixir/lib/symphony_elixir/linear/adapter.ex",
         "elixir/lib/symphony_elixir/linear/issue.ex",
         "elixir/lib/symphony_elixir/local/adapter.ex",
+        "elixir/lib/symphony_elixir/session_tracker/metering.ex",
+        "elixir/lib/symphony_elixir/session_tracker/persistence.ex",
         "elixir/lib/symphony_elixir/tracker.ex",
         "elixir/lib/symphony_elixir/tracker_issue.ex"
       ],
@@ -945,6 +1182,20 @@
       ]
     },
     {
+      "name": "scope:prompt-engine",
+      "summary": "Inferred architecture boundary.",
+      "member_count": 1,
+      "members": [
+        "prompt_engine.continuation.lib.continuation.ex"
+      ],
+      "paths": [
+        "prompt-engine/continuation/lib/continuation.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
       "name": "state-sync",
       "summary": "Caches runtime state, issue sessions, and last-known-good config for resilient orchestration.",
       "member_count": 5,
@@ -973,22 +1224,22 @@
       "members": [
         "elixir.lib.symphony_elixir.config.schema.ex",
         "elixir.lib.symphony_elixir.local.workflow.ex",
-        "elixir.lib.symphony_elixir.prompt_builder.ex",
         "elixir.lib.symphony_elixir.runtime_config.ex",
         "elixir.lib.symphony_elixir.runtime_config_file.ex",
         "elixir.lib.symphony_elixir.runtime_file.ex",
         "elixir.lib.symphony_elixir.workflow.ex",
-        "elixir.lib.symphony_elixir.workflow_store.ex"
+        "elixir.lib.symphony_elixir.workflow_store.ex",
+        "prompt_engine.renderer.lib.prompt_builder.ex"
       ],
       "paths": [
         "elixir/lib/symphony_elixir/config/schema.ex",
         "elixir/lib/symphony_elixir/local/workflow.ex",
-        "elixir/lib/symphony_elixir/prompt_builder.ex",
         "elixir/lib/symphony_elixir/runtime_config.ex",
         "elixir/lib/symphony_elixir/runtime_config_file.ex",
         "elixir/lib/symphony_elixir/runtime_file.ex",
         "elixir/lib/symphony_elixir/workflow.ex",
-        "elixir/lib/symphony_elixir/workflow_store.ex"
+        "elixir/lib/symphony_elixir/workflow_store.ex",
+        "prompt-engine/renderer/lib/prompt_builder.ex"
       ],
       "primary_languages": [
         "elixir"
@@ -997,18 +1248,20 @@
     {
       "name": "workspace",
       "summary": "Creates, validates, and cleans isolated issue workspaces across local and SSH workers.",
-      "member_count": 4,
+      "member_count": 5,
       "members": [
         "elixir.lib.mix.tasks.workspace.before_remove.ex",
-        "elixir.lib.symphony_elixir.path_safety.ex",
         "elixir.lib.symphony_elixir.ssh.ex",
-        "elixir.lib.symphony_elixir.workspace.ex"
+        "workspace.hooks.lib.hooks.ex",
+        "workspace.provisioner.lib.path_safety.ex",
+        "workspace.provisioner.lib.workspace.ex"
       ],
       "paths": [
         "elixir/lib/mix/tasks/workspace.before_remove.ex",
-        "elixir/lib/symphony_elixir/path_safety.ex",
         "elixir/lib/symphony_elixir/ssh.ex",
-        "elixir/lib/symphony_elixir/workspace.ex"
+        "workspace/hooks/lib/hooks.ex",
+        "workspace/provisioner/lib/path_safety.ex",
+        "workspace/provisioner/lib/workspace.ex"
       ],
       "primary_languages": [
         "elixir"
@@ -1018,22 +1271,62 @@
   "component_relationships": [
     {
       "from": "agent-bridge",
-      "to": "scope:elixir",
-      "strength": 2
-    },
-    {
-      "from": "dispatch",
-      "to": "scope:elixir",
-      "strength": 5
-    },
-    {
-      "from": "orchestrator",
       "to": "dispatch",
       "strength": 2
     },
     {
+      "from": "agent-bridge",
+      "to": "scope:elixir",
+      "strength": 3
+    },
+    {
+      "from": "agent-bridge",
+      "to": "scope:prompt-engine",
+      "strength": 1
+    },
+    {
+      "from": "agent-bridge",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "agent-bridge",
+      "to": "workspace",
+      "strength": 1
+    },
+    {
+      "from": "dispatch",
+      "to": "scope:elixir",
+      "strength": 7
+    },
+    {
+      "from": "orchestrator",
+      "to": "agent-bridge",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "dispatch",
+      "strength": 5
+    },
+    {
+      "from": "orchestrator",
+      "to": "scope:elixir",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "state-sync",
+      "strength": 1
+    },
+    {
       "from": "orchestrator",
       "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "workspace",
       "strength": 1
     },
     {
@@ -1042,6 +1335,11 @@
       "strength": 1
     },
     {
+      "from": "scope:prompt-engine",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
       "from": "state-sync",
       "to": "dispatch",
       "strength": 1
@@ -1049,7 +1347,7 @@
     {
       "from": "state-sync",
       "to": "scope:elixir",
-      "strength": 2
+      "strength": 1
     },
     {
       "from": "state-sync",

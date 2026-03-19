@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from pathlib import Path
 
 
@@ -31,6 +32,17 @@ def markdown_links(text: str) -> list[str]:
     return re.findall(r"\[[^\]]+\]\(([^)]+)\)", text)
 
 
+def normalize_markdown_target(raw_target: str) -> str:
+    target = raw_target.strip()
+    if not target:
+        return ""
+    try:
+        parts = shlex.split(target)
+    except ValueError:
+        parts = target.split()
+    return parts[0] if parts else ""
+
+
 def main() -> int:
     args = parse_args()
     inventory = json.loads(Path(args.inventory).read_text(encoding="utf-8"))
@@ -51,12 +63,18 @@ def main() -> int:
             )
 
     for link in markdown_links(spec_text):
-        if link.startswith(("http://", "https://", "#")):
+        normalized = normalize_markdown_target(link)
+        if not normalized or normalized.startswith(("http://", "https://", "#")):
             continue
-        target = (spec_path.parent / link.split("#", 1)[0]).resolve()
+        target_path = normalized.split("#", 1)[0]
+        repo_root = Path(inventory["repo_root"])
+        if target_path.startswith("/"):
+            target = (repo_root / target_path.lstrip("/")).resolve()
+        else:
+            target = (spec_path.parent / target_path).resolve()
         if not target.exists():
             findings["medium"].append(
-                f"- Broken SPEC link: `{spec_path.as_posix()}` references missing `{link}`."
+                f"- Broken SPEC link: `{spec_path.as_posix()}` references missing `{normalized}`."
             )
 
     if not any(findings.values()):
