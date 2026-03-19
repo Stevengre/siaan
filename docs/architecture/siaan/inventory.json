@@ -1,11 +1,11 @@
 {
   "inventory_version": 1,
-  "generated_at": "2026-03-19T03:30:07.392023+00:00",
+  "generated_at": "2026-03-19T08:06:59.006831+00:00",
   "repo_root": "/root/code/workspaces/siaan/GH-54",
   "languages": [
     {
       "name": "elixir",
-      "file_count": 63
+      "file_count": 67
     }
   ],
   "entrypoints": [
@@ -659,6 +659,46 @@
       ]
     },
     {
+      "id": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+      "name": "SymphonyElixir.WorkflowEngine.Interpreter",
+      "path": "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/interpreter.ex",
+      "language": "elixir",
+      "summary": "Executes a parsed workflow machine by evaluating ordered transitions.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine",
+        "SymphonyElixir.WorkflowEngine.StateMachine.Transition"
+      ]
+    },
+    {
+      "id": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "name": "SymphonyElixir.WorkflowEngine.StateMachine",
+      "path": "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/state_machine.ex",
+      "language": "elixir",
+      "summary": "Internal representation for Mermaid-backed workflow state machines.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+      "name": "SymphonyElixir.WorkflowEngine.MermaidParser",
+      "path": "workflow-engine/mermaid-parser/lib/symphony_elixir/workflow_engine/mermaid_parser.ex",
+      "language": "elixir",
+      "summary": "Parses a constrained Mermaid `stateDiagram` into a workflow state machine.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine",
+        "SymphonyElixir.WorkflowEngine.StateMachine."
+      ]
+    },
+    {
+      "id": "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex",
+      "name": "SymphonyElixir.WorkflowEngine.Validator",
+      "path": "workflow-engine/validate/lib/symphony_elixir/workflow_engine/validator.ex",
+      "language": "elixir",
+      "summary": "Analyzes workflow graphs for structural execution risks.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine"
+      ]
+    },
+    {
       "id": "workspace.hooks.lib.hooks.ex",
       "name": "SymphonyElixir.Workspace.Hooks",
       "path": "workspace/hooks/lib/hooks.ex",
@@ -1020,6 +1060,24 @@
       "evidence": "SymphonyElixir.PromptEngine.Renderer"
     },
     {
+      "from": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
+      "from": "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
+      "from": "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
       "from": "workspace.provisioner.lib.path_safety.ex",
       "to": "workspace.provisioner.lib.path_safety.ex",
       "type": "imports",
@@ -1220,7 +1278,7 @@
     {
       "name": "workflow-engine",
       "summary": "Loads workflow/runtime configuration and materializes prompt contracts for each issue.",
-      "member_count": 8,
+      "member_count": 12,
       "members": [
         "elixir.lib.symphony_elixir.config.schema.ex",
         "elixir.lib.symphony_elixir.local.workflow.ex",
@@ -1229,7 +1287,11 @@
         "elixir.lib.symphony_elixir.runtime_file.ex",
         "elixir.lib.symphony_elixir.workflow.ex",
         "elixir.lib.symphony_elixir.workflow_store.ex",
-        "prompt_engine.renderer.lib.prompt_builder.ex"
+        "prompt_engine.renderer.lib.prompt_builder.ex",
+        "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+        "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+        "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+        "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex"
       ],
       "paths": [
         "elixir/lib/symphony_elixir/config/schema.ex",
@@ -1239,7 +1301,11 @@
         "elixir/lib/symphony_elixir/runtime_file.ex",
         "elixir/lib/symphony_elixir/workflow.ex",
         "elixir/lib/symphony_elixir/workflow_store.ex",
-        "prompt-engine/renderer/lib/prompt_builder.ex"
+        "prompt-engine/renderer/lib/prompt_builder.ex",
+        "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/interpreter.ex",
+        "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/state_machine.ex",
+        "workflow-engine/mermaid-parser/lib/symphony_elixir/workflow_engine/mermaid_parser.ex",
+        "workflow-engine/validate/lib/symphony_elixir/workflow_engine/validator.ex"
       ],
       "primary_languages": [
         "elixir"
@@ -1383,6 +1449,46 @@
       "evidence": "[`SPEC.md`](../SPEC.md) at the repository root."
     },
     {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 88,
+      "target": "dispatch-sequence.mmd",
+      "resolved_target": "docs/architecture/siaan/dispatch-sequence.mmd",
+      "status": "present",
+      "evidence": "- [dispatch-sequence.mmd](dispatch-sequence.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 89,
+      "target": "l1-system-context.mmd",
+      "resolved_target": "docs/architecture/siaan/l1-system-context.mmd",
+      "status": "present",
+      "evidence": "- [l1-system-context.mmd](l1-system-context.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 90,
+      "target": "l2-container-view.mmd",
+      "resolved_target": "docs/architecture/siaan/l2-container-view.mmd",
+      "status": "present",
+      "evidence": "- [l2-container-view.mmd](l2-container-view.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 91,
+      "target": "l3-component-view.mmd",
+      "resolved_target": "docs/architecture/siaan/l3-component-view.mmd",
+      "status": "present",
+      "evidence": "- [l3-component-view.mmd](l3-component-view.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 92,
+      "target": "l4-code-map.mmd",
+      "resolved_target": "docs/architecture/siaan/l4-code-map.mmd",
+      "status": "present",
+      "evidence": "- [l4-code-map.mmd](l4-code-map.mmd)"
+    },
+    {
       "path": "elixir/README.md",
       "line": 12,
       "target": "../.github/media/elixir-screenshot.png",
@@ -1397,6 +1503,14 @@
       "resolved_target": "LICENSE",
       "status": "present",
       "evidence": "This project is licensed under the [Apache License 2.0](../LICENSE)."
+    },
+    {
+      "path": "workflow-engine/README.md",
+      "line": 11,
+      "target": "./examples/github_issue_workflow.mmd",
+      "resolved_target": "workflow-engine/examples/github_issue_workflow.mmd",
+      "status": "present",
+      "evidence": "3. The current GitHub issue lifecycle is expressible with this model without hard-coding GitHub into the engine. The example workflow lives in [`workflow-engine/examples/github_issue_workflow.mmd`](./examples/github_issue_workflow.mmd)."
     }
   ]
 }

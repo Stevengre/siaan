@@ -1,6 +1,6 @@
 # Architecture SPEC
 
-_Generated: 2026-03-19T03:30:07.419380+00:00_
+_Generated: 2026-03-19T08:06:59.032930+00:00_
 
 ## Overview
 
@@ -9,8 +9,8 @@ This repository runs an issue-driven automation loop: tracker adapters surface w
 ## Runtime Signals
 
 - Entrypoints: start-siaan.sh, docker-compose.yml, Dockerfile, elixir/lib/symphony_elixir/cli.ex, elixir/lib/symphony_elixir/http_server.ex
-- Primary languages: elixir (63)
-- Source modules scanned: 63
+- Primary languages: elixir (67)
+- Source modules scanned: 67
 
 ## Architecture Components
 
@@ -29,7 +29,7 @@ Caches runtime state, issue sessions, and last-known-good config for resilient o
 Loads workflow/runtime configuration and materializes prompt contracts for each issue.
 
 - Paths: elixir/lib/symphony_elixir/config/schema.ex, elixir/lib/symphony_elixir/local/workflow.ex, elixir/lib/symphony_elixir/runtime_config.ex, elixir/lib/symphony_elixir/runtime_config_file.ex, elixir/lib/symphony_elixir/runtime_file.ex, elixir/lib/symphony_elixir/workflow.ex
-- Member count: 8
+- Member count: 12
 - Primary languages: elixir
 - Depends on: state-sync, workspace
 - Used by: agent-bridge, orchestrator, scope:prompt-engine, state-sync

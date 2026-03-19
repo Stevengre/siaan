@@ -11,17 +11,17 @@ class elixir_lib_symphony_elixir_codex_app_server_ex["SymphonyElixir.Codex.AppSe
 class elixir_lib_symphony_elixir_codex_dynamic_tool_ex["SymphonyElixir.Codex.DynamicTool\nelixir/lib/symphony_elixir/codex/dynamic_tool.ex"]
 class elixir_lib_symphony_elixir_config_ex["SymphonyElixir.Config\nelixir/lib/symphony_elixir/config.ex"]
 class elixir_lib_symphony_elixir_config_schema_ex["SymphonyElixir.Config.Schema\nelixir/lib/symphony_elixir/config/schema.ex"]
+class elixir_lib_symphony_elixir_dispatch_retry_ex["SymphonyElixir.Dispatch.Retry\nelixir/lib/symphony_elixir/dispatch/retry.ex"]
+class elixir_lib_symphony_elixir_dispatch_scheduler_ex["SymphonyElixir.Dispatch.Scheduler\nelixir/lib/symphony_elixir/dispatch/scheduler.ex"]
 class elixir_lib_symphony_elixir_dispatch_lifecycle_ex["SymphonyElixir.DispatchLifecycle\nelixir/lib/symphony_elixir/dispatch_lifecycle.ex"]
 class elixir_lib_symphony_elixir_github_adapter_ex["SymphonyElixir.GitHub.Adapter\nelixir/lib/symphony_elixir/github/adapter.ex"]
 class elixir_lib_symphony_elixir_github_client_ex["SymphonyElixir.GitHub.Client\nelixir/lib/symphony_elixir/github/client.ex"]
 class elixir_lib_symphony_elixir_github_issue_ex["SymphonyElixir.GitHub.Issue\nelixir/lib/symphony_elixir/github/issue.ex"]
 class elixir_lib_symphony_elixir_http_server_ex["SymphonyElixir.HttpServer\nelixir/lib/symphony_elixir/http_server.ex"]
-class elixir_lib_symphony_elixir_install_repository_ex["SymphonyElixir.Install.Repository\nelixir/lib/symphony_elixir/install/repository.ex"]
-class elixir_lib_symphony_elixir_install_runner_ex["SymphonyElixir.Install.Runner\nelixir/lib/symphony_elixir/install/runner.ex"]
 elixir_lib_symphony_elixir_agent_runner_ex --> elixir_lib_symphony_elixir_codex_app_server_ex : imports
+elixir_lib_symphony_elixir_agent_runner_ex --> elixir_lib_symphony_elixir_config_ex : imports
+elixir_lib_symphony_elixir_codex_dynamic_tool_ex --> elixir_lib_symphony_elixir_github_client_ex : imports
+elixir_lib_symphony_elixir_config_schema_ex --> elixir_lib_symphony_elixir_config_schema_ex : imports
+elixir_lib_symphony_elixir_dispatch_retry_ex --> elixir_lib_symphony_elixir_dispatch_scheduler_ex : imports
 elixir_lib_symphony_elixir_github_client_ex --> elixir_lib_symphony_elixir_config_ex : imports
 elixir_lib_symphony_elixir_github_client_ex --> elixir_lib_symphony_elixir_github_issue_ex : imports
-elixir_lib_symphony_elixir_install_runner_ex --> elixir_lib_symphony_elixir_github_client_ex : imports
-elixir_lib_symphony_elixir_config_schema_ex --> elixir_lib_symphony_elixir_config_schema_ex : imports
-elixir_lib_symphony_elixir_codex_dynamic_tool_ex --> elixir_lib_symphony_elixir_github_client_ex : imports
-elixir_lib_mix_tasks_siaan_install_ex --> elixir_lib_symphony_elixir_install_runner_ex : imports
