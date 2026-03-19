@@ -16,6 +16,8 @@ defmodule SymphonyElixir.MixProject do
         ignore_modules: [
           SymphonyElixir.Config,
           SymphonyElixir.DispatchLifecycle,
+          SymphonyElixir.Dispatch.Retry,
+          SymphonyElixir.Dispatch.Scheduler,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.Linear.Issue,
           SymphonyElixir.GitHub.Adapter,
@@ -41,6 +43,8 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.RuntimeFile,
           SymphonyElixir.RuntimeSource,
           SymphonyElixir.RuntimeSourceStore,
+          SymphonyElixir.SessionTracker.Metering,
+          SymphonyElixir.SessionTracker.Persistence,
           SymphonyElixir.Tracker.Memory,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
