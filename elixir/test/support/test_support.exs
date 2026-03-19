@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
+  @runtime_prompt "You are an agent for this repository."
 
   defmacro __using__(_opts) do
     quote do
@@ -12,11 +13,13 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Config
       alias SymphonyElixir.HttpServer
       alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Issue
       alias SymphonyElixir.Orchestrator
       alias SymphonyElixir.PromptBuilder
+      alias SymphonyElixir.RuntimeConfig
+      alias SymphonyElixir.RuntimeConfigStore
       alias SymphonyElixir.StatusDashboard
       alias SymphonyElixir.Tracker
+      alias SymphonyElixir.TrackerIssue, as: Issue
       alias SymphonyElixir.Workflow
       alias SymphonyElixir.WorkflowStore
       alias SymphonyElixir.Workspace
@@ -24,6 +27,8 @@ defmodule SymphonyElixir.TestSupport do
       import SymphonyElixir.TestSupport,
         only: [
           tmp_dir!: 1,
+          write_runtime_config_file!: 1,
+          write_runtime_config_file!: 2,
           write_workflow_file!: 1,
           write_workflow_file!: 2,
           restore_env: 2,
@@ -37,18 +42,27 @@ defmodule SymphonyElixir.TestSupport do
         System.delete_env("GITHUB_TOKEN")
         System.delete_env("LINEAR_API_KEY")
 
-        workflow_root =
+        runtime_root =
           Path.join(
             System.tmp_dir!(),
-            "symphony-elixir-workflow-#{System.unique_integer([:positive])}"
+            "symphony-elixir-runtime-#{System.unique_integer([:positive])}"
           )
 
-        File.mkdir_p!(workflow_root)
-        workflow_file = Path.join(workflow_root, "WORKFLOW.md")
+        File.mkdir_p!(runtime_root)
+        workflow_file = Path.join(runtime_root, "WORKFLOW.md")
         write_workflow_file!(workflow_file)
-        Workflow.set_workflow_file_path(workflow_file)
+        RuntimeConfig.set_path(workflow_file)
         SymphonyElixir.TestSupport.ensure_test_application_started!()
+        SymphonyElixir.TestSupport.ensure_runtime_config_store_running!()
         SymphonyElixir.TestSupport.ensure_workflow_store_running!()
+
+        if Process.whereis(SymphonyElixir.RuntimeSourceStore) do
+          SymphonyElixir.RuntimeSourceStore.force_reload()
+        end
+
+        if Process.whereis(SymphonyElixir.RuntimeConfigStore) do
+          SymphonyElixir.RuntimeConfigStore.force_reload()
+        end
 
         if Process.whereis(SymphonyElixir.WorkflowStore) do
           try do
@@ -66,11 +80,13 @@ defmodule SymphonyElixir.TestSupport do
         on_exit(fn ->
           restore_env("GITHUB_TOKEN", github_token)
           restore_env("LINEAR_API_KEY", linear_api_key)
+          Application.delete_env(:symphony_elixir, :runtime_config_path)
           Application.delete_env(:symphony_elixir, :workflow_file_path)
+          Application.delete_env(:symphony_elixir, :runtime_source_module)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
           Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
-          File.rm_rf(workflow_root)
+          File.rm_rf(runtime_root)
         end)
 
         :ok
@@ -88,15 +104,14 @@ defmodule SymphonyElixir.TestSupport do
   def write_workflow_file!(path, overrides \\ []) do
     workflow = workflow_content(overrides)
     File.write!(path, workflow)
+    reload_runtime_stores()
+    :ok
+  end
 
-    if Process.whereis(SymphonyElixir.WorkflowStore) do
-      try do
-        SymphonyElixir.WorkflowStore.force_reload()
-      catch
-        :exit, _reason -> :ok
-      end
-    end
-
+  def write_runtime_config_file!(path, overrides \\ []) do
+    runtime = runtime_config_content(overrides)
+    File.write!(path, runtime)
+    reload_runtime_stores()
     :ok
   end
 
@@ -137,6 +152,17 @@ defmodule SymphonyElixir.TestSupport do
     end
   end
 
+  def ensure_runtime_config_store_running! do
+    if Process.whereis(SymphonyElixir.RuntimeConfigStore) do
+      :ok
+    else
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.RuntimeConfigStore) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+    end
+  end
+
   def stop_default_http_server do
     children =
       case Process.whereis(SymphonyElixir.Supervisor) do
@@ -169,6 +195,32 @@ defmodule SymphonyElixir.TestSupport do
     end
   end
 
+  defp reload_runtime_stores do
+    if Process.whereis(SymphonyElixir.RuntimeConfigStore) do
+      try do
+        SymphonyElixir.RuntimeConfigStore.force_reload()
+      catch
+        :exit, _reason -> :ok
+      end
+    end
+
+    if Process.whereis(SymphonyElixir.WorkflowStore) do
+      try do
+        SymphonyElixir.WorkflowStore.force_reload()
+      catch
+        :exit, _reason -> :ok
+      end
+    end
+
+    if Process.whereis(SymphonyElixir.RuntimeSourceStore) do
+      try do
+        SymphonyElixir.RuntimeSourceStore.force_reload()
+      catch
+        :exit, _reason -> :ok
+      end
+    end
+  end
+
   defp workflow_content(overrides) do
     config =
       Keyword.merge(
@@ -184,6 +236,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_ready_label: "status:ready",
           tracker_assignee: nil,
           tracker_active_states: ["Todo", "In Progress"],
+          tracker_watch_states: nil,
           tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
@@ -228,6 +281,7 @@ defmodule SymphonyElixir.TestSupport do
     tracker_ready_label = Keyword.get(config, :tracker_ready_label)
     tracker_assignee = Keyword.get(config, :tracker_assignee)
     tracker_active_states = Keyword.get(config, :tracker_active_states)
+    tracker_watch_states = Keyword.get(config, :tracker_watch_states)
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
@@ -273,6 +327,7 @@ defmodule SymphonyElixir.TestSupport do
         "  ready_label: #{yaml_value(tracker_ready_label)}",
         "  assignee: #{yaml_value(tracker_assignee)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
+        "  watch_states: #{yaml_value(tracker_watch_states)}",
         "  terminal_states: #{yaml_value(tracker_terminal_states)}",
         "polling:",
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
@@ -303,6 +358,90 @@ defmodule SymphonyElixir.TestSupport do
       |> Enum.reject(&(&1 in [nil, ""]))
 
     Enum.join(sections, "\n") <> "\n"
+  end
+
+  defp runtime_config_content(overrides) do
+    config =
+      Keyword.merge(
+        [
+          tracker_kind: "linear",
+          tracker_endpoint: "https://api.linear.app/graphql",
+          tracker_api_token: "token",
+          tracker_project_slug: "project",
+          tracker_repo_owner: nil,
+          tracker_repo_name: nil,
+          tracker_local_config_path: nil,
+          tracker_local_project: nil,
+          tracker_ready_label: "status:ready",
+          tracker_assignee: nil,
+          tracker_active_states: ["Todo", "In Progress"],
+          tracker_watch_states: nil,
+          tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+          poll_interval_ms: 30_000,
+          workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
+          worker_ssh_hosts: [],
+          worker_max_concurrent_agents_per_host: nil,
+          max_concurrent_agents: 10,
+          max_turns: 20,
+          max_retry_backoff_ms: 300_000,
+          max_concurrent_agents_by_state: %{},
+          execution_profiles: %{},
+          codex_command: "codex app-server",
+          codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
+          codex_thread_sandbox: "workspace-write",
+          codex_turn_sandbox_policy: nil,
+          codex_turn_timeout_ms: 3_600_000,
+          codex_read_timeout_ms: 5_000,
+          codex_stall_timeout_ms: 300_000,
+          allowlist: [],
+          prompt: @runtime_prompt
+        ],
+        overrides
+      )
+
+    [
+      "tracker:",
+      "  kind: #{yaml_value(Keyword.get(config, :tracker_kind))}",
+      "  endpoint: #{yaml_value(Keyword.get(config, :tracker_endpoint))}",
+      "  api_key: #{yaml_value(Keyword.get(config, :tracker_api_token))}",
+      "  project_slug: #{yaml_value(Keyword.get(config, :tracker_project_slug))}",
+      "  repo_owner: #{yaml_value(Keyword.get(config, :tracker_repo_owner))}",
+      "  repo_name: #{yaml_value(Keyword.get(config, :tracker_repo_name))}",
+      "  local_config_path: #{yaml_value(Keyword.get(config, :tracker_local_config_path))}",
+      "  local_project: #{yaml_value(Keyword.get(config, :tracker_local_project))}",
+      "  ready_label: #{yaml_value(Keyword.get(config, :tracker_ready_label))}",
+      "  assignee: #{yaml_value(Keyword.get(config, :tracker_assignee))}",
+      "  active_states: #{yaml_value(Keyword.get(config, :tracker_active_states))}",
+      "  watch_states: #{yaml_value(Keyword.get(config, :tracker_watch_states))}",
+      "  terminal_states: #{yaml_value(Keyword.get(config, :tracker_terminal_states))}",
+      "polling:",
+      "  interval_ms: #{yaml_value(Keyword.get(config, :poll_interval_ms))}",
+      "workspace:",
+      "  root: #{yaml_value(Keyword.get(config, :workspace_root))}",
+      worker_yaml(
+        Keyword.get(config, :worker_ssh_hosts),
+        Keyword.get(config, :worker_max_concurrent_agents_per_host)
+      ),
+      "agent:",
+      "  max_concurrent_agents: #{yaml_value(Keyword.get(config, :max_concurrent_agents))}",
+      "  max_turns: #{yaml_value(Keyword.get(config, :max_turns))}",
+      "  max_retry_backoff_ms: #{yaml_value(Keyword.get(config, :max_retry_backoff_ms))}",
+      "  max_concurrent_agents_by_state: #{yaml_value(Keyword.get(config, :max_concurrent_agents_by_state))}",
+      "  execution_profiles: #{yaml_value(Keyword.get(config, :execution_profiles))}",
+      "codex:",
+      "  command: #{yaml_value(Keyword.get(config, :codex_command))}",
+      "  approval_policy: #{yaml_value(Keyword.get(config, :codex_approval_policy))}",
+      "  thread_sandbox: #{yaml_value(Keyword.get(config, :codex_thread_sandbox))}",
+      "  turn_sandbox_policy: #{yaml_value(Keyword.get(config, :codex_turn_sandbox_policy))}",
+      "  turn_timeout_ms: #{yaml_value(Keyword.get(config, :codex_turn_timeout_ms))}",
+      "  read_timeout_ms: #{yaml_value(Keyword.get(config, :codex_read_timeout_ms))}",
+      "  stall_timeout_ms: #{yaml_value(Keyword.get(config, :codex_stall_timeout_ms))}",
+      "allowlist: #{yaml_value(Keyword.get(config, :allowlist))}",
+      "prompt: #{yaml_value(Keyword.get(config, :prompt))}"
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
   end
 
   defp yaml_value(value) when is_binary(value) do

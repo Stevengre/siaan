@@ -569,6 +569,197 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, []} = Adapter.fetch_candidate_issues()
   end
 
+  test "local adapter active states only include skill-dispatchable workflow states" do
+    issue_root = tmp_dir!("local-active-states")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities: []
+        transitions:
+          - to: in-progress
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions:
+          - to: review
+      review:
+        activities:
+          - check: poll-ci-status
+            interval: 5m
+        transitions:
+          - to: done
+      done:
+        activities: []
+        transitions: []
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:fallback-ready"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert Adapter.active_states() == ["status:in-progress"]
+  end
+
+  test "local adapter active states fall back when workflow has no skill states" do
+    issue_root = tmp_dir!("local-active-states-fallback")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.expand("..", File.cwd!())
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - check: blocked-resolved
+            interval: 5m
+        transitions:
+          - to: review
+      review:
+        activities: []
+        transitions: []
+      done:
+        activities: []
+        transitions: []
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:fallback-ready"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert Adapter.active_states() == ["status:fallback-ready"]
+  end
+
+  test "local adapter dispatch target uses the first matching transition for the current issue" do
+    issue_root = tmp_dir!("local-dispatch-target")
+    config_path = Path.join(issue_root, "config.toml")
+    workflow_path = Path.join(issue_root, "workflow.yaml")
+    project_dir = Path.join(issue_root, "repo")
+    slug = "conditional-dispatch"
+
+    File.mkdir_p!(project_dir)
+    script_path = Path.join(issue_root, "match-transition.sh")
+
+    File.write!(
+      config_path,
+      """
+      [projects.siaan]
+      dir = "#{project_dir}"
+      workflow = "#{workflow_path}"
+      runtime = "local"
+      """
+    )
+
+    File.write!(
+      workflow_path,
+      """
+      ready:
+        activities:
+          - check: preflight
+        transitions:
+          - to: blocked
+            when:
+              - #{script_path} blocked
+          - to: in-progress
+            when:
+              - #{script_path} in-progress
+      blocked:
+        activities:
+          - check: poll-blocked
+            interval: 5m
+        transitions: []
+      in-progress:
+        activities:
+          - skill: siaan-inprogress
+        transitions: []
+      """
+    )
+
+    File.write!(
+      script_path,
+      """
+      #!/bin/sh
+      set -eu
+
+      target="$1"
+      issue_path="$2"
+
+      case "$target" in
+        blocked)
+          test -f "$issue_path.blocked"
+          ;;
+        in-progress)
+          test -f "$issue_path"
+          ;;
+      esac
+      """
+    )
+
+    File.chmod!(script_path, 0o755)
+
+    File.mkdir_p!(Path.join(issue_root, "ready"))
+
+    issue_path = Path.join(issue_root, "ready/#{slug}.md")
+
+    File.write!(
+      issue_path,
+      """
+      ---
+      identifier: GH-47
+      title: Conditional dispatch
+      status: ready
+      ---
+      body
+      """
+    )
+
+    write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
+      tracker_kind: "local",
+      tracker_local_config_path: config_path,
+      tracker_local_project: "siaan",
+      tracker_active_states: ["status:ready", "status:in-progress"],
+      tracker_terminal_states: ["status:done"]
+    )
+
+    assert {:ok, [issue]} = Adapter.fetch_issue_states_by_ids([slug])
+    assert Adapter.dispatch_target_state(issue) == "status:in-progress"
+  end
+
   test "local issue helpers cover missing files and frontmatter fallbacks" do
     issue_root = tmp_dir!("local-issue-helper-coverage")
     project_dir = Path.expand("..", File.cwd!())
@@ -1667,10 +1858,115 @@ defmodule SymphonyElixir.LocalTrackerTest do
     assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
     assert is_binary(issue.prompt_template_path)
     assert File.exists?(issue.prompt_template_path)
+    assert [%{name: "siaan-inprogress", prompt_template_path: prompt_path}] = issue.skill_prompts
+    assert prompt_path == issue.prompt_template_path
     refute String.starts_with?(issue.prompt_template_path, project_dir)
 
     prompt = PromptBuilder.build_prompt(issue)
     assert prompt =~ "Issue path: #{Path.join([issue_root, "in-progress", slug, "issue.md"])}"
+  end
+
+  test "local issue resolves ordered multi-skill prompts for config-driven review states" do
+    issue_root = tmp_dir!("local-multi-skill-review")
+    project_dir = Path.join(issue_root, "project")
+    slug = "review-stage"
+
+    workflow = %{
+      "review" => %{
+        activities: [
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-reflect"},
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-consistency"},
+          %LocalWorkflow.Activity{type: :skill, name: "siaan-review"}
+        ],
+        transitions: []
+      }
+    }
+
+    File.mkdir_p!(Path.join([issue_root, "review", slug]))
+    File.mkdir_p!(project_dir)
+
+    File.write!(
+      Path.join([issue_root, "review", slug, "issue.md"]),
+      """
+      ---
+      identifier: GH-47
+      title: Review stage pipeline
+      status: review
+      ---
+      body
+      """
+    )
+
+    File.write!(Path.join([issue_root, "review", slug, "workpad.md"]), "---\nstatus: review\n---\n")
+
+    assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
+
+    assert Enum.map(issue.skill_prompts, & &1.name) == [
+             "siaan-reflect",
+             "siaan-consistency",
+             "siaan-review"
+           ]
+
+    assert issue.prompt_template_path =~ "siaan-reflect.md"
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt =~ "Run the configured skill contracts in this exact order"
+    assert prompt =~ "## Skill: siaan-reflect"
+    assert prompt =~ "## Skill: siaan-consistency"
+    assert prompt =~ "## Skill: siaan-review"
+
+    {reflect_index, _} = :binary.match(prompt, "## Skill: siaan-reflect")
+    {consistency_index, _} = :binary.match(prompt, "## Skill: siaan-consistency")
+    {review_index, _} = :binary.match(prompt, "## Skill: siaan-review")
+
+    assert reflect_index < consistency_index
+    assert consistency_index < review_index
+  end
+
+  test "local issue can dispatch a project-defined skill without orchestrator code changes" do
+    issue_root = tmp_dir!("local-project-defined-skill")
+    project_dir = Path.join(issue_root, "project")
+    slug = "translate-task"
+    skill_dir = Path.join([project_dir, ".claude", "skills", "translate-issue"])
+
+    workflow = %{
+      "ready" => %{
+        activities: [%LocalWorkflow.Activity{type: :skill, name: "translate-issue"}],
+        transitions: []
+      }
+    }
+
+    File.mkdir_p!(Path.join([issue_root, "ready"]))
+    File.mkdir_p!(skill_dir)
+
+    File.write!(
+      Path.join([issue_root, "ready", "#{slug}.md"]),
+      """
+      ---
+      identifier: GH-99
+      title: Translate artifact
+      status: ready
+      ---
+      body
+      """
+    )
+
+    File.write!(
+      Path.join(skill_dir, "SKILL.md"),
+      """
+      Translate the issue content from `{{ issue.issue_path }}` and write the result to `{{ issue.workpad_path }}`.
+      """
+    )
+
+    assert {:ok, issue} = LocalIssue.load_by_slug(issue_root, slug, project_dir, workflow)
+    assert [%{name: "translate-issue", prompt_template_path: prompt_path}] = issue.skill_prompts
+    assert prompt_path == Path.join(skill_dir, "SKILL.md")
+    assert issue.prompt_template_path == prompt_path
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt =~ "## Skill: translate-issue"
+    assert prompt =~ "Translate the issue content"
+    assert prompt =~ Path.join([issue_root, "ready", "#{slug}.md"])
   end
 
   test "prompt builder local-template path still includes allowlist context" do

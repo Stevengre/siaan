@@ -16,7 +16,11 @@ defmodule SymphonyElixir.Install.Repository do
   @spec workflow_paths(Path.t()) :: [Path.t()]
   def workflow_paths(repo_root) do
     [
+      Path.join(repo_root, "runtime.yaml"),
+      Path.join(repo_root, "runtime.yml"),
       Path.join(repo_root, "WORKFLOW.md"),
+      Path.join([repo_root, "elixir", "runtime.yaml"]),
+      Path.join([repo_root, "elixir", "runtime.yml"]),
       Path.join([repo_root, "elixir", "WORKFLOW.md"]),
       Path.join([repo_root, "elixir", "WORKFLOW.github.example.md"])
     ]

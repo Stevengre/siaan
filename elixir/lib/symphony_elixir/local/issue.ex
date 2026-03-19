@@ -3,8 +3,8 @@ defmodule SymphonyElixir.Local.Issue do
   Reads local issue directories and materializes orchestrator issue structs.
   """
 
-  alias SymphonyElixir.Linear.Issue, as: TrackerIssue
   alias SymphonyElixir.Local.Workflow
+  alias SymphonyElixir.TrackerIssue
 
   @directory_states MapSet.new(["in-progress", "review", "done"])
 
@@ -102,17 +102,8 @@ defmodule SymphonyElixir.Local.Issue do
           else: Path.join(issue_dir, "#{slug}.workpad.md")
         )
 
-      skill_template =
-        workflow
-        |> Map.get(state, %{activities: []})
-        |> Map.get(:activities, [])
-        |> Enum.find_value(fn
-          %Workflow.Activity{type: :skill, name: "siaan-inprogress"} ->
-            skill_template_path("siaan-inprogress.md")
-
-          _ ->
-            nil
-        end)
+      skill_prompts = skill_prompts_for_state(workflow, state, project_dir)
+      skill_template = skill_prompts |> List.first() |> skill_prompt_path()
 
       {:ok,
        %TrackerIssue{
@@ -133,6 +124,7 @@ defmodule SymphonyElixir.Local.Issue do
          project_dir: project_dir,
          project_runtime: project_runtime,
          prompt_template_path: skill_template,
+         skill_prompts: skill_prompts,
          base_branch: Map.get(frontmatter, "base-branch"),
          current_branch: Map.get(frontmatter, "current-branch")
        }}
@@ -161,7 +153,46 @@ defmodule SymphonyElixir.Local.Issue do
     String.ends_with?(file_name, ".md") and not String.ends_with?(file_name, ".workpad.md")
   end
 
-  defp skill_template_path(file_name) when is_binary(file_name) do
+  defp skill_prompts_for_state(workflow, state, project_dir) when is_map(workflow) and is_binary(state) do
+    workflow
+    |> Map.get(state, %{activities: []})
+    |> Map.get(:activities, [])
+    |> Enum.reduce([], fn
+      %Workflow.Activity{type: :skill, name: name}, acc ->
+        case resolve_skill_prompt(name, project_dir) do
+          nil -> acc
+          prompt -> acc ++ [prompt]
+        end
+
+      _activity, acc ->
+        acc
+    end)
+  end
+
+  defp resolve_skill_prompt(name, project_dir) when is_binary(name) do
+    with normalized when normalized != "" <- String.trim(name),
+         path when is_binary(path) <- skill_template_path(normalized, project_dir) do
+      %{name: normalized, prompt_template_path: path}
+    else
+      _ -> nil
+    end
+  end
+
+  defp skill_prompt_path(%{prompt_template_path: path}) when is_binary(path), do: path
+  defp skill_prompt_path(_prompt), do: nil
+
+  defp skill_template_path(name, project_dir) when is_binary(name) do
+    builtin_path = builtin_skill_template_path("#{name}.md")
+    project_path = project_skill_template_path(project_dir, name)
+
+    cond do
+      is_binary(builtin_path) -> builtin_path
+      is_binary(project_path) -> project_path
+      true -> nil
+    end
+  end
+
+  defp builtin_skill_template_path(file_name) when is_binary(file_name) do
     case :code.priv_dir(:symphony_elixir) do
       priv_dir when is_list(priv_dir) ->
         path = Path.join([List.to_string(priv_dir), "skills", file_name])
@@ -171,6 +202,14 @@ defmodule SymphonyElixir.Local.Issue do
         nil
     end
   end
+
+  defp project_skill_template_path(project_dir, name)
+       when is_binary(project_dir) and is_binary(name) do
+    path = Path.join([project_dir, ".claude", "skills", name, "SKILL.md"])
+    if File.exists?(path), do: path, else: nil
+  end
+
+  defp project_skill_template_path(_project_dir, _name), do: nil
 
   @spec read_frontmatter(Path.t()) :: {map(), String.t()}
   def read_frontmatter(path) when is_binary(path) do

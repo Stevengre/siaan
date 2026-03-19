@@ -5,7 +5,9 @@ defmodule SymphonyElixir.Linear.Adapter do
 
   @behaviour SymphonyElixir.Tracker
 
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.TrackerIssue
 
   @create_comment_mutation """
   mutation SymphonyCreateComment($issueId: String!, $body: String!) {
@@ -73,9 +75,55 @@ defmodule SymphonyElixir.Linear.Adapter do
     end
   end
 
+  @spec active_states() :: [String.t()]
+  def active_states, do: Config.settings!().tracker.active_states || []
+
+  @spec terminal_states() :: [String.t()]
+  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+
+  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%TrackerIssue{state: issue_state}), do: dispatch_target_state(issue_state)
+
+  def dispatch_target_state(issue_state) do
+    normalized_issue_state = normalize_state(issue_state)
+    ready_state = normalize_state(Config.settings!().tracker.ready_label)
+
+    if normalized_issue_state == "" or normalized_issue_state != ready_state do
+      nil
+    else
+      active_states()
+      |> Enum.find(fn state_name ->
+        normalized_state = normalize_state(state_name)
+        normalized_state != "" and normalized_state != ready_state
+      end)
+    end
+  end
+
+  @spec initial_dispatch_transition_name() :: String.t() | nil
+  def initial_dispatch_transition_name do
+    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+         target_state when is_binary(target_state) <- dispatch_target_state(ready_state) do
+      SymphonyElixir.DispatchLifecycle.transition_name(ready_state, target_state)
+    end
+  end
+
+  @spec reconcile_watch_states(
+          (String.t(), String.t() -> term()),
+          (String.t(), String.t() | nil, String.t() -> term())
+        ) :: :ok | {:error, term()}
+  def reconcile_watch_states(_update_issue_state_fun, _mark_pending_transition_fun), do: :ok
+
   defp client_module do
     Application.get_env(:symphony_elixir, :linear_client_module, Client)
   end
+
+  defp normalize_state(state) when is_binary(state) do
+    state
+    |> String.trim()
+    |> String.downcase()
+  end
+
+  defp normalize_state(_state), do: ""
 
   defp resolve_state_id(issue_id, state_name) do
     with {:ok, response} <-

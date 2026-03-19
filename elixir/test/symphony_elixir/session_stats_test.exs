@@ -4,7 +4,7 @@ defmodule SymphonyElixir.SessionStatsTest do
   alias SymphonyElixir.SessionStats
 
   test "configured_model parses the model from codex command" do
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       codex_command: "codex --config foo=bar --model gpt-5.2-codex app-server"
     )
 
@@ -12,13 +12,13 @@ defmodule SymphonyElixir.SessionStatsTest do
   end
 
   test "configured_model normalizes quoted model flags" do
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       codex_command: ~s(codex --config foo=bar --model "gpt-5.2-codex" app-server)
     )
 
     assert SessionStats.configured_model() == "gpt-5.2-codex"
 
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       codex_command: ~s(codex --model='gpt-5.3-codex' app-server)
     )
 
@@ -26,13 +26,13 @@ defmodule SymphonyElixir.SessionStatsTest do
   end
 
   test "configured_model parses equals form and ignores blank values" do
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       codex_command: "codex --model=gpt-5.1-codex app-server"
     )
 
     assert SessionStats.configured_model() == "gpt-5.1-codex"
 
-    write_workflow_file!(Workflow.workflow_file_path(),
+    write_workflow_file!(RuntimeConfig.path(),
       codex_command: ~s(codex --model "" app-server)
     )
 
@@ -40,7 +40,7 @@ defmodule SymphonyElixir.SessionStatsTest do
   end
 
   test "configured_model returns nil when the codex command has no model flag" do
-    write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
+    write_workflow_file!(RuntimeConfig.path(), codex_command: "codex app-server")
 
     assert SessionStats.configured_model() == nil
   end
@@ -87,7 +87,7 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "recent history starts empty and appends records under the workflow workspace" do
     workspace_root = tmp_dir!("session-stats-history")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert SessionStats.load_recent_history() == []
 
@@ -104,7 +104,7 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "load_recent_history respects the requested limit" do
     workspace_root = tmp_dir!("session-stats-limit")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "MT-1"})
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "MT-2"})
@@ -117,7 +117,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     workspace_root = tmp_dir!("session-stats-limit-after-decode")
     history_path = Path.join(workspace_root, ".siaan/session-stats.ndjson")
 
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
     File.mkdir_p!(Path.dirname(history_path))
 
     File.write!(
@@ -135,7 +135,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     workspace_root = tmp_dir!("session-stats-malformed")
     history_path = Path.join(workspace_root, ".siaan/session-stats.ndjson")
 
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
     File.mkdir_p!(Path.dirname(history_path))
 
     File.write!(
@@ -151,7 +151,7 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "load_recent_history returns an empty list for non-file read errors" do
     workspace_root = tmp_dir!("session-stats-read-error")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
     File.mkdir_p!(Path.join(workspace_root, ".siaan/session-stats.ndjson"))
 
     assert SessionStats.load_recent_history() == []
@@ -163,7 +163,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     history_path = Path.join(System.user_home() || "", "#{relative_root}/.siaan/session-stats.ndjson")
 
     File.rm_rf(Path.join(System.user_home() || "", relative_root))
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-34"})
     assert File.exists?(history_path)
@@ -174,7 +174,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     history_path = Path.join(home, ".siaan/session-stats.ndjson")
 
     File.rm_rf(Path.join(home, ".siaan"))
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: "~")
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: "~")
 
     assert :ok = SessionStats.append_history_record(%{"issue_identifier" => "GH-35"})
     assert File.exists?(history_path)
@@ -185,14 +185,14 @@ defmodule SymphonyElixir.SessionStatsTest do
     blocking_path = Path.join(workspace_root, "not-a-directory")
 
     File.write!(blocking_path, "file")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: blocking_path)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: blocking_path)
 
     assert {:error, _reason} = SessionStats.append_history_record(%{"issue_identifier" => "GH-36"})
   end
 
   test "issue sessions persist and can be replaced in the workflow workspace" do
     workspace_root = tmp_dir!("session-stats-issue-sessions")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert SessionStats.load_issue_session("issue-1") == nil
 
@@ -226,7 +226,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     workspace_root = tmp_dir!("session-stats-issue-session-errors")
     issue_sessions_path = Path.join(workspace_root, ".siaan/issue-sessions.json")
 
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
     File.mkdir_p!(Path.dirname(issue_sessions_path))
     File.write!(issue_sessions_path, "not-json")
 
@@ -249,7 +249,7 @@ defmodule SymphonyElixir.SessionStatsTest do
     workspace_root = tmp_dir!("session-stats-issue-session-read-error")
     issue_sessions_path = Path.join(workspace_root, ".siaan/issue-sessions.json")
 
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
     File.mkdir_p!(issue_sessions_path)
 
     assert SessionStats.load_issue_sessions() == %{}
@@ -257,7 +257,7 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "pending transitions are consumed once for issue-session re-entry routing" do
     workspace_root = tmp_dir!("session-stats-pending-transition")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert :ok =
              SessionStats.mark_pending_transition(
@@ -280,7 +280,7 @@ defmodule SymphonyElixir.SessionStatsTest do
 
   test "pending transition helpers reuse existing issue-session records and ignore invalid ids" do
     workspace_root = tmp_dir!("session-stats-pending-transition-existing")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+    write_workflow_file!(RuntimeConfig.path(), workspace_root: workspace_root)
 
     assert :ok =
              SessionStats.save_issue_session(%{
@@ -576,8 +576,10 @@ defmodule SymphonyElixir.SessionStatsTest do
     after
       :ok = Application.load(:symphony_elixir)
       SymphonyElixir.TestSupport.ensure_test_application_started!()
+      SymphonyElixir.TestSupport.ensure_runtime_config_store_running!()
       SymphonyElixir.TestSupport.ensure_workflow_store_running!()
-      Workflow.set_workflow_file_path(Workflow.workflow_file_path())
+      RuntimeConfig.set_path(RuntimeConfig.path())
+      SymphonyElixir.RuntimeConfigStore.force_reload()
       WorkflowStore.force_reload()
     end
   end

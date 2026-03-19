@@ -1,12 +1,12 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single Linear issue in its workspace with Codex.
+  Executes a single tracker issue in its workspace with Codex.
   """
 
   use GenServer
   require Logger
   alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.{Config, PromptBuilder, Tracker, TrackerIssue, Workspace}
 
   @type worker_host :: String.t() | nil
 
@@ -264,7 +264,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp send_dispatch_completed(recipient, %Issue{id: issue_id})
+  defp send_dispatch_completed(recipient, %TrackerIssue{id: issue_id})
        when is_pid(recipient) and is_binary(issue_id) do
     send(recipient, {:agent_runner_dispatch_complete, issue_id})
     :ok
@@ -278,7 +278,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp send_codex_update(recipient, %Issue{id: issue_id}, message)
+  defp send_codex_update(recipient, %TrackerIssue{id: issue_id}, message)
        when is_binary(issue_id) and is_pid(recipient) do
     send(recipient, {:codex_worker_update, issue_id, message})
     :ok
@@ -286,7 +286,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_codex_update(_recipient, _issue, _message), do: :ok
 
-  defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace)
+  defp send_worker_runtime_info(recipient, %TrackerIssue{id: issue_id}, worker_host, workspace)
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do
     send(
       recipient,
@@ -415,7 +415,7 @@ defmodule SymphonyElixir.AgentRunner do
     """
     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+    - The previous Codex turn completed normally, but the tracker issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - This corresponds to issue-session turn ##{issue_turn_count + turn_number}.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
@@ -436,9 +436,10 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
+  defp continue_with_issue?(%TrackerIssue{id: issue_id} = issue, issue_state_fetcher)
+       when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
-      {:ok, [%Issue{} = refreshed_issue | _]} ->
+      {:ok, [%TrackerIssue{} = refreshed_issue | _]} ->
         if active_issue_state?(refreshed_issue.state) do
           {:continue, refreshed_issue}
         else
@@ -458,7 +459,7 @@ defmodule SymphonyElixir.AgentRunner do
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
 
-    Config.settings!().tracker.active_states
+    Tracker.active_states()
     |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
   end
 
@@ -514,7 +515,7 @@ defmodule SymphonyElixir.AgentRunner do
     |> String.downcase()
   end
 
-  defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
+  defp issue_context(%TrackerIssue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 

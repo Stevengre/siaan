@@ -17,5 +17,5 @@ config :symphony_elixir, SymphonyElixirWeb.Endpoint,
 
 if config_env() == :test do
   config :symphony_elixir,
-    workflow_file_path: Path.expand("../test/support/STARTUP_WORKFLOW.md", __DIR__)
+    runtime_config_path: Path.expand("../test/support/STARTUP_RUNTIME.yaml", __DIR__)
 end

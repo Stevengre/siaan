@@ -31,7 +31,7 @@ test:
 
 dialyzer:
 	$(MIX) deps.get
-	$(MIX) dialyzer --format short
+	$(MIX) dialyzer
 
 e2e:
 	SYMPHONY_RUN_LIVE_E2E=1 $(MIX) test test/symphony_elixir/live_e2e_test.exs

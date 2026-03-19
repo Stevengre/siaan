@@ -1,13 +1,12 @@
 defmodule SymphonyElixir.Config do
   @moduledoc """
-  Runtime configuration loaded from `WORKFLOW.md`.
+  Runtime configuration loaded from the configured runtime source.
   """
 
-  alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.{Config.Schema, RuntimeSource}
 
   @default_prompt_template """
-  You are working on a Linear issue.
+  You are working on a tracker issue.
 
   Identifier: {{ issue.identifier }}
   Title: {{ issue.title }}
@@ -34,7 +33,7 @@ defmodule SymphonyElixir.Config do
 
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
-    case Workflow.current() do
+    case RuntimeSource.current() do
       {:ok, %{config: config}} when is_map(config) ->
         Schema.parse(config)
 
@@ -80,7 +79,7 @@ defmodule SymphonyElixir.Config do
 
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
-    case Workflow.current() do
+    case RuntimeSource.current() do
       {:ok, %{prompt_template: prompt}} ->
         if String.trim(prompt) == "", do: @default_prompt_template, else: prompt
 
@@ -203,25 +202,25 @@ defmodule SymphonyElixir.Config do
   defp format_config_error(reason) do
     case reason do
       {:invalid_workflow_config, message} ->
-        "Invalid WORKFLOW.md config: #{message}"
+        "Invalid runtime config: #{message}"
 
       {:missing_workflow_file, path, raw_reason} ->
-        "Missing WORKFLOW.md at #{path}: #{inspect(raw_reason)}"
+        "Missing runtime config at #{path}: #{inspect(raw_reason)}"
 
       {:workflow_parse_error, raw_reason} ->
-        "Failed to parse WORKFLOW.md: #{inspect(raw_reason)}"
+        "Failed to parse runtime config: #{inspect(raw_reason)}"
 
       :workflow_front_matter_not_a_map ->
-        "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+        "Failed to parse runtime config: legacy markdown front matter must decode to a map"
 
       :missing_local_project ->
-        "Invalid WORKFLOW.md config: missing_local_project"
+        "Invalid runtime config: missing_local_project"
 
       :missing_local_config_path ->
-        "Invalid WORKFLOW.md config: missing_local_config_path"
+        "Invalid runtime config: missing_local_config_path"
 
       other ->
-        "Invalid WORKFLOW.md config: #{inspect(other)}"
+        "Invalid runtime config: #{inspect(other)}"
     end
   end
 end

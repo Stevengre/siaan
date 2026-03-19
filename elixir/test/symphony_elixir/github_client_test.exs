@@ -1888,12 +1888,12 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
     assert {:ok, :ready, 61} = Client.check_auto_merge_readiness_for_test("7", ready_request)
 
-    blocked_request = fn :get, url, _opts ->
+    blocked_request = fn method, url, _opts ->
       cond do
-        String.ends_with?(url, "/pulls") ->
+        method == :get and String.ends_with?(url, "/pulls") ->
           {:ok, %{status: 200, body: [%{"number" => 62, "body" => "Closes #7"}]}}
 
-        String.ends_with?(url, "/pulls/62") ->
+        method == :get and String.ends_with?(url, "/pulls/62") ->
           {:ok,
            %{
              status: 200,
@@ -1905,13 +1905,13 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              }
            }}
 
-        String.ends_with?(url, "/commits/abc123/check-runs") ->
+        method == :get and String.ends_with?(url, "/commits/abc123/check-runs") ->
           {:ok, %{status: 200, body: %{"check_runs" => [%{"status" => "queued"}]}}}
 
-        String.ends_with?(url, "/pulls/62/reviews") ->
+        method == :get and String.ends_with?(url, "/pulls/62/reviews") ->
           {:ok, %{status: 200, body: []}}
 
-        String.ends_with?(url, "/issues/62/comments") ->
+        method == :get and String.ends_with?(url, "/issues/62/comments") ->
           {:ok,
            %{
              status: 200,
@@ -1921,11 +1921,37 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              ]
            }}
 
-        String.ends_with?(url, "/pulls/62/comments") ->
+        method == :get and String.ends_with?(url, "/pulls/62/comments") ->
           {:ok, %{status: 200, body: [%{"id" => 9, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
 
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "nodes" => [
+                         %{
+                           "isResolved" => false,
+                           "comments" => %{
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "still open", "createdAt" => "2026-03-03T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
         true ->
-          flunk("unexpected URL #{url}")
+          flunk("unexpected #{method} #{url}")
       end
     end
 
@@ -2652,28 +2678,28 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert {:ok, :needs_agent, ["mergeability pending"]} =
              Client.check_auto_merge_readiness_for_test("7", unknown_mergeability_state_request)
 
-    follow_up_after_siaan_review_comment_request = fn :get, url, _opts ->
+    follow_up_after_siaan_review_comment_request = fn method, url, _opts ->
       cond do
-        String.ends_with?(url, "/pulls") ->
+        method == :get and String.ends_with?(url, "/pulls") ->
           {:ok, %{status: 200, body: [%{"number" => 87, "body" => "closes #7"}]}}
 
-        String.ends_with?(url, "/pulls/87") ->
+        method == :get and String.ends_with?(url, "/pulls/87") ->
           {:ok,
            %{
              status: 200,
              body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-87"}, "title" => "t", "body" => "b"}
            }}
 
-        String.ends_with?(url, "/commits/sha-87/check-runs") ->
+        method == :get and String.ends_with?(url, "/commits/sha-87/check-runs") ->
           {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
-        String.ends_with?(url, "/pulls/87/reviews") ->
+        method == :get and String.ends_with?(url, "/pulls/87/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
 
-        String.ends_with?(url, "/issues/87/comments") ->
+        method == :get and String.ends_with?(url, "/issues/87/comments") ->
           {:ok, %{status: 200, body: []}}
 
-        String.ends_with?(url, "/pulls/87/comments") ->
+        method == :get and String.ends_with?(url, "/pulls/87/comments") ->
           {:ok,
            %{
              status: 200,
@@ -2684,36 +2710,64 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              ]
            }}
 
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "nodes" => [
+                         %{
+                           "isResolved" => false,
+                           "comments" => %{
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "first", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "siaan-bot"}, "body" => "[siaan] fixed", "createdAt" => "2026-03-02T00:00:00Z"},
+                               %{"author" => %{"login" => "reviewer"}, "body" => "one more thing", "createdAt" => "2026-03-03T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
         true ->
-          flunk("unexpected URL #{url}")
+          flunk("unexpected #{method} #{url}")
       end
     end
 
     assert {:ok, :needs_agent, ["unanswered review comments"]} =
              Client.check_auto_merge_readiness_for_test("7", follow_up_after_siaan_review_comment_request)
 
-    spoofed_siaan_review_reply_request = fn :get, url, _opts ->
+    spoofed_siaan_review_reply_request = fn method, url, _opts ->
       cond do
-        String.ends_with?(url, "/pulls") ->
+        method == :get and String.ends_with?(url, "/pulls") ->
           {:ok, %{status: 200, body: [%{"number" => 96, "body" => "closes #7"}]}}
 
-        String.ends_with?(url, "/pulls/96") ->
+        method == :get and String.ends_with?(url, "/pulls/96") ->
           {:ok,
            %{
              status: 200,
              body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-96"}, "title" => "t", "body" => "b"}
            }}
 
-        String.ends_with?(url, "/commits/sha-96/check-runs") ->
+        method == :get and String.ends_with?(url, "/commits/sha-96/check-runs") ->
           {:ok, %{status: 200, body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}}}
 
-        String.ends_with?(url, "/pulls/96/reviews") ->
+        method == :get and String.ends_with?(url, "/pulls/96/reviews") ->
           {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
 
-        String.ends_with?(url, "/issues/96/comments") ->
+        method == :get and String.ends_with?(url, "/issues/96/comments") ->
           {:ok, %{status: 200, body: []}}
 
-        String.ends_with?(url, "/pulls/96/comments") ->
+        method == :get and String.ends_with?(url, "/pulls/96/comments") ->
           {:ok,
            %{
              status: 200,
@@ -2723,13 +2777,796 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              ]
            }}
 
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "nodes" => [
+                         %{
+                           "isResolved" => false,
+                           "comments" => %{
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "nit", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "outsider"}, "body" => "[siaan] fixed", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
         true ->
-          flunk("unexpected URL #{url}")
+          flunk("unexpected #{method} #{url}")
       end
     end
 
     assert {:ok, :needs_agent, ["unanswered review comments"]} =
              Client.check_auto_merge_readiness_for_test("7", spoofed_siaan_review_reply_request)
+
+    resolved_review_thread_request = fn method, url, _opts ->
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 95, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/95") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "blocked", "head" => %{"sha" => "sha-95"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-95/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/95/reviews") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/issues/95/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/95/comments") ->
+          {:ok,
+           %{
+             status: 200,
+             body: [
+               %{"id" => 50, "user" => %{"login" => "reviewer"}, "body" => "please update this", "created_at" => "2026-03-01T00:00:00Z"}
+             ]
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "nodes" => [
+                         %{
+                           "isResolved" => true,
+                           "comments" => %{
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please update this", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "siaan-bot"}, "body" => "[siaan] addressed", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["mergeability pending", "no PR approval"]} =
+             Client.check_auto_merge_readiness_for_test("7", resolved_review_thread_request)
+
+    paginated_review_thread_pages_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+      graphql_vars = graphql_payload["variables"] || %{}
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 92, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/92") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-92"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-92/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/92/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/92/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/92/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 64, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreads" and graphql_vars["after"] == nil ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => true, "endCursor" => "cursor-92"},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-92-a",
+                           "isResolved" => true,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "done", "createdAt" => "2026-03-01T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreads" and graphql_vars["after"] == "cursor-92" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-92-b",
+                           "isResolved" => false,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please fix this", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", paginated_review_thread_pages_request)
+
+    paginated_review_thread_comments_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+      graphql_vars = graphql_payload["variables"] || %{}
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 93, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/93") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-93"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-93/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/93/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/93/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/93/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 65, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+            graphql_query =~ "query SymphonyReviewThreads" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-93-a",
+                           "isResolved" => false,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => true, "endCursor" => "comments-93"},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please update", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "siaan-bot"}, "body" => "[siaan] addressed", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreadComments" and graphql_vars["after"] == "comments-93" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "node" => %{
+                   "comments" => %{
+                     "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                     "nodes" => [
+                       %{"author" => %{"login" => "reviewer"}, "body" => "still open", "createdAt" => "2026-03-03T00:00:00Z"}
+                     ]
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", paginated_review_thread_comments_request)
+
+    multi_page_review_thread_comments_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+      graphql_vars = graphql_payload["variables"] || %{}
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 94, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/94") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-94"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-94/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/94/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/94/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/94/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 66, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+            graphql_query =~ "query SymphonyReviewThreads" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-94-a",
+                           "isResolved" => false,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => true, "endCursor" => "comments-94-a"},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please update", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "siaan-bot"}, "body" => "[siaan] addressed", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreadComments" and graphql_vars["after"] == "comments-94-a" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "node" => %{
+                   "comments" => %{
+                     "pageInfo" => %{"hasNextPage" => true, "endCursor" => "comments-94-b"},
+                     "nodes" => []
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreadComments" and graphql_vars["after"] == "comments-94-b" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "node" => %{
+                   "comments" => %{
+                     "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                     "nodes" => [
+                       %{"author" => %{"login" => "reviewer"}, "body" => "still open", "createdAt" => "2026-03-03T00:00:00Z"}
+                     ]
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["unanswered review comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", multi_page_review_thread_comments_request)
+
+    paginated_review_thread_comment_error_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+      graphql_vars = graphql_payload["variables"] || %{}
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 96, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/96") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-96"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-96/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/96/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/96/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/96/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 67, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+            graphql_query =~ "query SymphonyReviewThreads" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-96-a",
+                           "isResolved" => false,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => true, "endCursor" => "comments-96"},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please update", "createdAt" => "2026-03-01T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreadComments" and graphql_vars["after"] == "comments-96" ->
+          {:ok, %{status: 200, body: %{"errors" => [%{"message" => "boom"}]}}}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", paginated_review_thread_comment_error_request)
+
+    malformed_review_thread_page_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 97, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/97") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-97"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-97/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/97/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/97/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/97/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 68, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+            graphql_query =~ "query SymphonyReviewThreads" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => "invalid"
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :ready, 97} =
+             Client.check_auto_merge_readiness_for_test("7", malformed_review_thread_page_request)
+
+    malformed_review_thread_comment_page_request = fn method, url, opts ->
+      graphql_payload = Keyword.get(opts, :json, %{})
+      graphql_query = graphql_payload["query"]
+      graphql_vars = graphql_payload["variables"] || %{}
+
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 98, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/98") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-98"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-98/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/98/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/98/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/98/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 69, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" and
+            graphql_query =~ "query SymphonyReviewThreads" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                       "nodes" => [
+                         %{
+                           "id" => "thread-98-a",
+                           "isResolved" => false,
+                           "comments" => %{
+                             "pageInfo" => %{"hasNextPage" => true, "endCursor" => "comments-98"},
+                             "nodes" => [
+                               %{"author" => %{"login" => "reviewer"}, "body" => "please update", "createdAt" => "2026-03-01T00:00:00Z"},
+                               %{"author" => %{"login" => "siaan-bot"}, "body" => "[siaan] addressed", "createdAt" => "2026-03-02T00:00:00Z"}
+                             ]
+                           }
+                         }
+                       ]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        method == :post and url == "https://api.github.com/graphql" and
+          graphql_query =~ "query SymphonyReviewThreadComments" and graphql_vars["after"] == "comments-98" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "node" => %{
+                   "comments" => %{
+                     "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
+                     "nodes" => "invalid"
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url} opts=#{inspect(opts)}")
+      end
+    end
+
+    assert {:ok, :ready, 98} =
+             Client.check_auto_merge_readiness_for_test("7", malformed_review_thread_comment_page_request)
+
+    malformed_review_thread_request = fn method, url, _opts ->
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 91, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/91") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-91"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-91/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/91/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/91/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/91/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 63, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{
+               "data" => %{
+                 "repository" => %{
+                   "pullRequest" => %{
+                     "reviewThreads" => %{
+                       "nodes" => [%{"comments" => %{"nodes" => "invalid"}}]
+                     }
+                   }
+                 }
+               }
+             }
+           }}
+
+        true ->
+          flunk("unexpected #{method} #{url}")
+      end
+    end
+
+    assert {:ok, :ready, 91} =
+             Client.check_auto_merge_readiness_for_test("7", malformed_review_thread_request)
+
+    graphql_review_threads_error_request = fn method, url, _opts ->
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 88, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/88") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-88"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-88/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/88/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/88/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/88/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 60, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok, %{status: 200, body: %{"errors" => [%{"message" => "boom"}]}}}
+
+        true ->
+          flunk("unexpected #{method} #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", graphql_review_threads_error_request)
+
+    graphql_review_threads_status_request = fn method, url, _opts ->
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 89, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/89") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-89"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-89/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/89/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/89/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/89/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 61, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:ok, %{status: 502, body: %{}}}
+
+        true ->
+          flunk("unexpected #{method} #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", graphql_review_threads_status_request)
+
+    graphql_review_threads_transport_request = fn method, url, _opts ->
+      cond do
+        method == :get and String.ends_with?(url, "/pulls") ->
+          {:ok, %{status: 200, body: [%{"number" => 90, "body" => "closes #7"}]}}
+
+        method == :get and String.ends_with?(url, "/pulls/90") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"mergeable_state" => "clean", "head" => %{"sha" => "sha-90"}, "title" => "t", "body" => "b"}
+           }}
+
+        method == :get and String.ends_with?(url, "/commits/sha-90/check-runs") ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"check_runs" => [%{"name" => "ci", "status" => "completed", "conclusion" => "success"}]}
+           }}
+
+        method == :get and String.ends_with?(url, "/pulls/90/reviews") ->
+          {:ok, %{status: 200, body: [%{"user" => %{"login" => "maintainer"}, "state" => "APPROVED"}]}}
+
+        method == :get and String.ends_with?(url, "/issues/90/comments") ->
+          {:ok, %{status: 200, body: []}}
+
+        method == :get and String.ends_with?(url, "/pulls/90/comments") ->
+          {:ok, %{status: 200, body: [%{"id" => 62, "user" => %{"login" => "reviewer"}, "body" => "still open"}]}}
+
+        method == :post and url == "https://api.github.com/graphql" ->
+          {:error, :timeout}
+
+        true ->
+          flunk("unexpected #{method} #{url}")
+      end
+    end
+
+    assert {:ok, :needs_agent, ["failed to check comments"]} =
+             Client.check_auto_merge_readiness_for_test("7", graphql_review_threads_transport_request)
 
     single_reply_for_multiple_issue_comments_request = fn :get, url, _opts ->
       cond do

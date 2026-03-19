@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Local.Adapter do
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.Local.{Issue, ProjectConfig, Workflow}
+  alias SymphonyElixir.TrackerIssue
 
   @directory_states MapSet.new(["in-progress", "review", "done"])
 
@@ -23,7 +24,7 @@ defmodule SymphonyElixir.Local.Adapter do
              context.project.runtime
            ) do
       active_states =
-        Config.settings!().tracker.active_states
+        active_states()
         |> Enum.map(&normalize_tracker_state/1)
         |> MapSet.new()
 
@@ -103,6 +104,72 @@ defmodule SymphonyElixir.Local.Adapter do
     end
   end
 
+  @spec active_states() :: [String.t()]
+  def active_states do
+    case load_context() do
+      {:ok, context} ->
+        context.workflow
+        |> active_workflow_state_names()
+        |> Enum.map(&Issue.tracker_state_from_storage_state/1)
+        |> fallback_active_states_if_empty()
+
+      {:error, _reason} ->
+        fallback_active_states()
+    end
+  end
+
+  @spec terminal_states() :: [String.t()]
+  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+
+  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%TrackerIssue{state: issue_state, issue_path: issue_path}) do
+    normalized_state = normalize_storage_state(issue_state)
+
+    with {:ok, context} <- load_context(),
+         true <- is_binary(issue_path),
+         {:ok, %Workflow.Transition{to: target_state}} <-
+           Workflow.first_matching_transition(context.workflow, normalized_state, issue_path) do
+      Issue.tracker_state_from_storage_state(target_state)
+    else
+      _ -> dispatch_target_state(issue_state)
+    end
+  end
+
+  def dispatch_target_state(issue_state) when is_binary(issue_state) do
+    normalized_state = normalize_storage_state(issue_state)
+
+    with {:ok, context} <- load_context(),
+         %{transitions: [%Workflow.Transition{to: target_state} | _]} <- Map.get(context.workflow, normalized_state) do
+      Issue.tracker_state_from_storage_state(target_state)
+    else
+      _ -> fallback_dispatch_target_state(issue_state)
+    end
+  end
+
+  def dispatch_target_state(_issue_state), do: nil
+
+  @spec initial_dispatch_transition_name() :: String.t() | nil
+  def initial_dispatch_transition_name do
+    with {:ok, context} <- load_context(),
+         ready_state when is_binary(ready_state) <- dispatch_entry_state(context.workflow),
+         target_state when is_binary(target_state) <-
+           dispatch_target_state(Issue.tracker_state_from_storage_state(ready_state)) do
+      SymphonyElixir.DispatchLifecycle.transition_name(
+        Issue.tracker_state_from_storage_state(ready_state),
+        target_state
+      )
+    else
+      _ ->
+        fallback_initial_dispatch_transition_name()
+    end
+  end
+
+  @spec reconcile_watch_states(
+          (String.t(), String.t() -> term()),
+          (String.t(), String.t() | nil, String.t() -> term())
+        ) :: :ok | {:error, term()}
+  def reconcile_watch_states(_update_issue_state_fun, _mark_pending_transition_fun), do: :ok
+
   defp load_context do
     settings = Config.settings!()
     tracker = settings.tracker
@@ -116,6 +183,70 @@ defmodule SymphonyElixir.Local.Adapter do
     with {:ok, project} <- ProjectConfig.load(config_path, project_name),
          {:ok, workflow} <- Workflow.load(project.workflow) do
       {:ok, %{project: project, workflow: workflow, root_path: Path.dirname(config_path)}}
+    end
+  end
+
+  defp workflow_state_names(workflow) when is_map(workflow) do
+    workflow
+    |> Map.keys()
+    |> Enum.filter(&is_binary/1)
+  end
+
+  defp active_workflow_state_names(workflow) when is_map(workflow) do
+    workflow
+    |> workflow_state_names()
+    |> Enum.filter(&active_workflow_state?(workflow, &1))
+  end
+
+  defp active_workflow_state?(workflow, state_name) when is_binary(state_name) do
+    workflow
+    |> Map.get(state_name, %{activities: []})
+    |> Map.get(:activities, [])
+    |> Enum.any?(&skill_activity?/1)
+  end
+
+  defp dispatch_entry_state(workflow) when is_map(workflow) do
+    state_names = workflow_state_names(workflow)
+
+    if "ready" in state_names do
+      "ready"
+    else
+      Enum.find(state_names, &dispatch_entry_candidate?(workflow, &1))
+    end
+  end
+
+  defp fallback_dispatch_target_state(issue_state) when is_binary(issue_state) do
+    normalized_issue_state = normalize_tracker_state(issue_state)
+    ready_state = normalize_tracker_state(Config.settings!().tracker.ready_label)
+
+    if normalized_issue_state != ready_state do
+      nil
+    else
+      active_states()
+      |> Enum.find(fn state_name ->
+        normalized_state = normalize_tracker_state(state_name)
+        normalized_state != ready_state
+      end)
+    end
+  end
+
+  defp dispatch_entry_candidate?(workflow, state_name) do
+    case Map.get(workflow, state_name, %{activities: [], transitions: []}) do
+      %{activities: activities, transitions: [_ | _]} ->
+        Enum.all?(activities, &(not skill_activity?(&1)))
+
+      _ ->
+        false
+    end
+  end
+
+  defp skill_activity?(%Workflow.Activity{type: :skill}), do: true
+  defp skill_activity?(_activity), do: false
+
+  defp fallback_initial_dispatch_transition_name do
+    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+         target_state when is_binary(target_state) <- fallback_dispatch_target_state(ready_state) do
+      SymphonyElixir.DispatchLifecycle.transition_name(ready_state, target_state)
     end
   end
 
@@ -210,6 +341,13 @@ defmodule SymphonyElixir.Local.Adapter do
     do: {:error, {:no_declared_transition, issue_state, target_state}}
 
   defp ensure_transition(_transition, _issue_state, _target_state), do: :ok
+
+  defp fallback_active_states_if_empty([]), do: fallback_active_states()
+  defp fallback_active_states_if_empty(active_states), do: active_states
+
+  defp fallback_active_states do
+    Config.settings!().tracker.active_states || []
+  end
 
   defp transition_issue(issue, workpad_status, context) do
     with :ok <- move_issue(issue, workpad_status, context.root_path) do

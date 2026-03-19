@@ -133,6 +133,60 @@ defmodule SymphonyElixir.GitHub.Client do
 
   @reply_prefix "[siaan]"
   @pulls_per_page 100
+  @review_threads_query """
+  query SymphonyReviewThreads($owner: String!, $repo: String!, $number: Int!, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            isResolved
+            comments(first: 100) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                body
+                createdAt
+                updatedAt
+                author {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  """
+  @review_thread_comments_query """
+  query SymphonyReviewThreadComments($threadId: ID!, $after: String) {
+    node(id: $threadId) {
+      ... on PullRequestReviewThread {
+        comments(first: 100, after: $after) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            body
+            createdAt
+            updatedAt
+            author {
+              login
+            }
+          }
+        }
+      }
+    }
+  }
+  """
 
   @type auto_merge_result :: {:ok, :ready, pos_integer()} | {:ok, :needs_agent, [String.t()]} | {:error, term()}
 
@@ -1129,7 +1183,9 @@ defmodule SymphonyElixir.GitHub.Client do
     allowlist_set = tracker.allowlist |> MapSet.new(&String.downcase/1)
 
     with {:ok, issue_comments} <- fetch_pr_issue_comments(tracker, pr_number, headers, request_fun),
-         {:ok, review_comments} <- fetch_pr_review_comments(tracker, pr_number, headers, request_fun) do
+         {:ok, review_comments} <- fetch_pr_review_comments(tracker, pr_number, headers, request_fun),
+         {:ok, has_unanswered_review_comments} <-
+           has_unanswered_review_comments?(tracker, pr_number, review_comments, allowlist_set, headers, request_fun) do
       blockers = []
 
       blockers =
@@ -1138,7 +1194,7 @@ defmodule SymphonyElixir.GitHub.Client do
           else: blockers
 
       blockers =
-        if has_unanswered_review_comments?(review_comments, allowlist_set),
+        if has_unanswered_review_comments,
           do: ["unanswered review comments" | blockers],
           else: blockers
 
@@ -1193,7 +1249,18 @@ defmodule SymphonyElixir.GitHub.Client do
     end
   end
 
-  defp has_unanswered_review_comments?(comments, allowlist_set) do
+  defp has_unanswered_review_comments?(tracker, pr_number, comments, allowlist_set, headers, request_fun) do
+    if has_unanswered_review_comments_from_rest?(comments, allowlist_set) do
+      case fetch_pr_review_threads(tracker, pr_number, headers, request_fun) do
+        {:ok, threads} -> {:ok, has_unanswered_review_threads?(threads, allowlist_set)}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:ok, false}
+    end
+  end
+
+  defp has_unanswered_review_comments_from_rest?(comments, allowlist_set) do
     # Group by thread (in_reply_to_id), check if each thread has a [siaan] reply
     threads =
       comments
@@ -1225,9 +1292,26 @@ defmodule SymphonyElixir.GitHub.Client do
     end)
   end
 
+  defp has_unanswered_review_threads?(threads, allowlist_set) when is_list(threads) do
+    Enum.any?(threads, &unresolved_review_thread?(&1, allowlist_set))
+  end
+
+  defp unresolved_review_thread?(thread, allowlist_set) when is_map(thread) do
+    cond do
+      thread["isResolved"] == true ->
+        false
+
+      is_list(get_in(thread, ["comments", "nodes"])) ->
+        has_unanswered_review_comments_from_rest?(get_in(thread, ["comments", "nodes"]), allowlist_set)
+
+      true ->
+        false
+    end
+  end
+
   defp actionable_review_comment?(comment, allowlist_set) do
-    login = get_in(comment, ["user", "login"]) || ""
-    body = (comment["body"] || "") |> String.trim()
+    login = comment_author_login(comment)
+    body = comment_body(comment)
 
     MapSet.member?(allowlist_set, String.downcase(login)) and
       not String.starts_with?(body, @reply_prefix) and
@@ -1236,15 +1320,172 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp trusted_siaan_reply_comment?(comment, allowlist_set) do
-    body = (comment["body"] || "") |> String.trim()
-    login = get_in(comment, ["user", "login"])
-    normalized_login = if is_binary(login), do: String.downcase(login), else: ""
+    body = comment_body(comment)
+    normalized_login = comment_author_login(comment) |> String.downcase()
 
     String.starts_with?(body, @reply_prefix) and
       MapSet.member?(allowlist_set, normalized_login)
   end
 
-  defp comment_time(comment), do: comment["created_at"] || comment["updated_at"]
+  defp comment_time(comment) do
+    comment["created_at"] || comment["updated_at"] || comment["createdAt"] || comment["updatedAt"]
+  end
+
+  defp comment_body(comment) do
+    comment
+    |> Map.get("body", "")
+    |> to_string()
+    |> String.trim()
+  end
+
+  defp comment_author_login(comment) do
+    comment["user"]
+    |> case do
+      %{"login" => login} -> login
+      _ -> get_in(comment, ["author", "login"]) || ""
+    end
+    |> to_string()
+    |> String.trim()
+  end
+
+  defp fetch_pr_review_threads(tracker, pr_number, headers, request_fun) do
+    fetch_pr_review_thread_page(tracker, pr_number, nil, headers, request_fun, [])
+  end
+
+  defp fetch_pr_review_thread_page(tracker, pr_number, after_cursor, headers, request_fun, acc) do
+    payload = %{
+      "query" => @review_threads_query,
+      "variables" => %{
+        "owner" => tracker.repo_owner,
+        "repo" => tracker.repo_name,
+        "number" => pr_number,
+        "after" => after_cursor
+      }
+    }
+
+    with {:ok, body} <- run_graphql_query(payload, headers, request_fun),
+         {:ok, threads} <- hydrate_review_thread_comments(review_thread_nodes(body), headers, request_fun) do
+      accumulated_threads = acc ++ threads
+
+      case get_in(body, ["data", "repository", "pullRequest", "reviewThreads", "pageInfo"]) do
+        %{"hasNextPage" => true, "endCursor" => end_cursor} ->
+          fetch_pr_review_thread_page(
+            tracker,
+            pr_number,
+            end_cursor,
+            headers,
+            request_fun,
+            accumulated_threads
+          )
+
+        _ ->
+          {:ok, accumulated_threads}
+      end
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp hydrate_review_thread_comments(threads, headers, request_fun) when is_list(threads) do
+    Enum.reduce_while(threads, {:ok, []}, fn thread, {:ok, acc} ->
+      case hydrate_review_thread_comment_pages(thread, headers, request_fun) do
+        {:ok, hydrated_thread} -> {:cont, {:ok, [hydrated_thread | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, hydrated_threads} -> {:ok, Enum.reverse(hydrated_threads)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp hydrate_review_thread_comment_pages(thread, headers, request_fun) do
+    case thread do
+      %{
+        "id" => thread_id,
+        "comments" => %{
+          "nodes" => nodes,
+          "pageInfo" => %{"hasNextPage" => true, "endCursor" => end_cursor}
+        }
+      } = thread
+      when is_binary(thread_id) and is_list(nodes) ->
+        with {:ok, extra_comments} <-
+               fetch_review_thread_comment_pages(
+                 thread_id,
+                 end_cursor,
+                 headers,
+                 request_fun,
+                 []
+               ) do
+          {:ok, put_in(thread, ["comments", "nodes"], nodes ++ extra_comments)}
+        end
+
+      _ ->
+        {:ok, thread}
+    end
+  end
+
+  defp fetch_review_thread_comment_pages(thread_id, after_cursor, headers, request_fun, acc) do
+    payload = %{
+      "query" => @review_thread_comments_query,
+      "variables" => %{
+        "threadId" => thread_id,
+        "after" => after_cursor
+      }
+    }
+
+    case run_graphql_query(payload, headers, request_fun) do
+      {:ok, body} ->
+        accumulated_comments = acc ++ review_thread_comment_nodes(body)
+
+        case get_in(body, ["data", "node", "comments", "pageInfo"]) do
+          %{"hasNextPage" => true, "endCursor" => end_cursor} ->
+            fetch_review_thread_comment_pages(
+              thread_id,
+              end_cursor,
+              headers,
+              request_fun,
+              accumulated_comments
+            )
+
+          _ ->
+            {:ok, accumulated_comments}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp review_thread_nodes(body) when is_map(body) do
+    case get_in(body, ["data", "repository", "pullRequest", "reviewThreads", "nodes"]) do
+      nodes when is_list(nodes) -> nodes
+      _ -> []
+    end
+  end
+
+  defp review_thread_comment_nodes(body) when is_map(body) do
+    case get_in(body, ["data", "node", "comments", "nodes"]) do
+      nodes when is_list(nodes) -> nodes
+      _ -> []
+    end
+  end
+
+  defp run_graphql_query(payload, headers, request_fun) do
+    case request_fun.(:post, github_graphql_endpoint(), headers: headers, json: payload) do
+      {:ok, %{status: 200, body: %{"errors" => [_ | _] = errors}}} ->
+        {:error, {:github_graphql_errors, errors}}
+
+      {:ok, %{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, %{status: status}} ->
+        {:error, {:github_api_status, status}}
+
+      {:error, reason} ->
+        {:error, {:github_api_request, reason}}
+    end
+  end
 
   defp codex_review_request?(body) when is_binary(body) do
     Regex.match?(~r/@codex\b.*\breview\b/i, body)

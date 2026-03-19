@@ -13,6 +13,14 @@ defmodule SymphonyElixir.Tracker do
   @callback fetch_issue_states_by_ids([String.t()]) :: {:ok, [term()]} | {:error, term()}
   @callback create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   @callback update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
+  @callback active_states() :: [String.t()]
+  @callback terminal_states() :: [String.t()]
+  @callback dispatch_target_state(term()) :: String.t() | nil
+  @callback initial_dispatch_transition_name() :: String.t() | nil
+  @callback reconcile_watch_states(
+              (String.t(), String.t() -> term()),
+              (String.t(), String.t() | nil, String.t() -> term())
+            ) :: :ok | {:error, term()}
 
   @spec fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -37,6 +45,34 @@ defmodule SymphonyElixir.Tracker do
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
   def update_issue_state(issue_id, state_name) do
     adapter().update_issue_state(issue_id, state_name)
+  end
+
+  @spec active_states() :: [String.t()]
+  def active_states do
+    adapter().active_states()
+  end
+
+  @spec terminal_states() :: [String.t()]
+  def terminal_states do
+    adapter().terminal_states()
+  end
+
+  @spec dispatch_target_state(term()) :: String.t() | nil
+  def dispatch_target_state(issue_or_state) do
+    adapter().dispatch_target_state(issue_or_state)
+  end
+
+  @spec initial_dispatch_transition_name() :: String.t() | nil
+  def initial_dispatch_transition_name do
+    adapter().initial_dispatch_transition_name()
+  end
+
+  @spec reconcile_watch_states() :: :ok | {:error, term()}
+  def reconcile_watch_states do
+    adapter().reconcile_watch_states(
+      &update_issue_state/2,
+      &SymphonyElixir.SessionStats.mark_pending_transition/3
+    )
   end
 
   @spec has_actionable_pr_feedback?(String.t(), [String.t()]) :: {:ok, boolean()} | {:error, term()}
