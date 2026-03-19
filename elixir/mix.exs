@@ -6,6 +6,7 @@ defmodule SymphonyElixir.MixProject do
       app: :symphony_elixir,
       version: "0.1.0",
       elixir: "~> 1.19",
+      elixirc_paths: elixirc_paths(Mix.env()),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       start_permanent: Mix.env() == :prod,
       test_coverage: [
@@ -36,6 +37,8 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Local.ProjectConfig,
           SymphonyElixir.Local.Workflow,
           SymphonyElixir.PromptBuilder,
+          SymphonyElixir.PromptEngine.Continuation,
+          SymphonyElixir.PromptEngine.Renderer,
           SymphonyElixir.RuntimeConfig,
           SymphonyElixir.RuntimeConfigFile,
           SymphonyElixir.RuntimeConfigStore,
@@ -47,6 +50,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Tracker.Memory,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
+          SymphonyElixir.Workspace.Hooks,
+          SymphonyElixir.Workspace.Provisioner,
+          SymphonyElixir.Workspace.Provisioner.PathSafety,
           SymphonyElixirWeb.DashboardLive,
           SymphonyElixirWeb.Endpoint,
           SymphonyElixirWeb.ErrorHTML,
@@ -79,6 +85,31 @@ defmodule SymphonyElixir.MixProject do
       mod: {SymphonyElixir.Application, []},
       extra_applications: [:logger]
     ]
+  end
+
+  defp elixirc_paths(:test) do
+    [
+      "lib",
+      "test/support",
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib")
+    ]
+  end
+
+  defp elixirc_paths(_env) do
+    [
+      "lib",
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib")
+    ]
+  end
+
+  defp external_elixir_path(relative_path) when is_binary(relative_path) do
+    Path.expand(relative_path, __DIR__)
   end
 
   # Run "mix help deps" to learn about dependencies.
