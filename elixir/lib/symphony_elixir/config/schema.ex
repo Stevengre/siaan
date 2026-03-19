@@ -5,7 +5,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   import Ecto.Changeset
 
-  alias SymphonyElixir.PathSafety
+  alias SymphonyElixir.Workspace.Provisioner.PathSafety
 
   @primary_key false
   @default_workspace_root Path.join(System.tmp_dir!(), "symphony_workspaces")
