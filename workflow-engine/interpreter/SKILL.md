@@ -1,3 +1,11 @@
+---
+name: workflow-engine-interpreter
+description: >
+  State machine interpreter that evaluates transitions and executes activities
+  and actions. Use when running workflow state machines or debugging
+  transition logic.
+---
+
 # Workflow Engine Interpreter
 
 Use this folder when you need to execute a Mermaid-defined state machine.

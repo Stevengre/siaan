@@ -1,3 +1,10 @@
+---
+name: workflow-engine-design
+description: >
+  Guide for designing Mermaid-based workflow state machines from scratch.
+  Use when creating a new workflow definition or reviewing workflow structure.
+---
+
 # Workflow Design Guide
 
 Use this guide to design a new workflow from scratch.

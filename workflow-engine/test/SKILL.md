@@ -1,3 +1,10 @@
+---
+name: workflow-engine-test
+description: >
+  Test guide for validating workflow-engine parser, interpreter, validator,
+  and example workflows. Use when proving workflow-engine behavior.
+---
+
 # Workflow Engine Test Guide
 
 Use this folder for focused proof that the parser, interpreter, validator, and example workflows behave as expected.

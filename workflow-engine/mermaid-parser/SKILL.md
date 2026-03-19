@@ -1,3 +1,10 @@
+---
+name: workflow-engine-mermaid-parser
+description: >
+  Mermaid stateDiagram parser for the workflow engine. Use when converting
+  Mermaid workflow text into the engine's internal state machine format.
+---
+
 # Mermaid State Diagram Parser
 
 Use this folder to convert Mermaid `stateDiagram` text into the workflow engine's internal representation.

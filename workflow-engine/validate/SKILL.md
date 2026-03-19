@@ -1,3 +1,11 @@
+---
+name: workflow-engine-validate
+description: >
+  Workflow validator for structural review of Mermaid-defined state machines.
+  Use when checking workflows for deadlocks, unreachable states, and missing
+  conditions before execution.
+---
+
 # Workflow Validator
 
 Use this folder to review a Mermaid-defined workflow before execution.
