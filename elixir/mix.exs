@@ -20,6 +20,8 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.GitHub.Adapter,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,
+          SymphonyElixir.Orchestrator.Operations,
+          SymphonyElixir.Orchestrator.Runtime,
           SymphonyElixir.Orchestrator.State,
           SymphonyElixir.AgentRunner,
           SymphonyElixir.CLI,
