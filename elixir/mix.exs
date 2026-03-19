@@ -6,8 +6,8 @@ defmodule SymphonyElixir.MixProject do
       app: :symphony_elixir,
       version: "0.1.0",
       elixir: "~> 1.19",
-      elixirc_paths: elixirc_paths(Mix.env()),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       test_coverage: [
         summary: [
@@ -75,7 +75,9 @@ defmodule SymphonyElixir.MixProject do
         "test/support/test_support.exs"
       ],
       dialyzer: [
-        plt_add_apps: [:mix]
+        plt_add_apps: [:mix],
+        plt_local_path: Path.expand(".dialyzer", __DIR__),
+        plt_core_path: Path.expand(".dialyzer", __DIR__)
       ],
       escript: escript(),
       aliases: aliases(),
@@ -95,6 +97,10 @@ defmodule SymphonyElixir.MixProject do
     [
       "lib",
       "test/support",
+      external_elixir_path("../workflow-engine/interpreter/lib"),
+      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
+      external_elixir_path("../workflow-engine/validate/lib"),
+      external_elixir_path("../workflow-engine/test/lib"),
       external_elixir_path("../workspace/provisioner/lib"),
       external_elixir_path("../workspace/hooks/lib"),
       external_elixir_path("../prompt-engine/renderer/lib"),
@@ -111,6 +117,10 @@ defmodule SymphonyElixir.MixProject do
   defp elixirc_paths(_env) do
     [
       "lib",
+      external_elixir_path("../workflow-engine/interpreter/lib"),
+      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
+      external_elixir_path("../workflow-engine/validate/lib"),
+      external_elixir_path("../workflow-engine/test/lib"),
       external_elixir_path("../workspace/provisioner/lib"),
       external_elixir_path("../workspace/hooks/lib"),
       external_elixir_path("../prompt-engine/renderer/lib"),
