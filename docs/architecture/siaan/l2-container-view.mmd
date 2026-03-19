@@ -1,0 +1,19 @@
+C4Container
+title L2 Container View
+Person(operator, "Operator", "Maintains automation policy and reviews outputs.")
+System_Ext(tracker, "Issue tracker", "GitHub / Linear / local issue source")
+System_Ext(codex, "Codex app-server", "Agent execution runtime")
+Container_Boundary(repo, "Repository automation system") {
+  Container(container_orchestrator, "orchestrator", "elixir", "Coordinates polling, dispatch, retries, and session lifecycle decisions.")
+  Container(container_dispatch, "dispatch", "elixir", "Translates tracker state into execution transitions and routes work between adapters.")
+  Container(container_workspace, "workspace", "elixir", "Creates, validates, and cleans isolated issue workspaces across local and SSH workers.")
+  Container(container_agent_bridge, "agent-bridge", "elixir", "Bridges repository workspaces to Codex app-server sessions and dynamic tools.")
+  Container(container_workflow_engine, "workflow-engine", "elixir", "Loads workflow/runtime configuration and materializes prompt contracts for each issue.")
+  Container(container_state_sync, "state-sync", "elixir", "Caches runtime state, issue sessions, and last-known-good config for resilient orchestration.")
+}
+Rel(operator, container_orchestrator, "Observes and tunes")
+Rel(container_dispatch, tracker, "Reads candidates / writes state")
+Rel(container_agent_bridge, codex, "Starts sessions")
+Rel(container_workspace, container_agent_bridge, "Supplies isolated workspace")
+Rel(container_workflow_engine, container_agent_bridge, "Builds prompts and runtime settings")
+Rel(container_state_sync, container_orchestrator, "Supplies cached runtime/session state")

@@ -1,0 +1,18 @@
+C4Component
+title L3 Component View
+Container_Boundary(repo, "Repository automation system") {
+  Component(component_orchestrator, "orchestrator", "architecture component", "Coordinates polling, dispatch, retries, and session lifecycle decisions. Members: 12.")
+  Component(component_dispatch, "dispatch", "architecture component", "Translates tracker state into execution transitions and routes work between adapters. Members: 12.")
+  Component(component_workspace, "workspace", "architecture component", "Creates, validates, and cleans isolated issue workspaces across local and SSH workers. Members: 5.")
+  Component(component_agent_bridge, "agent-bridge", "architecture component", "Bridges repository workspaces to Codex app-server sessions and dynamic tools. Members: 3.")
+  Component(component_workflow_engine, "workflow-engine", "architecture component", "Loads workflow/runtime configuration and materializes prompt contracts for each issue. Members: 12.")
+  Component(component_state_sync, "state-sync", "architecture component", "Caches runtime state, issue sessions, and last-known-good config for resilient orchestration. Members: 5.")
+}
+Rel(component_orchestrator, component_dispatch, "schedules and coordinates (observed imports: 5)")
+Rel(component_orchestrator, component_workspace, "allocates workspaces (observed imports: 1)")
+Rel(component_orchestrator, component_agent_bridge, "runs agent turns (observed imports: 1)")
+Rel(component_dispatch, component_workflow_engine, "uses transition/profile policy")
+Rel(component_dispatch, component_state_sync, "reads pending transitions")
+Rel(component_agent_bridge, component_workflow_engine, "renders prompts (observed imports: 1)")
+Rel(component_agent_bridge, component_state_sync, "records session updates")
+Rel(component_workspace, component_agent_bridge, "provides execution roots")

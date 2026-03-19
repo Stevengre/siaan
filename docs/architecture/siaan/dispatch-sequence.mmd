@@ -1,0 +1,22 @@
+sequenceDiagram
+title Dispatch Sequence
+actor Operator
+participant Orchestrator
+participant Dispatch
+participant Workspace
+participant AgentBridge
+participant Tracker
+participant Codex
+
+Operator->>Orchestrator: Start or reconfigure service
+Orchestrator->>Dispatch: Ask for next runnable issue
+Dispatch->>Tracker: Fetch active candidate issues
+Tracker-->>Dispatch: Issue state + metadata
+Dispatch-->>Orchestrator: Transition + dispatch decision
+Orchestrator->>Workspace: Create or reuse issue workspace
+Workspace-->>Orchestrator: Workspace path
+Orchestrator->>AgentBridge: Start agent run in workspace
+AgentBridge->>Codex: Open session and send prompt
+Codex-->>AgentBridge: Tool calls / completion events
+AgentBridge->>Tracker: Persist comments or issue updates via tools
+AgentBridge-->>Orchestrator: Dispatch complete / retry signal
