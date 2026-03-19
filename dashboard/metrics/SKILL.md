@@ -1,3 +1,10 @@
+---
+name: dashboard-metrics
+description:
+  Throughput sampling, rolling windows, and sparkline helpers for the
+  observability dashboard. Use when adjusting dashboard metrics behavior.
+---
+
 # dashboard/metrics
 
 Owns throughput sampling, rolling windows, and sparkline generation used by the observability dashboard.

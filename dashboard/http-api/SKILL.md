@@ -1,3 +1,10 @@
+---
+name: dashboard-http-api
+description:
+  Observability HTTP API routes and JSON presentation. Use when changing the
+  dashboard status API surface or presenter output.
+---
+
 # dashboard/http-api
 
 Owns the observability HTTP API surface and JSON presentation for dashboard consumers.
