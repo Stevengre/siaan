@@ -30,6 +30,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.CLI,
           SymphonyElixir.Codex.AppServer,
           SymphonyElixir.Codex.DynamicTool,
+          SymphonyElixir.Dashboard.Metrics,
           SymphonyElixir.HttpServer,
           SymphonyElixir.Linear.Adapter,
           SymphonyElixir.StatusDashboard,
@@ -162,4 +163,25 @@ defmodule SymphonyElixir.MixProject do
       path: "bin/siaan"
     ]
   end
+
+  defp elixirc_paths(:test) do
+    [
+      "lib",
+      "test/support",
+      dashboard_path("terminal-ui/lib"),
+      dashboard_path("metrics/lib"),
+      dashboard_path("http-api/lib")
+    ]
+  end
+
+  defp elixirc_paths(_env) do
+    [
+      "lib",
+      dashboard_path("terminal-ui/lib"),
+      dashboard_path("metrics/lib"),
+      dashboard_path("http-api/lib")
+    ]
+  end
+
+  defp dashboard_path(path), do: Path.expand("../dashboard/" <> path, __DIR__)
 end
