@@ -243,9 +243,19 @@ defmodule SymphonyElixir.AgentBridge.Codex.DynamicTool do
 
   defp tracker_kind(opts) do
     case Keyword.get(opts, :tracker_kind) do
-      nil -> nil
-      kind when is_atom(kind) -> Atom.to_string(kind)
-      kind -> kind
+      nil ->
+        nil
+
+      kind when is_atom(kind) ->
+        Atom.to_string(kind)
+
+      kind when is_binary(kind) ->
+        kind
+        |> String.trim()
+        |> String.downcase()
+
+      kind ->
+        kind
     end
   end
 end
