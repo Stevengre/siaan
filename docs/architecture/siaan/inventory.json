@@ -1,0 +1,1516 @@
+{
+  "inventory_version": 1,
+  "generated_at": "2026-03-19T08:06:59.006831+00:00",
+  "repo_root": "/root/code/workspaces/siaan/GH-54",
+  "languages": [
+    {
+      "name": "elixir",
+      "file_count": 67
+    }
+  ],
+  "entrypoints": [
+    "start-siaan.sh",
+    "docker-compose.yml",
+    "Dockerfile",
+    "elixir/lib/symphony_elixir/cli.ex",
+    "elixir/lib/symphony_elixir/http_server.ex"
+  ],
+  "source_modules": [
+    {
+      "id": "elixir.lib.mix.tasks.pr_body.check.ex",
+      "name": "Mix.Tasks.PrBody.Check",
+      "path": "elixir/lib/mix/tasks/pr_body.check.ex",
+      "language": "elixir",
+      "summary": "Validates a PR description markdown file against the structure and expectations implied by the repository pull request template.",
+      "raw_dependencies": [
+        "Mix.Task"
+      ]
+    },
+    {
+      "id": "elixir.lib.mix.tasks.siaan.install.ex",
+      "name": "Mix.Tasks.Siaan.Install",
+      "path": "elixir/lib/mix/tasks/siaan.install.ex",
+      "language": "elixir",
+      "summary": "Install and maintain siaan for the current repository.",
+      "raw_dependencies": [
+        "Mix.Task",
+        "SymphonyElixir.Install.Runner"
+      ]
+    },
+    {
+      "id": "elixir.lib.mix.tasks.specs.check.ex",
+      "name": "Mix.Tasks.Specs.Check",
+      "path": "elixir/lib/mix/tasks/specs.check.ex",
+      "language": "elixir",
+      "summary": "Enforces adjacent `@spec` declarations for public APIs in `lib/`.",
+      "raw_dependencies": [
+        "Mix.Task",
+        "SymphonyElixir.SpecsCheck"
+      ]
+    },
+    {
+      "id": "elixir.lib.mix.tasks.workspace.before_remove.ex",
+      "name": "Mix.Tasks.Workspace.BeforeRemove",
+      "path": "elixir/lib/mix/tasks/workspace.before_remove.ex",
+      "language": "elixir",
+      "summary": "Closes open pull requests for the current Git branch.",
+      "raw_dependencies": [
+        "Mix.Task"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.ex",
+      "name": "SymphonyElixir",
+      "path": "elixir/lib/symphony_elixir.ex",
+      "language": "elixir",
+      "summary": "Entry point for the Symphony orchestrator.",
+      "raw_dependencies": [
+        "Application"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "name": "SymphonyElixir.AgentRunner",
+      "path": "elixir/lib/symphony_elixir/agent_runner.ex",
+      "language": "elixir",
+      "summary": "Executes a single tracker issue in its workspace with Codex.",
+      "raw_dependencies": [
+        "GenServer",
+        "Logger",
+        "SymphonyElixir.Codex.AppServer",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.PromptEngine.Continuation",
+        "SymphonyElixir.PromptEngine.Renderer",
+        "SymphonyElixir.Tracker",
+        "SymphonyElixir.TrackerIssue",
+        "SymphonyElixir.Workspace.Provisioner"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.cli.ex",
+      "name": "SymphonyElixir.CLI",
+      "path": "elixir/lib/symphony_elixir/cli.ex",
+      "language": "elixir",
+      "summary": "Escript entrypoint for running Symphony with an explicit runtime config path.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.codex.app_server.ex",
+      "name": "SymphonyElixir.Codex.AppServer",
+      "path": "elixir/lib/symphony_elixir/codex/app_server.ex",
+      "language": "elixir",
+      "summary": "Minimal client for the Codex app-server JSON-RPC 2.0 stream over stdio.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
+      "name": "SymphonyElixir.Codex.DynamicTool",
+      "path": "elixir/lib/symphony_elixir/codex/dynamic_tool.ex",
+      "language": "elixir",
+      "summary": "Executes client-side tool calls requested by Codex app-server turns.",
+      "raw_dependencies": [
+        "SymphonyElixir.GitHub.Client",
+        "SymphonyElixir.Linear.Client"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.config.ex",
+      "name": "SymphonyElixir.Config",
+      "path": "elixir/lib/symphony_elixir/config.ex",
+      "language": "elixir",
+      "summary": "Runtime configuration loaded from the configured runtime source.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.config.schema.ex",
+      "name": "SymphonyElixir.Config.Schema",
+      "path": "elixir/lib/symphony_elixir/config/schema.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/config/schema.ex`.",
+      "raw_dependencies": [
+        "Ecto.Changeset",
+        "Ecto.Schema",
+        "SymphonyElixir.Config.Schema",
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "name": "SymphonyElixir.Dispatch.Retry",
+      "path": "elixir/lib/symphony_elixir/dispatch/retry.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/dispatch/retry.ex`.",
+      "raw_dependencies": [
+        "Bitwise",
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.Dispatch.Scheduler",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "name": "SymphonyElixir.Dispatch.Scheduler",
+      "path": "elixir/lib/symphony_elixir/dispatch/scheduler.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/dispatch/scheduler.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.dispatch_lifecycle.ex",
+      "name": "SymphonyElixir.DispatchLifecycle",
+      "path": "elixir/lib/symphony_elixir/dispatch_lifecycle.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/dispatch_lifecycle.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.github.adapter.ex",
+      "name": "SymphonyElixir.GitHub.Adapter",
+      "path": "elixir/lib/symphony_elixir/github/adapter.ex",
+      "language": "elixir",
+      "summary": "GitHub-backed tracker adapter.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.GitHub.",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.github.client.ex",
+      "name": "SymphonyElixir.GitHub.Client",
+      "path": "elixir/lib/symphony_elixir/github/client.ex",
+      "language": "elixir",
+      "summary": "Thin GitHub REST/GraphQL client for issue polling and repository installation tasks.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.GitHub.Issue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.github.issue.ex",
+      "name": "SymphonyElixir.GitHub.Issue",
+      "path": "elixir/lib/symphony_elixir/github/issue.ex",
+      "language": "elixir",
+      "summary": "Normalized GitHub issue representation used by the GitHub tracker integration.",
+      "raw_dependencies": [
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.http_server.ex",
+      "name": "SymphonyElixir.HttpServer",
+      "path": "elixir/lib/symphony_elixir/http_server.ex",
+      "language": "elixir",
+      "summary": "Compatibility facade that starts the Phoenix observability endpoint when enabled.",
+      "raw_dependencies": [
+        "SymphonyElixir.",
+        "SymphonyElixirWeb.Endpoint"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.install.repository.ex",
+      "name": "SymphonyElixir.Install.Repository",
+      "path": "elixir/lib/symphony_elixir/install/repository.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/install/repository.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.install.runner.ex",
+      "name": "SymphonyElixir.Install.Runner",
+      "path": "elixir/lib/symphony_elixir/install/runner.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/install/runner.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.GitHub.Client",
+        "SymphonyElixir.Install."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.install.security_file.ex",
+      "name": "SymphonyElixir.Install.SecurityFile",
+      "path": "elixir/lib/symphony_elixir/install/security_file.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/install/security_file.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "name": "SymphonyElixir.Linear.Adapter",
+      "path": "elixir/lib/symphony_elixir/linear/adapter.ex",
+      "language": "elixir",
+      "summary": "Linear-backed tracker adapter.",
+      "raw_dependencies": [
+        "SymphonyElixir.Config",
+        "SymphonyElixir.Linear.Client",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.linear.client.ex",
+      "name": "SymphonyElixir.Linear.Client",
+      "path": "elixir/lib/symphony_elixir/linear/client.ex",
+      "language": "elixir",
+      "summary": "Thin Linear GraphQL client for polling candidate issues.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.linear.issue.ex",
+      "name": "SymphonyElixir.Linear.Issue",
+      "path": "elixir/lib/symphony_elixir/linear/issue.ex",
+      "language": "elixir",
+      "summary": "Deprecated alias for the tracker issue model retained for compatibility.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "name": "SymphonyElixir.Local.Adapter",
+      "path": "elixir/lib/symphony_elixir/local/adapter.ex",
+      "language": "elixir",
+      "summary": "Local-file-backed tracker adapter used by the orchestrator.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.Local.",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.local.issue.ex",
+      "name": "SymphonyElixir.Local.Issue",
+      "path": "elixir/lib/symphony_elixir/local/issue.ex",
+      "language": "elixir",
+      "summary": "Reads local issue directories and materializes orchestrator issue structs.",
+      "raw_dependencies": [
+        "SymphonyElixir.Local.Workflow",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.local.project_config.ex",
+      "name": "SymphonyElixir.Local.ProjectConfig",
+      "path": "elixir/lib/symphony_elixir/local/project_config.ex",
+      "language": "elixir",
+      "summary": "Loads the local issue-project configuration from `config.toml`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.local.workflow.ex",
+      "name": "SymphonyElixir.Local.Workflow",
+      "path": "elixir/lib/symphony_elixir/local/workflow.ex",
+      "language": "elixir",
+      "summary": "Loads and evaluates the local workflow DSL from `workflow.yaml`.",
+      "raw_dependencies": [
+        "Logger"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.log_file.ex",
+      "name": "SymphonyElixir.LogFile",
+      "path": "elixir/lib/symphony_elixir/log_file.ex",
+      "language": "elixir",
+      "summary": "Configures OTP's built-in rotating disk log handler for application logs.",
+      "raw_dependencies": [
+        "Logger"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "name": "SymphonyElixir.Orchestrator",
+      "path": "elixir/lib/symphony_elixir/orchestrator.ex",
+      "language": "elixir",
+      "summary": "Polls tracker issues and dispatches repository copies to Codex-backed workers.",
+      "raw_dependencies": [
+        "Bitwise",
+        "GenServer",
+        "Logger",
+        "SymphonyElixir.AgentRunner",
+        "SymphonyElixir.Config",
+        "SymphonyElixir.Dispatch.",
+        "SymphonyElixir.DispatchLifecycle",
+        "SymphonyElixir.SessionStats",
+        "SymphonyElixir.SessionTracker.Metering",
+        "SymphonyElixir.StatusDashboard",
+        "SymphonyElixir.Tracker",
+        "SymphonyElixir.TrackerIssue",
+        "SymphonyElixir.Workspace.Provisioner"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "name": "SymphonyElixir.RuntimeConfig",
+      "path": "elixir/lib/symphony_elixir/runtime_config.ex",
+      "language": "elixir",
+      "summary": "Primary API for locating and loading the orchestrator runtime configuration.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_config_file.ex",
+      "name": "SymphonyElixir.RuntimeConfigFile",
+      "path": "elixir/lib/symphony_elixir/runtime_config_file.ex",
+      "language": "elixir",
+      "summary": "Loads runtime configuration from a standalone YAML file.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_config_store.ex",
+      "name": "SymphonyElixir.RuntimeConfigStore",
+      "path": "elixir/lib/symphony_elixir/runtime_config_store.ex",
+      "language": "elixir",
+      "summary": "Caches the last known good runtime payload at the configured runtime config path.",
+      "raw_dependencies": [
+        "GenServer",
+        "Logger",
+        "SymphonyElixir.RuntimeConfig"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_file.ex",
+      "name": "SymphonyElixir.RuntimeFile",
+      "path": "elixir/lib/symphony_elixir/runtime_file.ex",
+      "language": "elixir",
+      "summary": "Loads runtime configuration and prompt content from the legacy markdown file format.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_source.ex",
+      "name": "SymphonyElixir.RuntimeSource",
+      "path": "elixir/lib/symphony_elixir/runtime_source.ex",
+      "language": "elixir",
+      "summary": "Runtime source boundary for loading config and prompt data for the orchestrator.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.runtime_source_store.ex",
+      "name": "SymphonyElixir.RuntimeSourceStore",
+      "path": "elixir/lib/symphony_elixir/runtime_source_store.ex",
+      "language": "elixir",
+      "summary": "Caches the last known good runtime source payload and reloads it periodically.",
+      "raw_dependencies": [
+        "GenServer",
+        "Logger",
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.session_stats.ex",
+      "name": "SymphonyElixir.SessionStats",
+      "path": "elixir/lib/symphony_elixir/session_stats.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/session_stats.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.SessionTracker."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "name": "SymphonyElixir.SessionTracker.Metering",
+      "path": "elixir/lib/symphony_elixir/session_tracker/metering.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/session_tracker/metering.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.Config"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
+      "name": "SymphonyElixir.SessionTracker.Persistence",
+      "path": "elixir/lib/symphony_elixir/session_tracker/persistence.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/session_tracker/persistence.ex`.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.Config"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.specs_check.ex",
+      "name": "SymphonyElixir.SpecsCheck",
+      "path": "elixir/lib/symphony_elixir/specs_check.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/specs_check.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.ssh.ex",
+      "name": "SymphonyElixir.SSH",
+      "path": "elixir/lib/symphony_elixir/ssh.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir/ssh.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.status_dashboard.ex",
+      "name": "SymphonyElixir.StatusDashboard",
+      "path": "elixir/lib/symphony_elixir/status_dashboard.ex",
+      "language": "elixir",
+      "summary": "Renders a status snapshot for orchestrator and worker activity as a terminal UI.",
+      "raw_dependencies": [
+        "GenServer",
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.Orchestrator",
+        "SymphonyElixirWeb.ObservabilityPubSub"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.tracker.ex",
+      "name": "SymphonyElixir.Tracker",
+      "path": "elixir/lib/symphony_elixir/tracker.ex",
+      "language": "elixir",
+      "summary": "Adapter boundary for issue tracker reads and writes.",
+      "raw_dependencies": [
+        "SymphonyElixir.Config",
+        "SymphonyElixir.GitHub.Adapter",
+        "SymphonyElixir.GitHub.Client",
+        "SymphonyElixir.Local.Adapter"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.tracker.memory.ex",
+      "name": "SymphonyElixir.Tracker.Memory",
+      "path": "elixir/lib/symphony_elixir/tracker/memory.ex",
+      "language": "elixir",
+      "summary": "In-memory tracker adapter used for tests and local development.",
+      "raw_dependencies": [
+        "SymphonyElixir.Config",
+        "SymphonyElixir.TrackerIssue"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "name": "SymphonyElixir.TrackerIssue",
+      "path": "elixir/lib/symphony_elixir/tracker_issue.ex",
+      "language": "elixir",
+      "summary": "Normalized tracker issue representation used by the orchestrator runtime.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.workflow.ex",
+      "name": "SymphonyElixir.Workflow",
+      "path": "elixir/lib/symphony_elixir/workflow.ex",
+      "language": "elixir",
+      "summary": "Compatibility wrapper around the default runtime markdown file loader.",
+      "raw_dependencies": [
+        "SymphonyElixir.RuntimeConfig"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir.workflow_store.ex",
+      "name": "SymphonyElixir.WorkflowStore",
+      "path": "elixir/lib/symphony_elixir/workflow_store.ex",
+      "language": "elixir",
+      "summary": "Compatibility wrapper around `RuntimeConfigStore`.",
+      "raw_dependencies": [
+        "SymphonyElixir.RuntimeConfigStore"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.components.layouts.ex",
+      "name": "SymphonyElixirWeb.Layouts",
+      "path": "elixir/lib/symphony_elixir_web/components/layouts.ex",
+      "language": "elixir",
+      "summary": "Shared layouts for the observability dashboard.",
+      "raw_dependencies": [
+        "Phoenix.Component"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.controllers.observability_api_controller.ex",
+      "name": "SymphonyElixirWeb.ObservabilityApiController",
+      "path": "elixir/lib/symphony_elixir_web/controllers/observability_api_controller.ex",
+      "language": "elixir",
+      "summary": "JSON API for Symphony observability data.",
+      "raw_dependencies": [
+        "Phoenix.Controller",
+        "Plug.Conn",
+        "SymphonyElixirWeb."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.controllers.static_asset_controller.ex",
+      "name": "SymphonyElixirWeb.StaticAssetController",
+      "path": "elixir/lib/symphony_elixir_web/controllers/static_asset_controller.ex",
+      "language": "elixir",
+      "summary": "Serves the dashboard's embedded CSS and JavaScript assets.",
+      "raw_dependencies": [
+        "Phoenix.Controller",
+        "Plug.Conn",
+        "SymphonyElixirWeb.StaticAssets"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.endpoint.ex",
+      "name": "SymphonyElixirWeb.Endpoint",
+      "path": "elixir/lib/symphony_elixir_web/endpoint.ex",
+      "language": "elixir",
+      "summary": "Phoenix endpoint for Symphony's optional observability UI and API.",
+      "raw_dependencies": [
+        "Phoenix.Endpoint"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.error_html.ex",
+      "name": "SymphonyElixirWeb.ErrorHTML",
+      "path": "elixir/lib/symphony_elixir_web/error_html.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir_web/error_html.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.error_json.ex",
+      "name": "SymphonyElixirWeb.ErrorJSON",
+      "path": "elixir/lib/symphony_elixir_web/error_json.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir_web/error_json.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.live.dashboard_live.ex",
+      "name": "SymphonyElixirWeb.DashboardLive",
+      "path": "elixir/lib/symphony_elixir_web/live/dashboard_live.ex",
+      "language": "elixir",
+      "summary": "Live observability dashboard for Symphony.",
+      "raw_dependencies": [
+        "Phoenix.LiveView",
+        "SymphonyElixirWeb."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.observability_pubsub.ex",
+      "name": "SymphonyElixirWeb.ObservabilityPubSub",
+      "path": "elixir/lib/symphony_elixir_web/observability_pubsub.ex",
+      "language": "elixir",
+      "summary": "PubSub helpers for observability dashboard updates.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.presenter.ex",
+      "name": "SymphonyElixirWeb.Presenter",
+      "path": "elixir/lib/symphony_elixir_web/presenter.ex",
+      "language": "elixir",
+      "summary": "Shared projections for the observability API and dashboard.",
+      "raw_dependencies": [
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.router.ex",
+      "name": "SymphonyElixirWeb.Router",
+      "path": "elixir/lib/symphony_elixir_web/router.ex",
+      "language": "elixir",
+      "summary": "Router for Symphony's observability dashboard and API.",
+      "raw_dependencies": [
+        "Phoenix.LiveView.Router",
+        "Phoenix.Router"
+      ]
+    },
+    {
+      "id": "elixir.lib.symphony_elixir_web.static_assets.ex",
+      "name": "SymphonyElixirWeb.StaticAssets",
+      "path": "elixir/lib/symphony_elixir_web/static_assets.ex",
+      "language": "elixir",
+      "summary": "Source module from `elixir/lib/symphony_elixir_web/static_assets.ex`.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "prompt_engine.continuation.lib.continuation.ex",
+      "name": "SymphonyElixir.PromptEngine.Continuation",
+      "path": "prompt-engine/continuation/lib/continuation.ex",
+      "language": "elixir",
+      "summary": "Source module from `prompt-engine/continuation/lib/continuation.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.PromptEngine.Renderer"
+      ]
+    },
+    {
+      "id": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "name": "SymphonyElixir.PromptEngine.Renderer",
+      "path": "prompt-engine/renderer/lib/prompt_builder.ex",
+      "language": "elixir",
+      "summary": "Builds agent prompts from tracker issue data.",
+      "raw_dependencies": [
+        "SymphonyElixir.",
+        "SymphonyElixir.PromptEngine.Renderer"
+      ]
+    },
+    {
+      "id": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+      "name": "SymphonyElixir.WorkflowEngine.Interpreter",
+      "path": "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/interpreter.ex",
+      "language": "elixir",
+      "summary": "Executes a parsed workflow machine by evaluating ordered transitions.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine",
+        "SymphonyElixir.WorkflowEngine.StateMachine.Transition"
+      ]
+    },
+    {
+      "id": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "name": "SymphonyElixir.WorkflowEngine.StateMachine",
+      "path": "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/state_machine.ex",
+      "language": "elixir",
+      "summary": "Internal representation for Mermaid-backed workflow state machines.",
+      "raw_dependencies": []
+    },
+    {
+      "id": "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+      "name": "SymphonyElixir.WorkflowEngine.MermaidParser",
+      "path": "workflow-engine/mermaid-parser/lib/symphony_elixir/workflow_engine/mermaid_parser.ex",
+      "language": "elixir",
+      "summary": "Parses a constrained Mermaid `stateDiagram` into a workflow state machine.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine",
+        "SymphonyElixir.WorkflowEngine.StateMachine."
+      ]
+    },
+    {
+      "id": "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex",
+      "name": "SymphonyElixir.WorkflowEngine.Validator",
+      "path": "workflow-engine/validate/lib/symphony_elixir/workflow_engine/validator.ex",
+      "language": "elixir",
+      "summary": "Analyzes workflow graphs for structural execution risks.",
+      "raw_dependencies": [
+        "SymphonyElixir.WorkflowEngine.StateMachine"
+      ]
+    },
+    {
+      "id": "workspace.hooks.lib.hooks.ex",
+      "name": "SymphonyElixir.Workspace.Hooks",
+      "path": "workspace/hooks/lib/hooks.ex",
+      "language": "elixir",
+      "summary": "Source module from `workspace/hooks/lib/hooks.ex`.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir."
+      ]
+    },
+    {
+      "id": "workspace.provisioner.lib.path_safety.ex",
+      "name": "SymphonyElixir.Workspace.Provisioner.PathSafety",
+      "path": "workspace/provisioner/lib/path_safety.ex",
+      "language": "elixir",
+      "summary": "Source module from `workspace/provisioner/lib/path_safety.ex`.",
+      "raw_dependencies": [
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
+    },
+    {
+      "id": "workspace.provisioner.lib.workspace.ex",
+      "name": "SymphonyElixir.Workspace.Provisioner",
+      "path": "workspace/provisioner/lib/workspace.ex",
+      "language": "elixir",
+      "summary": "Creates isolated per-issue workspaces for parallel Codex agents.",
+      "raw_dependencies": [
+        "Logger",
+        "SymphonyElixir.",
+        "SymphonyElixir.Workspace.Hooks",
+        "SymphonyElixir.Workspace.Provisioner",
+        "SymphonyElixir.Workspace.Provisioner.PathSafety"
+      ]
+    }
+  ],
+  "source_relationships": [
+    {
+      "from": "elixir.lib.mix.tasks.siaan.install.ex",
+      "to": "elixir.lib.symphony_elixir.install.runner.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Install.Runner"
+    },
+    {
+      "from": "elixir.lib.mix.tasks.specs.check.ex",
+      "to": "elixir.lib.symphony_elixir.specs_check.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SpecsCheck"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.codex.app_server.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Codex.AppServer"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.tracker.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Tracker"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "prompt_engine.continuation.lib.continuation.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Continuation"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
+      "to": "elixir.lib.symphony_elixir.github.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.codex.dynamic_tool.ex",
+      "to": "elixir.lib.symphony_elixir.linear.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Linear.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.config.schema.ex",
+      "to": "elixir.lib.symphony_elixir.config.schema.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config.Schema"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.config.schema.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "to": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Dispatch.Scheduler"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.retry.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.client.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.client.ex",
+      "to": "elixir.lib.symphony_elixir.github.issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Issue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.github.issue.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.http_server.ex",
+      "to": "elixir.lib.symphony_elixir_web.endpoint.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixirWeb.Endpoint"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.install.runner.ex",
+      "to": "elixir.lib.symphony_elixir.github.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.linear.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Linear.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.linear.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.issue.ex",
+      "to": "elixir.lib.symphony_elixir.local.workflow.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Local.Workflow"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.local.issue.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.agent_runner.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.AgentRunner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.dispatch_lifecycle.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.DispatchLifecycle"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.session_stats.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SessionStats"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.SessionTracker.Metering"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.status_dashboard.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.StatusDashboard"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.tracker.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Tracker"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.runtime_config_store.ex",
+      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.RuntimeConfig"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.status_dashboard.ex",
+      "to": "elixir.lib.symphony_elixir.orchestrator.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Orchestrator"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.status_dashboard.ex",
+      "to": "elixir.lib.symphony_elixir_web.observability_pubsub.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixirWeb.ObservabilityPubSub"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.ex",
+      "to": "elixir.lib.symphony_elixir.github.adapter.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Adapter"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.ex",
+      "to": "elixir.lib.symphony_elixir.github.client.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.GitHub.Client"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.ex",
+      "to": "elixir.lib.symphony_elixir.local.adapter.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Local.Adapter"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
+      "to": "elixir.lib.symphony_elixir.config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Config"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.tracker.memory.ex",
+      "to": "elixir.lib.symphony_elixir.tracker_issue.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.TrackerIssue"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.workflow.ex",
+      "to": "elixir.lib.symphony_elixir.runtime_config.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.RuntimeConfig"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir.workflow_store.ex",
+      "to": "elixir.lib.symphony_elixir.runtime_config_store.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.RuntimeConfigStore"
+    },
+    {
+      "from": "elixir.lib.symphony_elixir_web.controllers.static_asset_controller.ex",
+      "to": "elixir.lib.symphony_elixir_web.static_assets.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixirWeb.StaticAssets"
+    },
+    {
+      "from": "prompt_engine.continuation.lib.continuation.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "to": "prompt_engine.renderer.lib.prompt_builder.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.PromptEngine.Renderer"
+    },
+    {
+      "from": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
+      "from": "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
+      "from": "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex",
+      "to": "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.WorkflowEngine.StateMachine"
+    },
+    {
+      "from": "workspace.provisioner.lib.path_safety.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.hooks.lib.hooks.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Hooks"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.provisioner.lib.path_safety.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner.PathSafety"
+    },
+    {
+      "from": "workspace.provisioner.lib.workspace.ex",
+      "to": "workspace.provisioner.lib.workspace.ex",
+      "type": "imports",
+      "evidence": "SymphonyElixir.Workspace.Provisioner"
+    }
+  ],
+  "architecture_components": [
+    {
+      "name": "agent-bridge",
+      "summary": "Bridges repository workspaces to Codex app-server sessions and dynamic tools.",
+      "member_count": 3,
+      "members": [
+        "elixir.lib.symphony_elixir.agent_runner.ex",
+        "elixir.lib.symphony_elixir.codex.app_server.ex",
+        "elixir.lib.symphony_elixir.codex.dynamic_tool.ex"
+      ],
+      "paths": [
+        "elixir/lib/symphony_elixir/agent_runner.ex",
+        "elixir/lib/symphony_elixir/codex/app_server.ex",
+        "elixir/lib/symphony_elixir/codex/dynamic_tool.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "dispatch",
+      "summary": "Translates tracker state into execution transitions and routes work between adapters.",
+      "member_count": 12,
+      "members": [
+        "elixir.lib.symphony_elixir.dispatch.retry.ex",
+        "elixir.lib.symphony_elixir.dispatch.scheduler.ex",
+        "elixir.lib.symphony_elixir.dispatch_lifecycle.ex",
+        "elixir.lib.symphony_elixir.github.adapter.ex",
+        "elixir.lib.symphony_elixir.github.issue.ex",
+        "elixir.lib.symphony_elixir.linear.adapter.ex",
+        "elixir.lib.symphony_elixir.linear.issue.ex",
+        "elixir.lib.symphony_elixir.local.adapter.ex",
+        "elixir.lib.symphony_elixir.session_tracker.metering.ex",
+        "elixir.lib.symphony_elixir.session_tracker.persistence.ex",
+        "elixir.lib.symphony_elixir.tracker.ex",
+        "elixir.lib.symphony_elixir.tracker_issue.ex"
+      ],
+      "paths": [
+        "elixir/lib/symphony_elixir/dispatch/retry.ex",
+        "elixir/lib/symphony_elixir/dispatch/scheduler.ex",
+        "elixir/lib/symphony_elixir/dispatch_lifecycle.ex",
+        "elixir/lib/symphony_elixir/github/adapter.ex",
+        "elixir/lib/symphony_elixir/github/issue.ex",
+        "elixir/lib/symphony_elixir/linear/adapter.ex",
+        "elixir/lib/symphony_elixir/linear/issue.ex",
+        "elixir/lib/symphony_elixir/local/adapter.ex",
+        "elixir/lib/symphony_elixir/session_tracker/metering.ex",
+        "elixir/lib/symphony_elixir/session_tracker/persistence.ex",
+        "elixir/lib/symphony_elixir/tracker.ex",
+        "elixir/lib/symphony_elixir/tracker_issue.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "orchestrator",
+      "summary": "Coordinates polling, dispatch, retries, and session lifecycle decisions.",
+      "member_count": 12,
+      "members": [
+        "elixir.lib.symphony_elixir.ex",
+        "elixir.lib.symphony_elixir.http_server.ex",
+        "elixir.lib.symphony_elixir.local.issue.ex",
+        "elixir.lib.symphony_elixir.orchestrator.ex",
+        "elixir.lib.symphony_elixir.status_dashboard.ex",
+        "elixir.lib.symphony_elixir_web.components.layouts.ex",
+        "elixir.lib.symphony_elixir_web.controllers.observability_api_controller.ex",
+        "elixir.lib.symphony_elixir_web.endpoint.ex",
+        "elixir.lib.symphony_elixir_web.live.dashboard_live.ex",
+        "elixir.lib.symphony_elixir_web.observability_pubsub.ex",
+        "elixir.lib.symphony_elixir_web.presenter.ex",
+        "elixir.lib.symphony_elixir_web.router.ex"
+      ],
+      "paths": [
+        "elixir/lib/symphony_elixir.ex",
+        "elixir/lib/symphony_elixir/http_server.ex",
+        "elixir/lib/symphony_elixir/local/issue.ex",
+        "elixir/lib/symphony_elixir/orchestrator.ex",
+        "elixir/lib/symphony_elixir/status_dashboard.ex",
+        "elixir/lib/symphony_elixir_web/components/layouts.ex",
+        "elixir/lib/symphony_elixir_web/controllers/observability_api_controller.ex",
+        "elixir/lib/symphony_elixir_web/endpoint.ex",
+        "elixir/lib/symphony_elixir_web/live/dashboard_live.ex",
+        "elixir/lib/symphony_elixir_web/observability_pubsub.ex",
+        "elixir/lib/symphony_elixir_web/presenter.ex",
+        "elixir/lib/symphony_elixir_web/router.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "scope:elixir",
+      "summary": "Inferred architecture boundary.",
+      "member_count": 17,
+      "members": [
+        "elixir.lib.mix.tasks.pr_body.check.ex",
+        "elixir.lib.mix.tasks.siaan.install.ex",
+        "elixir.lib.mix.tasks.specs.check.ex",
+        "elixir.lib.symphony_elixir.cli.ex",
+        "elixir.lib.symphony_elixir.config.ex",
+        "elixir.lib.symphony_elixir.github.client.ex",
+        "elixir.lib.symphony_elixir.install.repository.ex",
+        "elixir.lib.symphony_elixir.install.runner.ex",
+        "elixir.lib.symphony_elixir.install.security_file.ex",
+        "elixir.lib.symphony_elixir.linear.client.ex",
+        "elixir.lib.symphony_elixir.local.project_config.ex",
+        "elixir.lib.symphony_elixir.log_file.ex",
+        "elixir.lib.symphony_elixir.specs_check.ex",
+        "elixir.lib.symphony_elixir_web.controllers.static_asset_controller.ex",
+        "elixir.lib.symphony_elixir_web.error_html.ex",
+        "elixir.lib.symphony_elixir_web.error_json.ex",
+        "elixir.lib.symphony_elixir_web.static_assets.ex"
+      ],
+      "paths": [
+        "elixir/lib/mix/tasks/pr_body.check.ex",
+        "elixir/lib/mix/tasks/siaan.install.ex",
+        "elixir/lib/mix/tasks/specs.check.ex",
+        "elixir/lib/symphony_elixir/cli.ex",
+        "elixir/lib/symphony_elixir/config.ex",
+        "elixir/lib/symphony_elixir/github/client.ex",
+        "elixir/lib/symphony_elixir/install/repository.ex",
+        "elixir/lib/symphony_elixir/install/runner.ex",
+        "elixir/lib/symphony_elixir/install/security_file.ex",
+        "elixir/lib/symphony_elixir/linear/client.ex",
+        "elixir/lib/symphony_elixir/local/project_config.ex",
+        "elixir/lib/symphony_elixir/log_file.ex",
+        "elixir/lib/symphony_elixir/specs_check.ex",
+        "elixir/lib/symphony_elixir_web/controllers/static_asset_controller.ex",
+        "elixir/lib/symphony_elixir_web/error_html.ex",
+        "elixir/lib/symphony_elixir_web/error_json.ex",
+        "elixir/lib/symphony_elixir_web/static_assets.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "scope:prompt-engine",
+      "summary": "Inferred architecture boundary.",
+      "member_count": 1,
+      "members": [
+        "prompt_engine.continuation.lib.continuation.ex"
+      ],
+      "paths": [
+        "prompt-engine/continuation/lib/continuation.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "state-sync",
+      "summary": "Caches runtime state, issue sessions, and last-known-good config for resilient orchestration.",
+      "member_count": 5,
+      "members": [
+        "elixir.lib.symphony_elixir.runtime_config_store.ex",
+        "elixir.lib.symphony_elixir.runtime_source.ex",
+        "elixir.lib.symphony_elixir.runtime_source_store.ex",
+        "elixir.lib.symphony_elixir.session_stats.ex",
+        "elixir.lib.symphony_elixir.tracker.memory.ex"
+      ],
+      "paths": [
+        "elixir/lib/symphony_elixir/runtime_config_store.ex",
+        "elixir/lib/symphony_elixir/runtime_source.ex",
+        "elixir/lib/symphony_elixir/runtime_source_store.ex",
+        "elixir/lib/symphony_elixir/session_stats.ex",
+        "elixir/lib/symphony_elixir/tracker/memory.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "workflow-engine",
+      "summary": "Loads workflow/runtime configuration and materializes prompt contracts for each issue.",
+      "member_count": 12,
+      "members": [
+        "elixir.lib.symphony_elixir.config.schema.ex",
+        "elixir.lib.symphony_elixir.local.workflow.ex",
+        "elixir.lib.symphony_elixir.runtime_config.ex",
+        "elixir.lib.symphony_elixir.runtime_config_file.ex",
+        "elixir.lib.symphony_elixir.runtime_file.ex",
+        "elixir.lib.symphony_elixir.workflow.ex",
+        "elixir.lib.symphony_elixir.workflow_store.ex",
+        "prompt_engine.renderer.lib.prompt_builder.ex",
+        "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.interpreter.ex",
+        "workflow_engine.interpreter.lib.symphony_elixir.workflow_engine.state_machine.ex",
+        "workflow_engine.mermaid_parser.lib.symphony_elixir.workflow_engine.mermaid_parser.ex",
+        "workflow_engine.validate.lib.symphony_elixir.workflow_engine.validator.ex"
+      ],
+      "paths": [
+        "elixir/lib/symphony_elixir/config/schema.ex",
+        "elixir/lib/symphony_elixir/local/workflow.ex",
+        "elixir/lib/symphony_elixir/runtime_config.ex",
+        "elixir/lib/symphony_elixir/runtime_config_file.ex",
+        "elixir/lib/symphony_elixir/runtime_file.ex",
+        "elixir/lib/symphony_elixir/workflow.ex",
+        "elixir/lib/symphony_elixir/workflow_store.ex",
+        "prompt-engine/renderer/lib/prompt_builder.ex",
+        "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/interpreter.ex",
+        "workflow-engine/interpreter/lib/symphony_elixir/workflow_engine/state_machine.ex",
+        "workflow-engine/mermaid-parser/lib/symphony_elixir/workflow_engine/mermaid_parser.ex",
+        "workflow-engine/validate/lib/symphony_elixir/workflow_engine/validator.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "workspace",
+      "summary": "Creates, validates, and cleans isolated issue workspaces across local and SSH workers.",
+      "member_count": 5,
+      "members": [
+        "elixir.lib.mix.tasks.workspace.before_remove.ex",
+        "elixir.lib.symphony_elixir.ssh.ex",
+        "workspace.hooks.lib.hooks.ex",
+        "workspace.provisioner.lib.path_safety.ex",
+        "workspace.provisioner.lib.workspace.ex"
+      ],
+      "paths": [
+        "elixir/lib/mix/tasks/workspace.before_remove.ex",
+        "elixir/lib/symphony_elixir/ssh.ex",
+        "workspace/hooks/lib/hooks.ex",
+        "workspace/provisioner/lib/path_safety.ex",
+        "workspace/provisioner/lib/workspace.ex"
+      ],
+      "primary_languages": [
+        "elixir"
+      ]
+    }
+  ],
+  "component_relationships": [
+    {
+      "from": "agent-bridge",
+      "to": "dispatch",
+      "strength": 2
+    },
+    {
+      "from": "agent-bridge",
+      "to": "scope:elixir",
+      "strength": 3
+    },
+    {
+      "from": "agent-bridge",
+      "to": "scope:prompt-engine",
+      "strength": 1
+    },
+    {
+      "from": "agent-bridge",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "agent-bridge",
+      "to": "workspace",
+      "strength": 1
+    },
+    {
+      "from": "dispatch",
+      "to": "scope:elixir",
+      "strength": 7
+    },
+    {
+      "from": "orchestrator",
+      "to": "agent-bridge",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "dispatch",
+      "strength": 5
+    },
+    {
+      "from": "orchestrator",
+      "to": "scope:elixir",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "state-sync",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "orchestrator",
+      "to": "workspace",
+      "strength": 1
+    },
+    {
+      "from": "scope:elixir",
+      "to": "dispatch",
+      "strength": 1
+    },
+    {
+      "from": "scope:prompt-engine",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "state-sync",
+      "to": "dispatch",
+      "strength": 1
+    },
+    {
+      "from": "state-sync",
+      "to": "scope:elixir",
+      "strength": 1
+    },
+    {
+      "from": "state-sync",
+      "to": "workflow-engine",
+      "strength": 1
+    },
+    {
+      "from": "workflow-engine",
+      "to": "state-sync",
+      "strength": 1
+    },
+    {
+      "from": "workflow-engine",
+      "to": "workspace",
+      "strength": 1
+    }
+  ],
+  "doc_references": [
+    {
+      "path": "docs/developing.md",
+      "line": 3,
+      "target": "../README.md",
+      "resolved_target": "README.md",
+      "status": "missing",
+      "evidence": "This guide is for contributing to siaan itself \u2014 not for using siaan on your own repo. For usage, see the [README](../README.md)."
+    },
+    {
+      "path": "elixir/README.md",
+      "line": 4,
+      "target": "../SPEC.md",
+      "resolved_target": "SPEC.md",
+      "status": "missing",
+      "evidence": "[`SPEC.md`](../SPEC.md) at the repository root."
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 88,
+      "target": "dispatch-sequence.mmd",
+      "resolved_target": "docs/architecture/siaan/dispatch-sequence.mmd",
+      "status": "present",
+      "evidence": "- [dispatch-sequence.mmd](dispatch-sequence.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 89,
+      "target": "l1-system-context.mmd",
+      "resolved_target": "docs/architecture/siaan/l1-system-context.mmd",
+      "status": "present",
+      "evidence": "- [l1-system-context.mmd](l1-system-context.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 90,
+      "target": "l2-container-view.mmd",
+      "resolved_target": "docs/architecture/siaan/l2-container-view.mmd",
+      "status": "present",
+      "evidence": "- [l2-container-view.mmd](l2-container-view.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 91,
+      "target": "l3-component-view.mmd",
+      "resolved_target": "docs/architecture/siaan/l3-component-view.mmd",
+      "status": "present",
+      "evidence": "- [l3-component-view.mmd](l3-component-view.mmd)"
+    },
+    {
+      "path": "docs/architecture/siaan/SPEC.md",
+      "line": 92,
+      "target": "l4-code-map.mmd",
+      "resolved_target": "docs/architecture/siaan/l4-code-map.mmd",
+      "status": "present",
+      "evidence": "- [l4-code-map.mmd](l4-code-map.mmd)"
+    },
+    {
+      "path": "elixir/README.md",
+      "line": 12,
+      "target": "../.github/media/elixir-screenshot.png",
+      "resolved_target": ".github/media/elixir-screenshot.png",
+      "status": "present",
+      "evidence": "![Symphony Elixir screenshot](../.github/media/elixir-screenshot.png)"
+    },
+    {
+      "path": "elixir/README.md",
+      "line": 275,
+      "target": "../LICENSE",
+      "resolved_target": "LICENSE",
+      "status": "present",
+      "evidence": "This project is licensed under the [Apache License 2.0](../LICENSE)."
+    },
+    {
+      "path": "workflow-engine/README.md",
+      "line": 11,
+      "target": "./examples/github_issue_workflow.mmd",
+      "resolved_target": "workflow-engine/examples/github_issue_workflow.mmd",
+      "status": "present",
+      "evidence": "3. The current GitHub issue lifecycle is expressible with this model without hard-coding GitHub into the engine. The example workflow lives in [`workflow-engine/examples/github_issue_workflow.mmd`](./examples/github_issue_workflow.mmd)."
+    }
+  ]
+}
