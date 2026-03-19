@@ -1,0 +1,14 @@
+C4Container
+title {{TITLE}}
+Person(operator, "Operator", "Maintains automation policy and reviews outputs.")
+System_Ext(tracker, "Issue tracker", "GitHub / Linear / local issue source")
+System_Ext(codex, "Codex app-server", "Agent execution runtime")
+Container_Boundary(repo, "Repository automation system") {
+{{CONTAINERS}}
+}
+Rel(operator, container_orchestrator, "Observes and tunes")
+Rel(container_dispatch, tracker, "Reads candidates / writes state")
+Rel(container_agent_bridge, codex, "Starts sessions")
+Rel(container_workspace, container_agent_bridge, "Supplies isolated workspace")
+Rel(container_workflow_engine, container_agent_bridge, "Builds prompts and runtime settings")
+Rel(container_state_sync, container_orchestrator, "Supplies cached runtime/session state")
