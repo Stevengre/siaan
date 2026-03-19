@@ -53,11 +53,14 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, state}
   end
 
-  def handle_info({:worker_runtime_info, issue_id, runtime_info}, state) do
+  def handle_info({:worker_runtime_info, issue_id, runtime_info}, state)
+      when is_binary(issue_id) and is_map(runtime_info) do
     state = Operations.update_runtime_info(state, issue_id, runtime_info)
     Runtime.notify_dashboard()
     {:noreply, state}
   end
+
+  def handle_info({:worker_runtime_info, _issue_id, _runtime_info}, state), do: {:noreply, state}
 
   def handle_info({:codex_worker_update, issue_id, update}, state) do
     state = Operations.handle_codex_update(state, issue_id, update)

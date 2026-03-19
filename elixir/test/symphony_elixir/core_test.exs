@@ -1264,6 +1264,20 @@ defmodule SymphonyElixir.CoreTest do
     assert {:noreply, ^coalesced_state} = Orchestrator.handle_info({:tick, stale_tick_token}, coalesced_state)
   end
 
+  test "worker runtime info ignores malformed payloads" do
+    state = %Orchestrator.State{
+      running: %{
+        "issue-1" => %{worker_host: "worker-a", workspace_path: "/tmp/original"}
+      }
+    }
+
+    assert {:noreply, ^state} =
+             Orchestrator.handle_info({:worker_runtime_info, :issue_1, %{worker_host: "worker-b"}}, state)
+
+    assert {:noreply, ^state} =
+             Orchestrator.handle_info({:worker_runtime_info, "issue-1", :bad_runtime_info}, state)
+  end
+
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_hosts: ["worker-a", "worker-b"],
