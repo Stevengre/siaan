@@ -1,10 +1,12 @@
-defmodule SymphonyElixir.Workspace do
+defmodule SymphonyElixir.Workspace.Provisioner do
   @moduledoc """
   Creates isolated per-issue workspaces for parallel Codex agents.
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, SSH}
+  alias SymphonyElixir.{Config, SSH}
+  alias SymphonyElixir.Workspace.Hooks
+  alias SymphonyElixir.Workspace.Provisioner.PathSafety
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
 
@@ -29,13 +31,14 @@ defmodule SymphonyElixir.Workspace do
           with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
                :ok <- validate_workspace_path(workspace, worker_host),
                {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
-               :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
+               :ok <- Hooks.run_after_create_hook(workspace, issue_context, created?, worker_host) do
             {:ok, workspace}
           end
       end
     rescue
       error in [ArgumentError, ErlangError, File.Error] ->
         Logger.error("Workspace creation failed #{issue_log_context(issue_context)} worker_host=#{worker_host_for_log(worker_host)} error=#{Exception.message(error)}")
+
         {:error, error}
     end
   end
@@ -124,7 +127,7 @@ defmodule SymphonyElixir.Workspace do
       true ->
         case validate_workspace_path(workspace, nil) do
           :ok ->
-            maybe_run_before_remove_hook(workspace, nil)
+            Hooks.run_before_remove_hook(workspace, nil)
             File.rm_rf(workspace)
 
           {:error, reason} ->
@@ -137,7 +140,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   def remove(workspace, worker_host) when is_binary(worker_host) do
-    maybe_run_before_remove_hook(workspace, worker_host)
+    Hooks.run_before_remove_hook(workspace, worker_host)
 
     script =
       [
@@ -196,32 +199,15 @@ defmodule SymphonyElixir.Workspace do
 
   @spec run_before_run_hook(Path.t(), map() | String.t() | nil, worker_host()) ::
           :ok | {:error, term()}
-  def run_before_run_hook(workspace, issue_or_identifier, worker_host \\ nil) when is_binary(workspace) do
-    issue_context = issue_context(issue_or_identifier)
-    hooks = Config.settings!().hooks
-
-    case hooks.before_run do
-      nil ->
-        :ok
-
-      command ->
-        run_hook(command, workspace, issue_context, "before_run", worker_host)
-    end
+  def run_before_run_hook(workspace, issue_or_identifier, worker_host \\ nil)
+      when is_binary(workspace) do
+    Hooks.run_before_run_hook(workspace, issue_or_identifier, worker_host)
   end
 
   @spec run_after_run_hook(Path.t(), map() | String.t() | nil, worker_host()) :: :ok
-  def run_after_run_hook(workspace, issue_or_identifier, worker_host \\ nil) when is_binary(workspace) do
-    issue_context = issue_context(issue_or_identifier)
-    hooks = Config.settings!().hooks
-
-    case hooks.after_run do
-      nil ->
-        :ok
-
-      command ->
-        run_hook(command, workspace, issue_context, "after_run", worker_host)
-        |> ignore_hook_failure()
-    end
+  def run_after_run_hook(workspace, issue_or_identifier, worker_host \\ nil)
+      when is_binary(workspace) do
+    Hooks.run_after_run_hook(workspace, issue_or_identifier, worker_host)
   end
 
   defp workspace_path_for_issue(safe_id, nil) when is_binary(safe_id) do
@@ -236,154 +222,6 @@ defmodule SymphonyElixir.Workspace do
 
   defp safe_identifier(identifier) do
     String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
-  end
-
-  defp maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
-    hooks = Config.settings!().hooks
-
-    case created? do
-      true ->
-        case hooks.after_create do
-          nil ->
-            :ok
-
-          command ->
-            run_hook(command, workspace, issue_context, "after_create", worker_host)
-        end
-
-      false ->
-        :ok
-    end
-  end
-
-  defp maybe_run_before_remove_hook(workspace, nil) do
-    hooks = Config.settings!().hooks
-
-    case File.dir?(workspace) do
-      true ->
-        case hooks.before_remove do
-          nil ->
-            :ok
-
-          command ->
-            run_hook(
-              command,
-              workspace,
-              %{issue_id: nil, issue_identifier: Path.basename(workspace)},
-              "before_remove",
-              nil
-            )
-            |> ignore_hook_failure()
-        end
-
-      false ->
-        :ok
-    end
-  end
-
-  defp maybe_run_before_remove_hook(workspace, worker_host) when is_binary(worker_host) do
-    hooks = Config.settings!().hooks
-
-    case hooks.before_remove do
-      nil ->
-        :ok
-
-      command ->
-        script =
-          [
-            remote_shell_assign("workspace", workspace),
-            "if [ -d \"$workspace\" ]; then",
-            "  cd \"$workspace\"",
-            "  #{command}",
-            "fi"
-          ]
-          |> Enum.join("\n")
-
-        run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms)
-        |> case do
-          {:ok, {output, status}} ->
-            handle_hook_command_result(
-              {output, status},
-              workspace,
-              %{issue_id: nil, issue_identifier: Path.basename(workspace)},
-              "before_remove"
-            )
-
-          {:error, {:workspace_hook_timeout, "before_remove", _timeout_ms} = reason} ->
-            {:error, reason}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-        |> ignore_hook_failure()
-    end
-  end
-
-  defp ignore_hook_failure(:ok), do: :ok
-  defp ignore_hook_failure({:error, _reason}), do: :ok
-
-  defp run_hook(command, workspace, issue_context, hook_name, nil) do
-    timeout_ms = Config.settings!().hooks.timeout_ms
-
-    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local")
-
-    task =
-      Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
-      end)
-
-    case Task.yield(task, timeout_ms) do
-      {:ok, cmd_result} ->
-        handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
-
-        Logger.warning("Workspace hook timed out hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local timeout_ms=#{timeout_ms}")
-
-        {:error, {:workspace_hook_timeout, hook_name, timeout_ms}}
-    end
-  end
-
-  defp run_hook(command, workspace, issue_context, hook_name, worker_host) when is_binary(worker_host) do
-    timeout_ms = Config.settings!().hooks.timeout_ms
-
-    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
-
-    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
-      {:ok, cmd_result} ->
-        handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
-
-      {:error, {:workspace_hook_timeout, ^hook_name, _timeout_ms} = reason} ->
-        {:error, reason}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp handle_hook_command_result({_output, 0}, _workspace, _issue_id, _hook_name) do
-    :ok
-  end
-
-  defp handle_hook_command_result({output, status}, workspace, issue_context, hook_name) do
-    sanitized_output = sanitize_hook_output_for_log(output)
-
-    Logger.warning("Workspace hook failed hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} status=#{status} output=#{inspect(sanitized_output)}")
-
-    {:error, {:workspace_hook_failed, hook_name, status, output}}
-  end
-
-  defp sanitize_hook_output_for_log(output, max_bytes \\ 2_048) do
-    binary_output = IO.iodata_to_binary(output)
-
-    case byte_size(binary_output) <= max_bytes do
-      true ->
-        binary_output
-
-      false ->
-        binary_part(binary_output, 0, max_bytes) <> "... (truncated)"
-    end
   end
 
   defp validate_workspace_path(workspace, nil) when is_binary(workspace) do
@@ -511,4 +349,18 @@ defmodule SymphonyElixir.Workspace do
   defp issue_log_context(%{issue_id: issue_id, issue_identifier: issue_identifier}) do
     "issue_id=#{issue_id || "n/a"} issue_identifier=#{issue_identifier || "issue"}"
   end
+end
+
+defmodule SymphonyElixir.Workspace do
+  @moduledoc false
+
+  alias SymphonyElixir.Workspace.Provisioner
+
+  defdelegate create_for_issue(issue_or_identifier, worker_host \\ nil), to: Provisioner
+  defdelegate remove(workspace), to: Provisioner
+  defdelegate remove(workspace, worker_host), to: Provisioner
+  defdelegate remove_issue_workspaces(identifier), to: Provisioner
+  defdelegate remove_issue_workspaces(identifier, worker_host), to: Provisioner
+  defdelegate run_before_run_hook(workspace, issue_or_identifier, worker_host \\ nil), to: Provisioner
+  defdelegate run_after_run_hook(workspace, issue_or_identifier, worker_host \\ nil), to: Provisioner
 end
