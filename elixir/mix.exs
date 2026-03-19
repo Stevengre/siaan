@@ -26,6 +26,10 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Orchestrator.State,
           SymphonyElixir.AgentRunner,
           SymphonyElixir.CLI,
+          SymphonyElixir.AgentBridge.Codex,
+          SymphonyElixir.AgentBridge.Codex.TestSupport,
+          SymphonyElixir.AgentBridge.Session,
+          SymphonyElixir.AgentBridge.TestBridge,
           SymphonyElixir.Codex.AppServer,
           SymphonyElixir.Codex.DynamicTool,
           SymphonyElixir.HttpServer,
@@ -94,7 +98,13 @@ defmodule SymphonyElixir.MixProject do
       external_elixir_path("../workspace/provisioner/lib"),
       external_elixir_path("../workspace/hooks/lib"),
       external_elixir_path("../prompt-engine/renderer/lib"),
-      external_elixir_path("../prompt-engine/continuation/lib")
+      external_elixir_path("../prompt-engine/continuation/lib"),
+      external_elixir_path("../agent-bridge/interface/lib"),
+      external_elixir_path("../agent-bridge/test/lib"),
+      external_elixir_path("../agent-bridge-codex/session/lib"),
+      external_elixir_path("../agent-bridge-codex/turn/lib"),
+      external_elixir_path("../agent-bridge-codex/approval/lib"),
+      external_elixir_path("../agent-bridge-codex/test/lib")
     ]
   end
 
@@ -104,7 +114,11 @@ defmodule SymphonyElixir.MixProject do
       external_elixir_path("../workspace/provisioner/lib"),
       external_elixir_path("../workspace/hooks/lib"),
       external_elixir_path("../prompt-engine/renderer/lib"),
-      external_elixir_path("../prompt-engine/continuation/lib")
+      external_elixir_path("../prompt-engine/continuation/lib"),
+      external_elixir_path("../agent-bridge/interface/lib"),
+      external_elixir_path("../agent-bridge-codex/session/lib"),
+      external_elixir_path("../agent-bridge-codex/turn/lib"),
+      external_elixir_path("../agent-bridge-codex/approval/lib")
     ]
   end
 

@@ -5,7 +5,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   use GenServer
   require Logger
-  alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.AgentBridge
   alias SymphonyElixir.Config
   alias SymphonyElixir.PromptEngine.Continuation
   alias SymphonyElixir.PromptEngine.Renderer
@@ -23,8 +23,8 @@ defmodule SymphonyElixir.AgentRunner do
       :workspace,
       :worker_host,
       :codex_update_recipient,
+      :bridge,
       :session,
-      port_pending_line: "",
       base_opts: []
     ]
   end
@@ -129,25 +129,24 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   @impl true
-  def handle_info({port, {:data, {:noeol, chunk}}}, %State{session: %{port: port}} = state) do
-    {:noreply, %{state | port_pending_line: state.port_pending_line <> to_string(chunk)}}
-  end
+  def handle_info(message, %State{bridge: bridge, session: %AgentBridge.Session{} = session} = state)
+      when is_atom(bridge) do
+    case bridge.handle_transport_message(session, message, state.issue) do
+      {:handled, updated_session} ->
+        {:noreply, %{state | session: updated_session}}
 
-  def handle_info({port, {:data, {:eol, chunk}}}, %State{session: %{port: port}} = state) do
-    line = state.port_pending_line <> to_string(chunk)
+      {:stop, reason, updated_session} ->
+        {:stop, reason, %{state | session: updated_session}}
 
-    log_idle_port_message(line, state.issue)
-    {:noreply, %{state | port_pending_line: ""}}
-  end
-
-  def handle_info({port, {:exit_status, status}}, %State{session: %{port: port}} = state) do
-    Logger.warning("Persistent app-server exited while idle for #{issue_context(state.issue)}: #{inspect(status)}")
-    {:stop, {:app_server_exit, status}, %{state | port_pending_line: ""}}
+      :unhandled ->
+        {:noreply, state}
+    end
   end
 
   @impl true
-  def terminate(_reason, %State{session: session}) when is_map(session) do
-    AppServer.stop_session(session)
+  def terminate(_reason, %State{bridge: bridge, session: %AgentBridge.Session{} = session})
+      when is_atom(bridge) do
+    bridge.stop_session(session)
     :ok
   end
 
@@ -202,6 +201,8 @@ defmodule SymphonyElixir.AgentRunner do
     do: {:error, :no_worker_hosts_available}
 
   defp start_persistent_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
+    bridge = bridge_module(opts)
+
     case Workspace.create_for_issue(issue, worker_host) do
       {:ok, workspace} ->
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
@@ -210,7 +211,7 @@ defmodule SymphonyElixir.AgentRunner do
         codex_command = Keyword.get(opts, :codex_command)
 
         with {:ok, session} <-
-               AppServer.start_session(
+               bridge.start_session(
                  workspace,
                  worker_host: worker_host,
                  codex_command: codex_command,
@@ -223,6 +224,7 @@ defmodule SymphonyElixir.AgentRunner do
              workspace: workspace,
              worker_host: worker_host,
              codex_update_recipient: codex_update_recipient,
+             bridge: bridge,
              session: session,
              base_opts: opts
            }}
@@ -241,7 +243,7 @@ defmodule SymphonyElixir.AgentRunner do
 
     session =
       if Keyword.get(run_opts, :reuse_physical_session, false) do
-        AppServer.mark_physical_session_reuse(state.session)
+        state.bridge.mark_physical_session_reuse(state.session)
       else
         state.session
       end
@@ -315,8 +317,10 @@ defmodule SymphonyElixir.AgentRunner do
     allow_external_workspace = Map.get(issue, :project_runtime) in ["local", :local]
     writable_roots = local_runtime_writable_roots(issue, workspace)
 
+    bridge = bridge_module(opts)
+
     with {:ok, session} <-
-           AppServer.start_session(
+           bridge.start_session(
              workspace,
              worker_host: worker_host,
              codex_command: codex_command,
@@ -338,7 +342,7 @@ defmodule SymphonyElixir.AgentRunner do
           {:error, reason} -> {:error, reason}
         end
       after
-        AppServer.stop_session(session)
+        bridge.stop_session(session)
       end
     end
   end
@@ -355,7 +359,7 @@ defmodule SymphonyElixir.AgentRunner do
       )
 
     with {:ok, turn_session} <-
-           AppServer.run_turn(
+           bridge_module(run_context.opts).run_turn(
              app_session,
              prompt,
              issue,
@@ -484,23 +488,7 @@ defmodule SymphonyElixir.AgentRunner do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 
-  defp log_idle_port_message(line, issue) when is_binary(line) do
-    payload = String.trim(line)
-
-    if payload != "" do
-      case Jason.decode(payload) do
-        {:ok, %{"method" => method}} when is_binary(method) ->
-          Logger.debug("Ignoring idle app-server notification for #{issue_context(issue)}: #{method}")
-
-        {:ok, %{"id" => id}} ->
-          Logger.debug("Ignoring idle app-server response for #{issue_context(issue)}: #{inspect(id)}")
-
-        {:ok, decoded} ->
-          Logger.debug("Ignoring idle app-server payload for #{issue_context(issue)}: #{inspect(decoded)}")
-
-        {:error, _reason} ->
-          Logger.debug("Ignoring idle app-server stream line for #{issue_context(issue)}: #{payload}")
-      end
-    end
+  defp bridge_module(opts) do
+    Keyword.get(opts, :agent_bridge, SymphonyElixir.AgentBridge.Codex)
   end
 end
