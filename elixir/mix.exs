@@ -37,6 +37,8 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Local.ProjectConfig,
           SymphonyElixir.Local.Workflow,
           SymphonyElixir.PromptBuilder,
+          SymphonyElixir.PromptEngine.Continuation,
+          SymphonyElixir.PromptEngine.Renderer,
           SymphonyElixir.RuntimeConfig,
           SymphonyElixir.RuntimeConfigFile,
           SymphonyElixir.RuntimeConfigStore,
@@ -48,6 +50,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Tracker.Memory,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
+          SymphonyElixir.Workspace.Hooks,
+          SymphonyElixir.Workspace.Provisioner,
+          SymphonyElixir.Workspace.Provisioner.PathSafety,
           SymphonyElixirWeb.DashboardLive,
           SymphonyElixirWeb.Endpoint,
           SymphonyElixirWeb.ErrorHTML,
@@ -84,6 +89,39 @@ defmodule SymphonyElixir.MixProject do
     ]
   end
 
+  defp elixirc_paths(:test) do
+    [
+      "lib",
+      "test/support",
+      external_elixir_path("../workflow-engine/interpreter/lib"),
+      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
+      external_elixir_path("../workflow-engine/validate/lib"),
+      external_elixir_path("../workflow-engine/test/lib"),
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib")
+    ]
+  end
+
+  defp elixirc_paths(_env) do
+    [
+      "lib",
+      external_elixir_path("../workflow-engine/interpreter/lib"),
+      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
+      external_elixir_path("../workflow-engine/validate/lib"),
+      external_elixir_path("../workflow-engine/test/lib"),
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib")
+    ]
+  end
+
+  defp external_elixir_path(relative_path) when is_binary(relative_path) do
+    Path.expand(relative_path, __DIR__)
+  end
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
@@ -108,16 +146,6 @@ defmodule SymphonyElixir.MixProject do
       setup: ["deps.get"],
       build: ["escript.build"],
       lint: ["specs.check", "credo --strict"]
-    ]
-  end
-
-  defp elixirc_paths(_env) do
-    [
-      "lib",
-      Path.expand("../workflow-engine/interpreter/lib", __DIR__),
-      Path.expand("../workflow-engine/mermaid-parser/lib", __DIR__),
-      Path.expand("../workflow-engine/validate/lib", __DIR__),
-      Path.expand("../workflow-engine/test/lib", __DIR__)
     ]
   end
 

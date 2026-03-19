@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.PathSafety do
+defmodule SymphonyElixir.Workspace.Provisioner.PathSafety do
   @moduledoc false
 
   @spec canonicalize(Path.t()) :: {:ok, Path.t()} | {:error, term()}
@@ -47,4 +47,12 @@ defmodule SymphonyElixir.PathSafety do
   defp join_path(root, segments) when is_list(segments) do
     Enum.reduce(segments, root, fn segment, acc -> Path.join(acc, segment) end)
   end
+end
+
+defmodule SymphonyElixir.PathSafety do
+  @moduledoc false
+
+  alias SymphonyElixir.Workspace.Provisioner.PathSafety
+
+  defdelegate canonicalize(path), to: PathSafety
 end
