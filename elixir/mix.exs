@@ -30,7 +30,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.CLI,
           SymphonyElixir.Codex.AppServer,
           SymphonyElixir.Codex.DynamicTool,
-          SymphonyElixir.Dashboard.Metrics,
+
           SymphonyElixir.HttpServer,
           SymphonyElixir.Linear.Adapter,
           SymphonyElixir.StatusDashboard,
@@ -94,6 +94,8 @@ defmodule SymphonyElixir.MixProject do
     ]
   end
 
+
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
@@ -139,7 +141,10 @@ defmodule SymphonyElixir.MixProject do
       external_elixir_path("../state-sync/interface/lib"),
       external_elixir_path("../state-sync-github/adapter/lib"),
       external_elixir_path("../state-sync-github/merge-automation/lib"),
-      external_elixir_path("../state-sync-local/adapter/lib")
+      external_elixir_path("../state-sync-local/adapter/lib"),
+      dashboard_path("terminal-ui/lib"),
+      dashboard_path("metrics/lib"),
+      dashboard_path("http-api/lib")
     ]
   end
 
@@ -161,25 +166,6 @@ defmodule SymphonyElixir.MixProject do
       main_module: SymphonyElixir.CLI,
       name: "siaan",
       path: "bin/siaan"
-    ]
-  end
-
-  defp elixirc_paths(:test) do
-    [
-      "lib",
-      "test/support",
-      dashboard_path("terminal-ui/lib"),
-      dashboard_path("metrics/lib"),
-      dashboard_path("http-api/lib")
-    ]
-  end
-
-  defp elixirc_paths(_env) do
-    [
-      "lib",
-      dashboard_path("terminal-ui/lib"),
-      dashboard_path("metrics/lib"),
-      dashboard_path("http-api/lib")
     ]
   end
 
