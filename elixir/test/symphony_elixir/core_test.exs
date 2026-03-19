@@ -1278,6 +1278,17 @@ defmodule SymphonyElixir.CoreTest do
              Orchestrator.handle_info({:worker_runtime_info, "issue-1", :bad_runtime_info}, state)
   end
 
+  test ":DOWN messages ignore malformed refs" do
+    state = %Orchestrator.State{
+      running: %{
+        "issue-1" => %{ref: make_ref(), pid: self(), identifier: "GH-1", busy: true}
+      }
+    }
+
+    assert {:noreply, ^state} =
+             Orchestrator.handle_info({:DOWN, :not_a_ref, :process, self(), :normal}, state)
+  end
+
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_hosts: ["worker-a", "worker-b"],
