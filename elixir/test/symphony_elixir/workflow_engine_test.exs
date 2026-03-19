@@ -131,6 +131,28 @@ defmodule SymphonyElixir.WorkflowEngineTest do
              """)
   end
 
+  test "parser rejects reserved end-state identifiers in declarations" do
+    assert {:error, {:reserved_state_id, "__end__", "state __end__"}} =
+             MermaidParser.parse("""
+             stateDiagram-v2
+               state __end__
+             """)
+
+    assert {:error, {:reserved_state_id, "__end__", "state \"Terminal\" as __end__"}} =
+             MermaidParser.parse("""
+             stateDiagram-v2
+               state "Terminal" as __end__
+             """)
+  end
+
+  test "parser rejects labeled initial transitions that carry discarded metadata" do
+    assert {:error, {:invalid_initial_transition_metadata, "[*] --> ready: boot [condition: gate] [action: init]"}} =
+             MermaidParser.parse("""
+             stateDiagram-v2
+               [*] --> ready: boot [condition: gate] [action: init]
+             """)
+  end
+
   test "interpreter evaluates transitions in order and runs activities/actions" do
     assert {:ok, machine} = MermaidParser.parse(Examples.github_issue_workflow_diagram())
 

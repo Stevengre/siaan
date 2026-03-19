@@ -41,9 +41,10 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
         parse_note(rest, machine, line)
 
       Regex.match?(@state_declaration, line) ->
-        line
-        |> parse_state_declaration()
-        |> then(fn state -> parse_lines(rest, put_state(machine, state)) end)
+        case parse_state_declaration(line) do
+          {:ok, state} -> parse_lines(rest, put_state(machine, state))
+          {:error, reason} -> {:error, reason}
+        end
 
       Regex.match?(@transition_declaration, line) ->
         case parse_transition(line, machine) do
@@ -74,18 +75,6 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
     end
   end
 
-  defp parse_state_declaration(line) do
-    captures = Regex.named_captures(@state_declaration, line)
-
-    case captures do
-      %{"simple_id" => id} when is_binary(id) and id != "" ->
-        %State{id: id, label: id}
-
-      %{"label" => label, "id" => id} when is_binary(id) and id != "" ->
-        %State{id: id, label: label}
-    end
-  end
-
   defp parse_transition(line, machine) do
     captures = Regex.named_captures(@transition_declaration, line)
     source = normalize_source(captures["source"])
@@ -95,6 +84,9 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
     cond do
       source == :start and target == StateMachine.end_state_id() ->
         {:error, {:invalid_initial_transition, line}}
+
+      source == :start and not is_nil(label) ->
+        {:error, {:invalid_initial_transition_metadata, line}}
 
       source == :start ->
         case machine.initial_state do
@@ -156,6 +148,8 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
 
   defp normalize_target("[*]"), do: StateMachine.end_state_id()
   defp normalize_target(value), do: value
+
+  defp build_state(id, label), do: %State{id: id, label: label}
 
   defp split_csv(value) do
     value
@@ -238,4 +232,21 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
       trimmed -> trimmed
     end
   end
+
+  defp parse_state_declaration(line) when is_binary(line) do
+    captures = Regex.named_captures(@state_declaration, line)
+
+    case captures do
+      %{"simple_id" => id} when is_binary(id) and id != "" ->
+        reject_reserved_state_id(id, line, fn -> {:ok, build_state(id, id)} end)
+
+      %{"label" => label, "id" => id} when is_binary(id) and id != "" ->
+        reject_reserved_state_id(id, line, fn -> {:ok, build_state(id, label)} end)
+    end
+  end
+
+  defp reject_reserved_state_id(@end_state_id, line, _builder),
+    do: {:error, {:reserved_state_id, @end_state_id, line}}
+
+  defp reject_reserved_state_id(_id, _line, builder), do: builder.()
 end
