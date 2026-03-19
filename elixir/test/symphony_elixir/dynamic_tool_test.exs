@@ -4,9 +4,9 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   alias SymphonyElixir.Codex.DynamicTool
 
   test "tool_specs advertises tracker-specific GraphQL input contracts" do
-    linear_specs = DynamicTool.tool_specs(tracker_kind: "linear")
-    github_specs = DynamicTool.tool_specs(tracker_kind: "github")
-    memory_specs = DynamicTool.tool_specs(tracker_kind: "memory")
+    linear_specs = DynamicTool.tool_specs(state_type: "linear")
+    github_specs = DynamicTool.tool_specs(state_type: "github")
+    memory_specs = DynamicTool.tool_specs(state_type: "memory")
     specs = linear_specs ++ github_specs
 
     assert Enum.map(linear_specs, & &1["name"]) == ["linear_graphql"]
@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
-    response = DynamicTool.execute("not_a_real_tool", %{}, tracker_kind: "github")
+    response = DynamicTool.execute("not_a_real_tool", %{}, state_type: "github")
 
     assert response["success"] == false
 
@@ -319,7 +319,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
           "query" => "query Viewer { viewer { login } }",
           "variables" => %{"enterprise" => false}
         },
-        tracker_kind: "github",
+        state_type: "github",
         github_client: fn query, variables, opts ->
           send(test_pid, {:github_client_called, query, variables, opts})
           {:ok, %{"data" => %{"viewer" => %{"login" => "octocat"}}}}
@@ -336,13 +336,13 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
-        tracker_kind: "github",
+        state_type: "github",
         github_client: fn _query, _variables, _opts -> {:error, :missing_github_api_token} end
       )
 
     assert Jason.decode!(missing_token["output"]) == %{
              "error" => %{
-               "message" => "Symphony is missing GitHub auth. Set `tracker.api_key` in the runtime config or export `GITHUB_TOKEN`."
+               "message" => "Symphony is missing GitHub auth. Set `state.api_key` in the runtime config or export `GITHUB_TOKEN`."
              }
            }
 
@@ -350,7 +350,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
-        tracker_kind: "github",
+        state_type: "github",
         github_client: fn _query, _variables, _opts -> {:error, {:github_api_status, 502}} end
       )
 
@@ -365,7 +365,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
-        tracker_kind: "github",
+        state_type: "github",
         github_client: fn _query, _variables, _opts -> {:error, {:github_api_request, :timeout}} end
       )
 
@@ -382,7 +382,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute(
         "github_graphql",
         %{"query" => "query Viewer { viewer { login } }"},
-        tracker_kind: "linear",
+        state_type: "linear",
         github_client: fn _query, _variables, _opts ->
           flunk("github client should not be called when github_graphql is unsupported for the tracker")
         end

@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.Local.Workflow do
+defmodule SymphonyElixir.StateSync.Local.Workflow do
   @moduledoc """
   Loads and evaluates the local workflow DSL from `workflow.yaml`.
   """

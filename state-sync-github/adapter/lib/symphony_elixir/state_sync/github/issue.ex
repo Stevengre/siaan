@@ -1,9 +1,9 @@
-defmodule SymphonyElixir.GitHub.Issue do
+defmodule SymphonyElixir.StateSync.GitHub.Issue do
   @moduledoc """
   Normalized GitHub issue representation used by the GitHub tracker integration.
   """
 
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.Issue
 
   defstruct [
     :id,
@@ -47,11 +47,11 @@ defmodule SymphonyElixir.GitHub.Issue do
     |> Enum.find(&String.starts_with?(&1, "status:"))
   end
 
-  @spec to_tracker_issue(t(), [map()]) :: TrackerIssue.t()
+  @spec to_tracker_issue(t(), [map()]) :: Issue.t()
   def to_tracker_issue(%__MODULE__{} = issue, blocked_by \\ []) do
     labels = label_names(issue)
 
-    %TrackerIssue{
+    %Issue{
       id: issue.id,
       identifier: issue_identifier(issue.number),
       title: issue.title,

@@ -4,10 +4,11 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
   alias SymphonyElixir.Linear.Adapter
-  alias SymphonyElixir.Tracker.Memory
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.GitHub.Adapter, as: GitHubAdapter
+  alias SymphonyElixir.StateSync.GitHub.MergeAutomation.{AutoMerge, PRFeedback}
+  alias SymphonyElixir.StateSync.Issue
+  alias SymphonyElixir.StateSync.Memory
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -91,7 +92,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
       {:ok,
        %{
-         config: %{"tracker" => %{}},
+         config: %{"state" => %{}},
          prompt: "Prompt from counting runtime source",
          prompt_template: "Prompt from counting runtime source"
        }}
@@ -151,7 +152,7 @@ defmodule SymphonyElixir.ExtensionsTest do
       match?({:ok, %{prompt: "Second prompt"}}, Workflow.current())
     end)
 
-    File.write!(Workflow.workflow_file_path(), "---\ntracker: [\n---\nBroken prompt\n")
+    File.write!(Workflow.workflow_file_path(), "---\nstate: [\n---\nBroken prompt\n")
     assert {:error, _reason} = WorkflowStore.force_reload()
     assert {:ok, %{prompt: "Second prompt"}} = Workflow.current()
 
@@ -221,29 +222,29 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "tracker adapters accept tracker issue structs when deriving dispatch targets" do
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"]
+      state_type: "github",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"]
     )
 
-    assert GitHubAdapter.dispatch_target_state(%TrackerIssue{state: "status:ready"}) ==
+    assert GitHubAdapter.dispatch_target_state(%Issue{state: "status:ready"}) ==
              "status:in-progress"
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "memory",
-      tracker_ready_label: "Todo",
-      tracker_active_states: ["Todo", "In Progress"]
+      state_type: "memory",
+      state_ready_label: "Todo",
+      state_active_states: ["Todo", "In Progress"]
     )
 
-    assert Memory.dispatch_target_state(%TrackerIssue{state: "Todo"}) == "In Progress"
+    assert Memory.dispatch_target_state(%Issue{state: "Todo"}) == "In Progress"
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "linear",
-      tracker_ready_label: "Todo",
-      tracker_active_states: ["Todo", "In Progress"]
+      state_type: "linear",
+      state_ready_label: "Todo",
+      state_active_states: ["Todo", "In Progress"]
     )
 
-    assert Adapter.dispatch_target_state(%TrackerIssue{state: "Todo"}) == "In Progress"
+    assert Adapter.dispatch_target_state(%Issue{state: "Todo"}) == "In Progress"
   end
 
   test "workflow store start_link and poll callback cover missing-file error paths" do
@@ -266,7 +267,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert Process.alive?(manual_pid)
 
     state = :sys.get_state(manual_pid)
-    File.write!(manual_path, "---\ntracker: [\n---\nBroken prompt\n")
+    File.write!(manual_path, "---\nstate: [\n---\nBroken prompt\n")
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
     assert returned_state.workflow.prompt == "Manual workflow prompt"
     refute returned_state.stamp == nil
@@ -297,15 +298,15 @@ defmodule SymphonyElixir.ExtensionsTest do
     issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
     Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "memory")
+    write_workflow_file!(RuntimeConfig.path(), state_type: "memory")
 
-    assert Config.settings!().tracker.kind == "memory"
-    assert SymphonyElixir.Tracker.adapter() == Memory
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
-    assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
+    assert Config.settings!().state.type == "memory"
+    assert SymphonyElixir.StateSync.adapter() == Memory
+    assert {:ok, [^issue]} = SymphonyElixir.StateSync.fetch_candidate_issues()
+    assert {:ok, [^issue]} = SymphonyElixir.StateSync.fetch_issues_by_states([" in progress ", 42])
+    assert {:ok, [^issue]} = SymphonyElixir.StateSync.fetch_issue_states_by_ids(["issue-1"])
+    assert :ok = SymphonyElixir.StateSync.create_comment("issue-1", "comment")
+    assert :ok = SymphonyElixir.StateSync.update_issue_state("issue-1", "Done")
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
     assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
 
@@ -313,37 +314,37 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert :ok = Memory.create_comment("issue-1", "quiet")
     assert :ok = Memory.update_issue_state("issue-1", "Quiet")
 
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "linear")
-    assert SymphonyElixir.Tracker.adapter() == Adapter
+    write_workflow_file!(RuntimeConfig.path(), state_type: "linear")
+    assert SymphonyElixir.StateSync.adapter() == Adapter
   end
 
   test "tracker github-specific delegation falls back on non-github adapters" do
-    for tracker_kind <- ["memory", "linear"] do
-      write_workflow_file!(RuntimeConfig.path(), tracker_kind: tracker_kind)
+    for state_type <- ["memory", "linear"] do
+      write_workflow_file!(RuntimeConfig.path(), state_type: state_type)
 
-      assert {:ok, false} = SymphonyElixir.Tracker.has_actionable_pr_feedback?("1", ["reviewer"])
-      assert {:ok, false} = SymphonyElixir.Tracker.has_pr_approval?("1")
+      assert {:ok, false} = PRFeedback.has_actionable_feedback?("1", ["reviewer"])
+      assert {:ok, false} = PRFeedback.has_approval?("1")
 
       assert {:ok, :needs_agent, ["unsupported tracker"]} =
-               SymphonyElixir.Tracker.check_auto_merge_readiness("1")
+               AutoMerge.check_readiness("1")
 
-      assert {:error, :unsupported_tracker} = SymphonyElixir.Tracker.auto_merge_pr(1)
+      assert {:error, :unsupported_tracker} = AutoMerge.merge_pull_request(1)
     end
   end
 
   test "tracker github-specific delegation fails fast when github token is missing" do
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: nil
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: nil
     )
 
     results = [
-      SymphonyElixir.Tracker.has_actionable_pr_feedback?("1", ["reviewer"]),
-      SymphonyElixir.Tracker.has_pr_approval?("1"),
-      SymphonyElixir.Tracker.check_auto_merge_readiness("1"),
-      SymphonyElixir.Tracker.auto_merge_pr(1)
+      PRFeedback.has_actionable_feedback?("1", ["reviewer"]),
+      PRFeedback.has_approval?("1"),
+      AutoMerge.check_readiness("1"),
+      AutoMerge.merge_pull_request(1)
     ]
 
     for result <- results do

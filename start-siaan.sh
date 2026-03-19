@@ -41,33 +41,33 @@ resolve_absolute_path() {
   fi
 }
 
-extract_tracker_kind() {
+extract_state_type() {
   local workflow_path="$1"
 
   awk '
-    function normalize_kind_value(value) {
-      sub(/^[[:space:]]*kind:[[:space:]]*/, "", value)
+    function normalize_type_value(value) {
+      sub(/^[[:space:]]*(type|kind):[[:space:]]*/, "", value)
       sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
       gsub(/^["'"'"']/, "", value)
       gsub(/["'"'"']$/, "", value)
       return tolower(value)
     }
 
-    function print_inline_tracker_kind(line, candidate) {
+    function print_inline_state_type(line, candidate) {
       candidate = line
 
-      if (!match(candidate, /kind:[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
+      if (!match(candidate, /(type|kind):[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
         return 0
       }
 
       candidate = substr(candidate, RSTART, RLENGTH)
-      print normalize_kind_value(candidate)
+      print normalize_type_value(candidate)
       return 1
     }
 
     BEGIN {
-      in_tracker = 0
-      tracker_indent = -1
+      in_state = 0
+      state_indent = -1
     }
 
     {
@@ -79,28 +79,28 @@ extract_tracker_kind() {
       indent = RSTART ? RSTART - 1 : 0
     }
 
-    /^[[:space:]]*tracker:[[:space:]]*{/ {
-      if (print_inline_tracker_kind($0)) {
+    /^[[:space:]]*(state|tracker):[[:space:]]*{/ {
+      if (print_inline_state_type($0)) {
         exit
       }
 
       next
     }
 
-    /^[[:space:]]*tracker:[[:space:]]*$/ {
-      in_tracker = 1
-      tracker_indent = indent
+    /^[[:space:]]*(state|tracker):[[:space:]]*$/ {
+      in_state = 1
+      state_indent = indent
       next
     }
 
-    in_tracker {
-      if (indent <= tracker_indent) {
+    in_state {
+      if (indent <= state_indent) {
         exit
       }
 
-      if ($0 ~ /^[[:space:]]*kind:[[:space:]]*/) {
+      if ($0 ~ /^[[:space:]]*(type|kind):[[:space:]]*/) {
         line = $0
-        sub(/^[[:space:]]*kind:[[:space:]]*/, "", line)
+        sub(/^[[:space:]]*(type|kind):[[:space:]]*/, "", line)
         sub(/[[:space:]]*(#.*)?$/, "", line)
         gsub(/^["'"'"']/, "", line)
         gsub(/["'"'"']$/, "", line)
@@ -179,7 +179,7 @@ if [[ ! -f "$workflow" ]]; then
   exit 1
 fi
 
-tracker_kind="$(extract_tracker_kind "$workflow")"
+tracker_kind="$(extract_state_type "$workflow")"
 
 if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "error: GITHUB_TOKEN is not set." >&2

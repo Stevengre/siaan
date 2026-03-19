@@ -1,7 +1,8 @@
 defmodule SymphonyElixir.DispatchLifecycle do
   @moduledoc false
 
-  alias SymphonyElixir.{SessionStats, Tracker, TrackerIssue}
+  alias SymphonyElixir.{SessionStats, StateSync}
+  alias SymphonyElixir.StateSync.Issue
 
   @continuity_transitions ["retry_continuation", "stall_recovery", "resume_in_progress"]
 
@@ -18,9 +19,9 @@ defmodule SymphonyElixir.DispatchLifecycle do
 
   def transition_name(_from_state, _to_state), do: nil
 
-  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
+  @spec dispatch_target_state(Issue.t() | String.t() | nil) :: String.t() | nil
   def dispatch_target_state(issue_or_state) do
-    Tracker.dispatch_target_state(issue_or_state)
+    StateSync.dispatch_target_state(issue_or_state)
   end
 
   @spec dispatch_transition_required?(String.t() | nil) :: boolean()
@@ -37,7 +38,7 @@ defmodule SymphonyElixir.DispatchLifecycle do
 
   @spec initial_dispatch_transition_name?(String.t() | nil) :: boolean()
   def initial_dispatch_transition_name?(transition_name) when is_binary(transition_name) do
-    case Tracker.initial_dispatch_transition_name() do
+    case StateSync.initial_dispatch_transition_name() do
       initial when is_binary(initial) -> transition_name == initial
       _ -> false
     end
@@ -45,8 +46,8 @@ defmodule SymphonyElixir.DispatchLifecycle do
 
   def initial_dispatch_transition_name?(_transition_name), do: false
 
-  @spec resolve_dispatch_transition(TrackerIssue.t() | nil, String.t() | nil) :: String.t()
-  def resolve_dispatch_transition(%TrackerIssue{state: issue_state} = issue, explicit_transition)
+  @spec resolve_dispatch_transition(Issue.t() | nil, String.t() | nil) :: String.t()
+  def resolve_dispatch_transition(%Issue{state: issue_state} = issue, explicit_transition)
       when is_binary(issue_state) do
     cond do
       dispatch_transition_required?(issue_state) ->
@@ -69,7 +70,7 @@ defmodule SymphonyElixir.DispatchLifecycle do
 
   def resolve_dispatch_transition(_issue, _explicit_transition), do: "resume_dispatch"
 
-  @spec default_profile_name_for_transition(TrackerIssue.t(), String.t() | nil, map() | nil) ::
+  @spec default_profile_name_for_transition(Issue.t(), String.t() | nil, map() | nil) ::
           String.t()
   def default_profile_name_for_transition(issue, transition_name, issue_session) do
     cond do
@@ -104,12 +105,12 @@ defmodule SymphonyElixir.DispatchLifecycle do
   end
 
   @spec prepare_issue_for_dispatch(
-          TrackerIssue.t(),
+          Issue.t(),
           (String.t(), String.t() -> term()),
-          ([String.t()] -> {:ok, [TrackerIssue.t()]} | {:error, term()})
-        ) :: {:ok, TrackerIssue.t()} | {:error, term()}
+          ([String.t()] -> {:ok, [Issue.t()]} | {:error, term()})
+        ) :: {:ok, Issue.t()} | {:error, term()}
   def prepare_issue_for_dispatch(
-        %TrackerIssue{state: issue_state} = issue,
+        %Issue{state: issue_state} = issue,
         update_issue_state_fun,
         fetch_issue_states_fun
       )
@@ -133,16 +134,16 @@ defmodule SymphonyElixir.DispatchLifecycle do
   def prepare_issue_for_dispatch(issue, _update_issue_state_fun, _fetch_issue_states_fun),
     do: {:ok, issue}
 
-  defp fallback_profile_name(%TrackerIssue{state: issue_state}) when is_binary(issue_state) do
+  defp fallback_profile_name(%Issue{state: issue_state}) when is_binary(issue_state) do
     initial_dispatch_transition_name(issue_state) || fallback_transition_name(issue_state)
   end
 
   defp fallback_profile_name(_issue), do: "resume_dispatch"
 
-  defp refresh_transitioned_issue(%TrackerIssue{id: issue_id}, _target_state, fetch_issue_states_fun)
+  defp refresh_transitioned_issue(%Issue{id: issue_id}, _target_state, fetch_issue_states_fun)
        when is_binary(issue_id) and is_function(fetch_issue_states_fun, 1) do
     case fetch_issue_states_fun.([issue_id]) do
-      {:ok, [%TrackerIssue{} = refreshed_issue | _]} ->
+      {:ok, [%Issue{} = refreshed_issue | _]} ->
         {:ok, refreshed_issue}
 
       {:ok, []} ->

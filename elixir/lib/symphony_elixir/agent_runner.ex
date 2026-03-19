@@ -6,7 +6,8 @@ defmodule SymphonyElixir.AgentRunner do
   use GenServer
   require Logger
   alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, PromptBuilder, Tracker, TrackerIssue, Workspace}
+  alias SymphonyElixir.{Config, PromptBuilder, StateSync, Workspace}
+  alias SymphonyElixir.StateSync.Issue
 
   @type worker_host :: String.t() | nil
 
@@ -230,7 +231,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_persistent_dispatch(%State{} = state, issue, opts) do
     run_opts = Keyword.merge(state.base_opts, opts)
-    issue_state_fetcher = Keyword.get(run_opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+    issue_state_fetcher = Keyword.get(run_opts, :issue_state_fetcher, &StateSync.fetch_issue_states_by_ids/1)
     max_turns = Keyword.get(run_opts, :max_turns, Config.settings!().agent.max_turns)
     issue_turn_count = Keyword.get(run_opts, :issue_turn_count, 0)
 
@@ -264,7 +265,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp send_dispatch_completed(recipient, %TrackerIssue{id: issue_id})
+  defp send_dispatch_completed(recipient, %Issue{id: issue_id})
        when is_pid(recipient) and is_binary(issue_id) do
     send(recipient, {:agent_runner_dispatch_complete, issue_id})
     :ok
@@ -278,7 +279,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp send_codex_update(recipient, %TrackerIssue{id: issue_id}, message)
+  defp send_codex_update(recipient, %Issue{id: issue_id}, message)
        when is_binary(issue_id) and is_pid(recipient) do
     send(recipient, {:codex_worker_update, issue_id, message})
     :ok
@@ -286,7 +287,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_codex_update(_recipient, _issue, _message), do: :ok
 
-  defp send_worker_runtime_info(recipient, %TrackerIssue{id: issue_id}, worker_host, workspace)
+  defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace)
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do
     send(
       recipient,
@@ -304,7 +305,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
-    issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+    issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &StateSync.fetch_issue_states_by_ids/1)
     issue_turn_count = Keyword.get(opts, :issue_turn_count, 0)
     codex_command = Keyword.get(opts, :codex_command)
     allow_external_workspace = Map.get(issue, :project_runtime) in ["local", :local]
@@ -436,10 +437,10 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp continue_with_issue?(%TrackerIssue{id: issue_id} = issue, issue_state_fetcher)
+  defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher)
        when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
-      {:ok, [%TrackerIssue{} = refreshed_issue | _]} ->
+      {:ok, [%Issue{} = refreshed_issue | _]} ->
         if active_issue_state?(refreshed_issue.state) do
           {:continue, refreshed_issue}
         else
@@ -459,7 +460,7 @@ defmodule SymphonyElixir.AgentRunner do
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
 
-    Tracker.active_states()
+    StateSync.active_states()
     |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
   end
 
@@ -515,7 +516,7 @@ defmodule SymphonyElixir.AgentRunner do
     |> String.downcase()
   end
 
-  defp issue_context(%TrackerIssue{id: issue_id, identifier: identifier}) do
+  defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 

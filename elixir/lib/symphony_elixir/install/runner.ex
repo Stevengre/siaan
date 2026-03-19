@@ -1,8 +1,8 @@
 defmodule SymphonyElixir.Install.Runner do
   @moduledoc false
 
-  alias SymphonyElixir.GitHub.Client
   alias SymphonyElixir.Install.{Repository, SecurityFile}
+  alias SymphonyElixir.StateSync.GitHub.Client
 
   @desired_labels [
     %{name: "status:triage", color: "ededed", description: "Needs triage before planning"},

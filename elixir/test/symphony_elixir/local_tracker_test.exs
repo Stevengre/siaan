@@ -1,9 +1,11 @@
 defmodule SymphonyElixir.LocalTrackerTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.Local.{Adapter, ProjectConfig}
-  alias SymphonyElixir.Local.Issue, as: LocalIssue
-  alias SymphonyElixir.Local.Workflow, as: LocalWorkflow
+  alias SymphonyElixir.StateSync
+  alias SymphonyElixir.StateSync.GitHub.MergeAutomation.{AutoMerge, PRFeedback}
+  alias SymphonyElixir.StateSync.Local.{Adapter, ProjectConfig}
+  alias SymphonyElixir.StateSync.Local.Issue, as: LocalIssue
+  alias SymphonyElixir.StateSync.Local.Workflow, as: LocalWorkflow
 
   test "project config parses project settings and adapter filters" do
     root = tmp_dir!("local-project-config")
@@ -17,7 +19,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       workflow = "workflow.yaml"
       runtime = "local"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       type = "github"
       repo = "Stevengre/siaan"
       filters = { assignee = "Stevengre", states = ["status:ready", "status:in-progress"] }
@@ -26,10 +28,10 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:ok, project} = ProjectConfig.load(config_path, "siaan")
     assert project.runtime == "local"
-    assert project.adapter["type"] == "github"
-    assert project.adapter["repo"] == "Stevengre/siaan"
-    assert project.adapter["filters"]["assignee"] == "Stevengre"
-    assert project.adapter["filters"]["states"] == ["status:ready", "status:in-progress"]
+    assert project.state["type"] == "github"
+    assert project.state["repo"] == "Stevengre/siaan"
+    assert project.state["filters"]["assignee"] == "Stevengre"
+    assert project.state["filters"]["states"] == ["status:ready", "status:in-progress"]
     assert project.workflow == Path.join(root, "workflow.yaml")
   end
 
@@ -49,7 +51,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       workflow = ".claude/workflow.yaml"
       runtime = "local"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       enabled = true
       retries = 3
       """
@@ -57,8 +59,8 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
     assert {:ok, project} = ProjectConfig.load(config_path, "siaan")
     assert project.workflow == Path.join(project_dir, ".claude/workflow.yaml")
-    assert project.adapter["enabled"] == true
-    assert project.adapter["retries"] == 3
+    assert project.state["enabled"] == true
+    assert project.state["retries"] == 3
   end
 
   test "project config resolves relative dir and workflow paths from the config directory" do
@@ -183,7 +185,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       """
     )
 
-    assert {:error, {:invalid_project_field_type, "siaan", "adapter", :map, "github"}} =
+    assert {:error, {:invalid_project_field_type, "siaan", "state", :map, "github"}} =
              ProjectConfig.load(config_path, "siaan")
 
     File.write!(
@@ -193,12 +195,12 @@ defmodule SymphonyElixir.LocalTrackerTest do
       dir = "#{project_dir}"
       workflow = ".claude/workflow.yaml"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       filters = "status:ready"
       """
     )
 
-    assert {:error, {:invalid_project_field_type, "siaan", "adapter.filters", :map, "status:ready"}} =
+    assert {:error, {:invalid_project_field_type, "siaan", "state.filters", :map, "status:ready"}} =
              ProjectConfig.load(config_path, "siaan")
   end
 
@@ -440,11 +442,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["ready", "in-progress"],
-      tracker_terminal_states: ["done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["ready", "in-progress"],
+      state_terminal_states: ["done"]
     )
 
     assert {:ok, []} = Adapter.fetch_candidate_issues()
@@ -506,11 +508,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     File.write!(Path.join(issue_dir, "workpad.md"), "---\nstatus: review\n---\n")
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["in-progress"],
-      tracker_terminal_states: ["done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["in-progress"],
+      state_terminal_states: ["done"]
     )
 
     assert {:error, reason} = Adapter.fetch_candidate_issues()
@@ -559,11 +561,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["triage", "in-progress"],
-      tracker_terminal_states: ["done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["triage", "in-progress"],
+      state_terminal_states: ["done"]
     )
 
     assert {:ok, []} = Adapter.fetch_candidate_issues()
@@ -610,11 +612,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:fallback-ready"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:fallback-ready"],
+      state_terminal_states: ["status:done"]
     )
 
     assert Adapter.active_states() == ["status:in-progress"]
@@ -655,11 +657,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:fallback-ready"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:fallback-ready"],
+      state_terminal_states: ["status:done"]
     )
 
     assert Adapter.active_states() == ["status:fallback-ready"]
@@ -749,11 +751,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:ok, [issue]} = Adapter.fetch_issue_states_by_ids([slug])
@@ -931,7 +933,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       workflow = "#{workflow_path}"
       runtime = "local"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       filters = { assignee = "Stevengre", states = ["status:ready"] }
       """
     )
@@ -976,11 +978,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:ok, [issue]} = Adapter.fetch_candidate_issues()
@@ -1019,11 +1021,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     File.write!(
@@ -1037,7 +1039,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
       """
     )
 
-    assert {:error, {:invalid_project_field_type, "siaan", "adapter", :map, "github"}} =
+    assert {:error, {:invalid_project_field_type, "siaan", "state", :map, "github"}} =
              Adapter.fetch_candidate_issues()
 
     File.write!(
@@ -1048,12 +1050,12 @@ defmodule SymphonyElixir.LocalTrackerTest do
       workflow = "#{workflow_path}"
       runtime = "local"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       filters = "status:ready"
       """
     )
 
-    assert {:error, {:invalid_project_field_type, "siaan", "adapter.filters", :map, "status:ready"}} =
+    assert {:error, {:invalid_project_field_type, "siaan", "state.filters", :map, "status:ready"}} =
              Adapter.fetch_candidate_issues()
   end
 
@@ -1088,11 +1090,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     File.write!(
@@ -1103,12 +1105,12 @@ defmodule SymphonyElixir.LocalTrackerTest do
       workflow = "#{workflow_path}"
       runtime = "local"
 
-      [projects.siaan.adapter]
+      [projects.siaan.state]
       filters = { states = [1] }
       """
     )
 
-    assert {:error, {:invalid_project_field_type, "siaan", "adapter.filters.states", :string_list, [1]}} =
+    assert {:error, {:invalid_project_field_type, "siaan", "state.filters.states", :string_list, [1]}} =
              Adapter.fetch_candidate_issues()
   end
 
@@ -1163,11 +1165,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:ok, [issue]} = Adapter.fetch_issues_by_states(["status:in-progress"])
@@ -1233,11 +1235,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:error, {:invalid_frontmatter, path, _message}} =
@@ -1298,11 +1300,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:ok, [issue]} = Adapter.fetch_candidate_issues()
@@ -1368,11 +1370,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
@@ -1438,11 +1440,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
@@ -1524,11 +1526,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:in-progress")
@@ -1618,11 +1620,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:error, {:invalid_frontmatter, bad_issue_path, _message}} =
@@ -1700,11 +1702,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     )
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert {:error, {:no_declared_transition, "status:ready", "status:review"}} =
@@ -1774,11 +1776,11 @@ defmodule SymphonyElixir.LocalTrackerTest do
     File.write!(Path.join(issue_dir, "description-reviewer.md"), "artifact")
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     assert :ok = Adapter.update_issue_state(slug, "status:ready")
@@ -1979,7 +1981,7 @@ defmodule SymphonyElixir.LocalTrackerTest do
     }
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "memory",
+      state_type: "memory",
       allowlist: ["Stevengre", "siaan-bot"]
     )
 
@@ -2029,19 +2031,19 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
   test "config validates local tracker requirements and defaults" do
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_endpoint: nil,
-      tracker_local_config_path: "/tmp/issues/config.toml",
-      tracker_local_project: "siaan",
-      tracker_active_states: nil,
-      tracker_terminal_states: nil
+      state_type: "local",
+      state_endpoint: nil,
+      state_local_config_path: "/tmp/issues/config.toml",
+      state_local_project: "siaan",
+      state_active_states: nil,
+      state_terminal_states: nil
     )
 
     settings = Config.settings!()
-    assert settings.tracker.kind == "local"
-    assert settings.tracker.endpoint == "https://api.linear.app/graphql"
-    assert settings.tracker.active_states == ["status:ready", "status:in-progress"]
-    assert settings.tracker.terminal_states == ["status:done"]
+    assert settings.state.type == "local"
+    assert settings.state.endpoint == "https://api.linear.app/graphql"
+    assert settings.state.active_states == ["status:ready", "status:in-progress"]
+    assert settings.state.terminal_states == ["status:done"]
     assert :ok = Config.validate!()
   end
 
@@ -2049,47 +2051,47 @@ defmodule SymphonyElixir.LocalTrackerTest do
     relative_home_path = "~/.config/skills/issue-config/config.toml"
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_endpoint: nil,
-      tracker_local_config_path: relative_home_path,
-      tracker_local_project: "siaan",
-      tracker_active_states: nil,
-      tracker_terminal_states: nil
+      state_type: "local",
+      state_endpoint: nil,
+      state_local_config_path: relative_home_path,
+      state_local_project: "siaan",
+      state_active_states: nil,
+      state_terminal_states: nil
     )
 
     settings = Config.settings!()
 
-    assert settings.tracker.local_config_path ==
+    assert settings.state.local_config_path ==
              Path.join(System.user_home!(), ".config/skills/issue-config/config.toml")
   end
 
   test "config expands bare ~ in local tracker config path" do
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_endpoint: nil,
-      tracker_local_config_path: "~",
-      tracker_local_project: "siaan",
-      tracker_active_states: nil,
-      tracker_terminal_states: nil
+      state_type: "local",
+      state_endpoint: nil,
+      state_local_config_path: "~",
+      state_local_project: "siaan",
+      state_active_states: nil,
+      state_terminal_states: nil
     )
 
     settings = Config.settings!()
-    assert settings.tracker.local_config_path == System.user_home!()
+    assert settings.state.local_config_path == System.user_home!()
   end
 
   test "config local tracker validation fails when required fields are missing" do
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: nil,
-      tracker_local_project: ""
+      state_type: "local",
+      state_local_config_path: nil,
+      state_local_project: ""
     )
 
     assert {:error, :missing_local_project} = Config.validate!()
 
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: nil,
-      tracker_local_project: "siaan"
+      state_type: "local",
+      state_local_config_path: nil,
+      state_local_project: "siaan"
     )
 
     assert {:error, :missing_local_config_path} = Config.validate!()
@@ -2097,19 +2099,19 @@ defmodule SymphonyElixir.LocalTrackerTest do
 
   test "tracker wrappers use local adapter fallbacks" do
     write_workflow_file!(SymphonyElixir.Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: "/tmp/issues/config.toml",
-      tracker_local_project: "siaan"
+      state_type: "local",
+      state_local_config_path: "/tmp/issues/config.toml",
+      state_local_project: "siaan"
     )
 
-    assert Tracker.adapter() == Adapter
-    assert :ok = Tracker.create_comment("ignored", "ignored")
-    assert {:ok, false} = Tracker.has_actionable_pr_feedback?("ignored", ["Stevengre"])
-    assert {:ok, false} = Tracker.has_pr_approval?("ignored")
+    assert StateSync.adapter() == Adapter
+    assert :ok = StateSync.create_comment("ignored", "ignored")
+    assert {:ok, false} = PRFeedback.has_actionable_feedback?("ignored", ["Stevengre"])
+    assert {:ok, false} = PRFeedback.has_approval?("ignored")
 
     assert {:ok, :needs_agent, ["unsupported tracker"]} =
-             Tracker.check_auto_merge_readiness("ignored")
+             AutoMerge.check_readiness("ignored")
 
-    assert {:error, :unsupported_tracker} = Tracker.auto_merge_pr(123)
+    assert {:error, :unsupported_tracker} = AutoMerge.merge_pull_request(123)
   end
 end

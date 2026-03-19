@@ -6,6 +6,7 @@ defmodule SymphonyElixir.MixProject do
       app: :symphony_elixir,
       version: "0.1.0",
       elixir: "~> 1.19",
+      elixirc_paths: elixirc_paths(Mix.env()),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       start_permanent: Mix.env() == :prod,
       test_coverage: [
@@ -17,7 +18,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.DispatchLifecycle,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.Linear.Issue,
-          SymphonyElixir.GitHub.Adapter,
+          SymphonyElixir.StateSync.GitHub.Adapter,
+          SymphonyElixir.StateSync.GitHub.MergeAutomation.AutoMerge,
+          SymphonyElixir.StateSync.GitHub.MergeAutomation.PRFeedback,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,
           SymphonyElixir.Orchestrator.State,
@@ -29,10 +32,10 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Linear.Adapter,
           SymphonyElixir.StatusDashboard,
           SymphonyElixir.LogFile,
-          SymphonyElixir.Local.Adapter,
-          SymphonyElixir.Local.Issue,
-          SymphonyElixir.Local.ProjectConfig,
-          SymphonyElixir.Local.Workflow,
+          SymphonyElixir.StateSync.Local.Adapter,
+          SymphonyElixir.StateSync.Local.Issue,
+          SymphonyElixir.StateSync.Local.ProjectConfig,
+          SymphonyElixir.StateSync.Local.Workflow,
           SymphonyElixir.PromptBuilder,
           SymphonyElixir.RuntimeConfig,
           SymphonyElixir.RuntimeConfigFile,
@@ -40,7 +43,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.RuntimeFile,
           SymphonyElixir.RuntimeSource,
           SymphonyElixir.RuntimeSourceStore,
-          SymphonyElixir.Tracker.Memory,
+          SymphonyElixir.StateSync,
+          SymphonyElixir.StateSync.Issue,
+          SymphonyElixir.StateSync.Memory,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
           SymphonyElixirWeb.DashboardLive,
@@ -93,6 +98,28 @@ defmodule SymphonyElixir.MixProject do
       {:ecto, "~> 3.13"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
+    ]
+  end
+
+  defp elixirc_paths(:test) do
+    base_elixirc_paths() ++
+      [
+        "test/support",
+        Path.expand("../state-sync/test/lib", __DIR__),
+        Path.expand("../state-sync-github/test/lib", __DIR__),
+        Path.expand("../state-sync-local/test/lib", __DIR__)
+      ]
+  end
+
+  defp elixirc_paths(_env), do: base_elixirc_paths()
+
+  defp base_elixirc_paths do
+    [
+      "lib",
+      Path.expand("../state-sync/interface/lib", __DIR__),
+      Path.expand("../state-sync-github/adapter/lib", __DIR__),
+      Path.expand("../state-sync-github/merge-automation/lib", __DIR__),
+      Path.expand("../state-sync-local/adapter/lib", __DIR__)
     ]
   end
 

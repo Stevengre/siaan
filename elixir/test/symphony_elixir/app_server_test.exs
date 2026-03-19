@@ -91,9 +91,9 @@ defmodule SymphonyElixir.AppServerTest do
       File.mkdir_p!(outside_workspace)
 
       write_workflow_file!(Workflow.workflow_file_path(),
-        tracker_kind: "local",
-        tracker_local_config_path: Path.join(test_root, "config.toml"),
-        tracker_local_project: "siaan",
+        state_type: "local",
+        state_local_config_path: Path.join(test_root, "config.toml"),
+        state_local_project: "siaan",
         workspace_root: workspace_root
       )
 

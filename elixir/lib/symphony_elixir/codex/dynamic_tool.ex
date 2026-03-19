@@ -3,8 +3,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.GitHub.Client, as: GitHubClient
   alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.StateSync.GitHub.Client, as: GitHubClient
 
   @linear_graphql_tool "linear_graphql"
   @github_graphql_tool "github_graphql"
@@ -54,7 +54,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @spec tool_specs(keyword()) :: [map()]
   def tool_specs(opts \\ []) do
-    case tracker_kind(opts) do
+    case state_type(opts) do
       "linear" -> [linear_tool_spec()]
       "github" -> [github_tool_spec()]
       "memory" -> []
@@ -202,7 +202,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(@github_graphql_tool, :missing_github_api_token) do
     %{
       "error" => %{
-        "message" => "Symphony is missing GitHub auth. Set `tracker.api_key` in the runtime config or export `GITHUB_TOKEN`."
+        "message" => "Symphony is missing GitHub auth. Set `state.api_key` in the runtime config or export `GITHUB_TOKEN`."
       }
     }
   end
@@ -263,20 +263,20 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     Enum.map(tool_specs(opts), & &1["name"])
   end
 
-  defp tracker_kind(opts) when is_list(opts) do
-    case Keyword.get(opts, :tracker_kind) do
-      kind when is_binary(kind) ->
-        normalize_tracker_kind(kind)
+  defp state_type(opts) when is_list(opts) do
+    case Keyword.get(opts, :state_type, Keyword.get(opts, :tracker_kind)) do
+      type when is_binary(type) ->
+        normalize_state_type(type)
 
-      kind when is_atom(kind) and not is_nil(kind) ->
-        kind |> Atom.to_string() |> normalize_tracker_kind()
+      type when is_atom(type) and not is_nil(type) ->
+        type |> Atom.to_string() |> normalize_state_type()
 
       _ ->
         nil
     end
   end
 
-  defp normalize_tracker_kind(kind) when is_binary(kind), do: kind |> String.trim() |> String.downcase()
+  defp normalize_state_type(type) when is_binary(type), do: type |> String.trim() |> String.downcase()
 
   defp unsupported_tool_response(tool_name, supported_tools) do
     failure_response(%{

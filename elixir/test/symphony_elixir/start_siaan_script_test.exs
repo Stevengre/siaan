@@ -20,7 +20,7 @@ defmodule SymphonyElixir.StartSiaanScriptTest do
 
     File.write!(
       workflow_path,
-      "tracker: { kind: github, repo_owner: acme, repo_name: repo }\n---\nPrompt\n"
+      "state: { type: github, repo_owner: acme, repo_name: repo }\n---\nPrompt\n"
     )
 
     assert {output, 1} =

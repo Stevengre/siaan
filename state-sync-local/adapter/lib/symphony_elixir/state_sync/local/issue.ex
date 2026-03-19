@@ -1,10 +1,10 @@
-defmodule SymphonyElixir.Local.Issue do
+defmodule SymphonyElixir.StateSync.Local.Issue do
   @moduledoc """
   Reads local issue directories and materializes orchestrator issue structs.
   """
 
-  alias SymphonyElixir.Local.Workflow
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.Local.Workflow
+  alias SymphonyElixir.StateSync.Issue
 
   @directory_states MapSet.new(["in-progress", "review", "done"])
 
@@ -18,7 +18,7 @@ defmodule SymphonyElixir.Local.Issue do
     do: "status:#{state_name}"
 
   @spec scan_root(Path.t(), Path.t(), map(), String.t() | nil) ::
-          {:ok, [TrackerIssue.t()]} | {:error, term()}
+          {:ok, [Issue.t()]} | {:error, term()}
   def scan_root(root_path, project_dir, workflow, project_runtime \\ nil)
       when is_binary(root_path) and is_binary(project_dir) do
     states = workflow_states(root_path, workflow)
@@ -34,7 +34,7 @@ defmodule SymphonyElixir.Local.Issue do
   end
 
   @spec load_by_slug(Path.t(), String.t(), Path.t(), map(), String.t() | nil) ::
-          {:ok, TrackerIssue.t()} | {:error, term()}
+          {:ok, Issue.t()} | {:error, term()}
   def load_by_slug(root_path, slug, project_dir, workflow, project_runtime \\ nil)
       when is_binary(root_path) and is_binary(slug) and is_binary(project_dir) do
     states = workflow_states(root_path, workflow)
@@ -106,7 +106,7 @@ defmodule SymphonyElixir.Local.Issue do
       skill_template = skill_prompts |> List.first() |> skill_prompt_path()
 
       {:ok,
-       %TrackerIssue{
+       %Issue{
          id: slug,
          identifier: Map.get(frontmatter, "identifier", slug),
          title: Map.get(frontmatter, "title", slug),

@@ -38,7 +38,7 @@ defmodule SymphonyElixir.Config.Schema do
     def dump(_value), do: :error
   end
 
-  defmodule Tracker do
+  defmodule State do
     @moduledoc false
     use Ecto.Schema
     import Ecto.Changeset
@@ -46,7 +46,7 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
 
     embedded_schema do
-      field(:kind, :string)
+      field(:type, :string)
       field(:endpoint, :string, default: "https://api.linear.app/graphql")
       field(:api_key, :string)
       field(:project_slug, :string)
@@ -67,7 +67,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> cast(
         attrs,
         [
-          :kind,
+          :type,
           :endpoint,
           :api_key,
           :project_slug,
@@ -398,7 +398,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   embedded_schema do
     field(:allowlist, {:array, :string}, default: [])
-    embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:state, State, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
@@ -413,6 +413,7 @@ defmodule SymphonyElixir.Config.Schema do
   def parse(config) when is_map(config) do
     config
     |> normalize_keys()
+    |> normalize_legacy_state_config()
     |> drop_nil_values()
     |> changeset()
     |> apply_action(:validate)
@@ -503,7 +504,7 @@ defmodule SymphonyElixir.Config.Schema do
     %__MODULE__{}
     |> cast(attrs, [:allowlist], empty_values: [])
     |> validate_string_list(:allowlist)
-    |> cast_embed(:tracker, with: &Tracker.changeset/2)
+    |> cast_embed(:state, with: &State.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
     |> cast_embed(:worker, with: &Worker.changeset/2)
@@ -516,35 +517,35 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp finalize_settings(settings) do
     api_key_fallback =
-      case settings.tracker.kind do
+      case settings.state.type do
         "github" -> System.get_env("GITHUB_TOKEN")
         _ -> System.get_env("LINEAR_API_KEY")
       end
 
     assignee_fallback =
-      case settings.tracker.kind do
+      case settings.state.type do
         "linear" -> System.get_env("LINEAR_ASSIGNEE")
         _ -> nil
       end
 
-    tracker = %{
-      settings.tracker
-      | endpoint: resolve_tracker_endpoint(settings.tracker.kind, settings.tracker.endpoint || ""),
-        api_key: resolve_secret_setting(settings.tracker.api_key, api_key_fallback),
-        repo_owner: resolve_secret_setting(settings.tracker.repo_owner, nil),
-        repo_name: resolve_secret_setting(settings.tracker.repo_name, nil),
-        local_config_path: resolve_local_config_path(settings.tracker.local_config_path),
-        local_project: resolve_secret_setting(settings.tracker.local_project, "siaan"),
-        ready_label: resolve_secret_setting(settings.tracker.ready_label, "status:ready") || "status:ready",
-        active_states: resolve_active_states(settings.tracker.kind, settings.tracker.active_states),
-        watch_states: resolve_watch_states(settings.tracker.watch_states),
-        terminal_states: resolve_terminal_states(settings.tracker.kind, settings.tracker.terminal_states),
-        assignee: resolve_secret_setting(settings.tracker.assignee, assignee_fallback)
+    state = %{
+      settings.state
+      | endpoint: resolve_state_endpoint(settings.state.type, settings.state.endpoint || ""),
+        api_key: resolve_secret_setting(settings.state.api_key, api_key_fallback),
+        repo_owner: resolve_secret_setting(settings.state.repo_owner, nil),
+        repo_name: resolve_secret_setting(settings.state.repo_name, nil),
+        local_config_path: resolve_local_config_path(settings.state.local_config_path),
+        local_project: resolve_secret_setting(settings.state.local_project, "siaan"),
+        ready_label: resolve_secret_setting(settings.state.ready_label, "status:ready") || "status:ready",
+        active_states: resolve_active_states(settings.state.type, settings.state.active_states),
+        watch_states: resolve_watch_states(settings.state.watch_states),
+        terminal_states: resolve_terminal_states(settings.state.type, settings.state.terminal_states),
+        assignee: resolve_secret_setting(settings.state.assignee, assignee_fallback)
     }
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, default_workspace_root_for_tracker(tracker))
+      | root: resolve_path_value(settings.workspace.root, default_workspace_root_for_tracker(state))
     }
 
     codex = %{
@@ -556,7 +557,7 @@ defmodule SymphonyElixir.Config.Schema do
     %{
       settings
       | allowlist: normalize_string_list(settings.allowlist),
-        tracker: tracker,
+        state: state,
         workspace: workspace,
         agent: %{
           settings.agent
@@ -593,9 +594,9 @@ defmodule SymphonyElixir.Config.Schema do
     |> Enum.reject(&(&1 == ""))
   end
 
-  defp resolve_tracker_endpoint(kind, endpoint) when is_binary(kind) and is_binary(endpoint) do
+  defp resolve_state_endpoint(type, endpoint) when is_binary(type) and is_binary(endpoint) do
     default_endpoint =
-      case kind do
+      case type do
         "github" -> "https://api.github.com/graphql"
         "local" -> ""
         _ -> "https://api.linear.app/graphql"
@@ -606,10 +607,10 @@ defmodule SymphonyElixir.Config.Schema do
       |> resolve_env_value(default_endpoint)
       |> normalize_endpoint(default_endpoint)
 
-    normalize_tracker_endpoint_for_kind(kind, resolved_endpoint)
+    normalize_state_endpoint_for_type(type, resolved_endpoint)
   end
 
-  defp resolve_tracker_endpoint(_kind, endpoint), do: resolve_tracker_endpoint("", endpoint)
+  defp resolve_state_endpoint(_type, endpoint), do: resolve_state_endpoint("", endpoint)
 
   defp normalize_endpoint(value, default_endpoint) when is_binary(value) do
     case String.trim(value) do
@@ -620,10 +621,42 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_endpoint(nil, default_endpoint), do: default_endpoint
 
-  defp normalize_tracker_endpoint_for_kind("github", "https://api.linear.app/graphql"),
+  defp normalize_state_endpoint_for_type("github", "https://api.linear.app/graphql"),
     do: "https://api.github.com/graphql"
 
-  defp normalize_tracker_endpoint_for_kind(_kind, endpoint), do: endpoint
+  defp normalize_state_endpoint_for_type(_type, endpoint), do: endpoint
+
+  defp normalize_legacy_state_config(config) when is_map(config) do
+    config
+    |> move_legacy_tracker_section()
+    |> normalize_legacy_state_type()
+  end
+
+  defp move_legacy_tracker_section(%{"state" => _state} = config), do: Map.delete(config, "tracker")
+
+  defp move_legacy_tracker_section(%{"tracker" => tracker} = config) do
+    config
+    |> Map.delete("tracker")
+    |> Map.put("state", tracker)
+  end
+
+  defp move_legacy_tracker_section(config), do: config
+
+  defp normalize_legacy_state_type(%{"state" => state} = config) when is_map(state) do
+    normalized_state =
+      if Map.has_key?(state, "type") do
+        state
+      else
+        case Map.pop(state, "kind") do
+          {nil, unchanged} -> unchanged
+          {type, rest} -> Map.put(rest, "type", type)
+        end
+      end
+
+    Map.put(config, "state", normalized_state)
+  end
+
+  defp normalize_legacy_state_type(config), do: config
 
   defp resolve_watch_states(nil), do: []
   defp resolve_watch_states(watch_states), do: watch_states
@@ -704,7 +737,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp expand_home_path(path), do: path
 
-  defp default_workspace_root_for_tracker(%{kind: "github", repo_owner: owner, repo_name: repo})
+  defp default_workspace_root_for_tracker(%{type: "github", repo_owner: owner, repo_name: repo})
        when is_binary(owner) and owner != "" and is_binary(repo) and repo != "" do
     Path.join(@default_workspace_root, "#{workspace_root_component(owner)}-#{workspace_root_component(repo)}")
   end

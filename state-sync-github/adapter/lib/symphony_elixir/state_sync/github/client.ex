@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.GitHub.Client do
+defmodule SymphonyElixir.StateSync.GitHub.Client do
   @moduledoc """
   Thin GitHub REST/GraphQL client for issue polling and repository installation tasks.
   """
@@ -6,7 +6,7 @@ defmodule SymphonyElixir.GitHub.Client do
   require Logger
 
   alias SymphonyElixir.Config
-  alias SymphonyElixir.GitHub.Issue
+  alias SymphonyElixir.StateSync.GitHub.Issue
 
   @rest_endpoint "https://api.github.com"
   @graphql_endpoint "https://api.github.com/graphql"
@@ -889,7 +889,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp github_tracker_config do
     settings = Config.settings!()
-    tracker = settings.tracker
+    tracker = settings.state
 
     with {:ok, _api_key} <- ensure_present_string(tracker.api_key, :missing_github_api_token),
          {:ok, normalized_owner} <- ensure_present_string(tracker.repo_owner, :missing_github_repo_owner),
@@ -908,7 +908,7 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_headers do
-    tracker = Config.settings!().tracker
+    tracker = Config.settings!().state
     repo_headers(%{api_key: tracker.api_key})
   end
 
@@ -925,7 +925,7 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp github_graphql_endpoint do
-    tracker = Config.settings!().tracker
+    tracker = Config.settings!().state
 
     if tracker.endpoint == "https://api.linear.app/graphql",
       do: @graphql_endpoint,
@@ -936,9 +936,9 @@ defmodule SymphonyElixir.GitHub.Client do
     case Config.settings() do
       {:ok, settings} ->
         endpoint =
-          if settings.tracker.endpoint == "https://api.linear.app/graphql",
+          if settings.state.endpoint == "https://api.linear.app/graphql",
             do: @graphql_endpoint,
-            else: settings.tracker.endpoint
+            else: settings.state.endpoint
 
         rest_endpoint_from_graphql(endpoint)
 

@@ -17,9 +17,9 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.PromptBuilder
       alias SymphonyElixir.RuntimeConfig
       alias SymphonyElixir.RuntimeConfigStore
+      alias SymphonyElixir.StateSync
+      alias SymphonyElixir.StateSync.Issue, as: Issue
       alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.TrackerIssue, as: Issue
       alias SymphonyElixir.Workflow
       alias SymphonyElixir.WorkflowStore
       alias SymphonyElixir.Workspace
@@ -225,19 +225,19 @@ defmodule SymphonyElixir.TestSupport do
     config =
       Keyword.merge(
         [
-          tracker_kind: "linear",
-          tracker_endpoint: "https://api.linear.app/graphql",
-          tracker_api_token: "token",
-          tracker_project_slug: "project",
-          tracker_repo_owner: nil,
-          tracker_repo_name: nil,
-          tracker_local_config_path: nil,
-          tracker_local_project: nil,
-          tracker_ready_label: "status:ready",
-          tracker_assignee: nil,
-          tracker_active_states: ["Todo", "In Progress"],
-          tracker_watch_states: nil,
-          tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+          state_type: "linear",
+          state_endpoint: "https://api.linear.app/graphql",
+          state_api_token: "token",
+          state_project_slug: "project",
+          state_repo_owner: nil,
+          state_repo_name: nil,
+          state_local_config_path: nil,
+          state_local_project: nil,
+          state_ready_label: "status:ready",
+          state_assignee: nil,
+          state_active_states: ["Todo", "In Progress"],
+          state_watch_states: nil,
+          state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
           worker_ssh_hosts: [],
@@ -270,19 +270,19 @@ defmodule SymphonyElixir.TestSupport do
         overrides
       )
 
-    tracker_kind = Keyword.get(config, :tracker_kind)
-    tracker_endpoint = Keyword.get(config, :tracker_endpoint)
-    tracker_api_token = Keyword.get(config, :tracker_api_token)
-    tracker_project_slug = Keyword.get(config, :tracker_project_slug)
-    tracker_repo_owner = Keyword.get(config, :tracker_repo_owner)
-    tracker_repo_name = Keyword.get(config, :tracker_repo_name)
-    tracker_local_config_path = Keyword.get(config, :tracker_local_config_path)
-    tracker_local_project = Keyword.get(config, :tracker_local_project)
-    tracker_ready_label = Keyword.get(config, :tracker_ready_label)
-    tracker_assignee = Keyword.get(config, :tracker_assignee)
-    tracker_active_states = Keyword.get(config, :tracker_active_states)
-    tracker_watch_states = Keyword.get(config, :tracker_watch_states)
-    tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
+    state_type = Keyword.get(config, :state_type)
+    state_endpoint = Keyword.get(config, :state_endpoint)
+    state_api_token = Keyword.get(config, :state_api_token)
+    state_project_slug = Keyword.get(config, :state_project_slug)
+    state_repo_owner = Keyword.get(config, :state_repo_owner)
+    state_repo_name = Keyword.get(config, :state_repo_name)
+    state_local_config_path = Keyword.get(config, :state_local_config_path)
+    state_local_project = Keyword.get(config, :state_local_project)
+    state_ready_label = Keyword.get(config, :state_ready_label)
+    state_assignee = Keyword.get(config, :state_assignee)
+    state_active_states = Keyword.get(config, :state_active_states)
+    state_watch_states = Keyword.get(config, :state_watch_states)
+    state_terminal_states = Keyword.get(config, :state_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
@@ -315,20 +315,20 @@ defmodule SymphonyElixir.TestSupport do
     sections =
       [
         "---",
-        "tracker:",
-        "  kind: #{yaml_value(tracker_kind)}",
-        "  endpoint: #{yaml_value(tracker_endpoint)}",
-        "  api_key: #{yaml_value(tracker_api_token)}",
-        "  project_slug: #{yaml_value(tracker_project_slug)}",
-        "  repo_owner: #{yaml_value(tracker_repo_owner)}",
-        "  repo_name: #{yaml_value(tracker_repo_name)}",
-        "  local_config_path: #{yaml_value(tracker_local_config_path)}",
-        "  local_project: #{yaml_value(tracker_local_project)}",
-        "  ready_label: #{yaml_value(tracker_ready_label)}",
-        "  assignee: #{yaml_value(tracker_assignee)}",
-        "  active_states: #{yaml_value(tracker_active_states)}",
-        "  watch_states: #{yaml_value(tracker_watch_states)}",
-        "  terminal_states: #{yaml_value(tracker_terminal_states)}",
+        "state:",
+        "  type: #{yaml_value(state_type)}",
+        "  endpoint: #{yaml_value(state_endpoint)}",
+        "  api_key: #{yaml_value(state_api_token)}",
+        "  project_slug: #{yaml_value(state_project_slug)}",
+        "  repo_owner: #{yaml_value(state_repo_owner)}",
+        "  repo_name: #{yaml_value(state_repo_name)}",
+        "  local_config_path: #{yaml_value(state_local_config_path)}",
+        "  local_project: #{yaml_value(state_local_project)}",
+        "  ready_label: #{yaml_value(state_ready_label)}",
+        "  assignee: #{yaml_value(state_assignee)}",
+        "  active_states: #{yaml_value(state_active_states)}",
+        "  watch_states: #{yaml_value(state_watch_states)}",
+        "  terminal_states: #{yaml_value(state_terminal_states)}",
         "polling:",
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
@@ -364,19 +364,19 @@ defmodule SymphonyElixir.TestSupport do
     config =
       Keyword.merge(
         [
-          tracker_kind: "linear",
-          tracker_endpoint: "https://api.linear.app/graphql",
-          tracker_api_token: "token",
-          tracker_project_slug: "project",
-          tracker_repo_owner: nil,
-          tracker_repo_name: nil,
-          tracker_local_config_path: nil,
-          tracker_local_project: nil,
-          tracker_ready_label: "status:ready",
-          tracker_assignee: nil,
-          tracker_active_states: ["Todo", "In Progress"],
-          tracker_watch_states: nil,
-          tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+          state_type: "linear",
+          state_endpoint: "https://api.linear.app/graphql",
+          state_api_token: "token",
+          state_project_slug: "project",
+          state_repo_owner: nil,
+          state_repo_name: nil,
+          state_local_config_path: nil,
+          state_local_project: nil,
+          state_ready_label: "status:ready",
+          state_assignee: nil,
+          state_active_states: ["Todo", "In Progress"],
+          state_watch_states: nil,
+          state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
           worker_ssh_hosts: [],
@@ -400,20 +400,20 @@ defmodule SymphonyElixir.TestSupport do
       )
 
     [
-      "tracker:",
-      "  kind: #{yaml_value(Keyword.get(config, :tracker_kind))}",
-      "  endpoint: #{yaml_value(Keyword.get(config, :tracker_endpoint))}",
-      "  api_key: #{yaml_value(Keyword.get(config, :tracker_api_token))}",
-      "  project_slug: #{yaml_value(Keyword.get(config, :tracker_project_slug))}",
-      "  repo_owner: #{yaml_value(Keyword.get(config, :tracker_repo_owner))}",
-      "  repo_name: #{yaml_value(Keyword.get(config, :tracker_repo_name))}",
-      "  local_config_path: #{yaml_value(Keyword.get(config, :tracker_local_config_path))}",
-      "  local_project: #{yaml_value(Keyword.get(config, :tracker_local_project))}",
-      "  ready_label: #{yaml_value(Keyword.get(config, :tracker_ready_label))}",
-      "  assignee: #{yaml_value(Keyword.get(config, :tracker_assignee))}",
-      "  active_states: #{yaml_value(Keyword.get(config, :tracker_active_states))}",
-      "  watch_states: #{yaml_value(Keyword.get(config, :tracker_watch_states))}",
-      "  terminal_states: #{yaml_value(Keyword.get(config, :tracker_terminal_states))}",
+      "state:",
+      "  type: #{yaml_value(Keyword.get(config, :state_type))}",
+      "  endpoint: #{yaml_value(Keyword.get(config, :state_endpoint))}",
+      "  api_key: #{yaml_value(Keyword.get(config, :state_api_token))}",
+      "  project_slug: #{yaml_value(Keyword.get(config, :state_project_slug))}",
+      "  repo_owner: #{yaml_value(Keyword.get(config, :state_repo_owner))}",
+      "  repo_name: #{yaml_value(Keyword.get(config, :state_repo_name))}",
+      "  local_config_path: #{yaml_value(Keyword.get(config, :state_local_config_path))}",
+      "  local_project: #{yaml_value(Keyword.get(config, :state_local_project))}",
+      "  ready_label: #{yaml_value(Keyword.get(config, :state_ready_label))}",
+      "  assignee: #{yaml_value(Keyword.get(config, :state_assignee))}",
+      "  active_states: #{yaml_value(Keyword.get(config, :state_active_states))}",
+      "  watch_states: #{yaml_value(Keyword.get(config, :state_watch_states))}",
+      "  terminal_states: #{yaml_value(Keyword.get(config, :state_terminal_states))}",
       "polling:",
       "  interval_ms: #{yaml_value(Keyword.get(config, :poll_interval_ms))}",
       "workspace:",

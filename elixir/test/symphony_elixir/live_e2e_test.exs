@@ -455,8 +455,8 @@ defmodule SymphonyElixir.LiveE2ETest do
       Workflow.set_workflow_file_path(workflow_file)
 
       write_workflow_file!(workflow_file,
-        tracker_api_token: "$LINEAR_API_KEY",
-        tracker_project_slug: "bootstrap",
+        state_api_token: "$LINEAR_API_KEY",
+        state_project_slug: "bootstrap",
         workspace_root: worker_setup.workspace_root,
         worker_ssh_hosts: worker_setup.ssh_worker_hosts,
         codex_command: worker_setup.codex_command,
@@ -484,10 +484,10 @@ defmodule SymphonyElixir.LiveE2ETest do
         )
 
       write_workflow_file!(workflow_file,
-        tracker_api_token: "$LINEAR_API_KEY",
-        tracker_project_slug: project["slugId"],
-        tracker_active_states: active_state_names(team),
-        tracker_terminal_states: terminal_states,
+        state_api_token: "$LINEAR_API_KEY",
+        state_project_slug: project["slugId"],
+        state_active_states: active_state_names(team),
+        state_terminal_states: terminal_states,
         workspace_root: worker_setup.workspace_root,
         worker_ssh_hosts: worker_setup.ssh_worker_hosts,
         codex_command: worker_setup.codex_command,

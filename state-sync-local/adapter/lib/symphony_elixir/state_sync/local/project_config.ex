@@ -1,16 +1,16 @@
-defmodule SymphonyElixir.Local.ProjectConfig do
+defmodule SymphonyElixir.StateSync.Local.ProjectConfig do
   @moduledoc """
   Loads the local issue-project configuration from `config.toml`.
   """
 
-  defstruct [:name, :dir, :workflow, :runtime, adapter: %{}]
+  defstruct [:name, :dir, :workflow, :runtime, state: %{}]
 
   @type t :: %__MODULE__{
           name: String.t(),
           dir: String.t(),
           workflow: String.t(),
           runtime: String.t() | nil,
-          adapter: map()
+          state: map()
         }
 
   @spec load(Path.t(), String.t()) :: {:ok, t()} | {:error, term()}
@@ -21,7 +21,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          {:ok, dir} <- fetch_required_path(project, project_name, "dir"),
          {:ok, workflow} <- fetch_required_path(project, project_name, "workflow"),
          {:ok, runtime} <- validate_runtime(project, project_name),
-         {:ok, adapter} <- validate_adapter(project, project_name) do
+         {:ok, state} <- validate_state_config(project, project_name) do
       resolved_dir = resolve_path(config_path, dir)
 
       {:ok,
@@ -30,7 +30,7 @@ defmodule SymphonyElixir.Local.ProjectConfig do
          dir: resolved_dir,
          workflow: resolve_path(config_path, workflow, resolved_dir),
          runtime: runtime,
-         adapter: adapter
+         state: state
        }}
     end
   end
@@ -58,40 +58,47 @@ defmodule SymphonyElixir.Local.ProjectConfig do
     end
   end
 
-  defp validate_adapter(project, project_name) when is_map(project) do
-    case Map.get(project, "adapter", %{}) do
-      adapter when is_map(adapter) ->
-        validate_adapter_filters(adapter, project_name)
+  defp validate_state_config(project, project_name) when is_map(project) do
+    state_config =
+      cond do
+        Map.has_key?(project, "state") -> Map.get(project, "state")
+        Map.has_key?(project, "adapter") -> Map.get(project, "adapter")
+        true -> %{}
+      end
+
+    case state_config do
+      state when is_map(state) ->
+        validate_state_filters_config(state, project_name)
 
       value ->
-        {:error, {:invalid_project_field_type, project_name, "adapter", :map, value}}
+        {:error, {:invalid_project_field_type, project_name, "state", :map, value}}
     end
   end
 
-  defp validate_adapter_filters(adapter, project_name) when is_map(adapter) do
-    case Map.get(adapter, "filters", %{}) do
+  defp validate_state_filters_config(state, project_name) when is_map(state) do
+    case Map.get(state, "filters", %{}) do
       filters when is_map(filters) ->
-        validate_state_filters(filters, adapter, project_name)
+        validate_state_filters(filters, state, project_name)
 
       value ->
-        {:error, {:invalid_project_field_type, project_name, "adapter.filters", :map, value}}
+        {:error, {:invalid_project_field_type, project_name, "state.filters", :map, value}}
     end
   end
 
-  defp validate_state_filters(filters, adapter, project_name) when is_map(filters) do
+  defp validate_state_filters(filters, state, project_name) when is_map(filters) do
     case Map.get(filters, "states") do
       nil ->
-        {:ok, adapter}
+        {:ok, state}
 
       states when is_list(states) ->
         if Enum.all?(states, &is_binary/1) do
-          {:ok, adapter}
+          {:ok, state}
         else
-          {:error, {:invalid_project_field_type, project_name, "adapter.filters.states", :string_list, states}}
+          {:error, {:invalid_project_field_type, project_name, "state.filters.states", :string_list, states}}
         end
 
       value ->
-        {:error, {:invalid_project_field_type, project_name, "adapter.filters.states", :string_list, value}}
+        {:error, {:invalid_project_field_type, project_name, "state.filters.states", :string_list, value}}
     end
   end
 

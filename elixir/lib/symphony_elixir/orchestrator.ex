@@ -7,8 +7,8 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, DispatchLifecycle, SessionStats, StatusDashboard, Tracker, Workspace}
-  alias SymphonyElixir.TrackerIssue, as: Issue
+  alias SymphonyElixir.{AgentRunner, Config, DispatchLifecycle, SessionStats, StateSync, StatusDashboard, Workspace}
+  alias SymphonyElixir.StateSync.Issue, as: Issue
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -299,24 +299,24 @@ defmodule SymphonyElixir.Orchestrator do
 
     with :ok <- Config.validate!(),
          state <- reconcile_tracker_watch_states(state),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
+         {:ok, issues} <- StateSync.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
     else
       {:error, :missing_linear_api_token} ->
-        Logger.error("Tracker API token missing in runtime config")
+        Logger.error("StateSync API token missing in runtime config")
         state
 
       {:error, :missing_linear_project_slug} ->
-        Logger.error("Tracker project slug missing in runtime config")
+        Logger.error("StateSync project slug missing in runtime config")
         state
 
-      {:error, :missing_tracker_kind} ->
-        Logger.error("Tracker kind missing in runtime config")
+      {:error, :missing_state_type} ->
+        Logger.error("StateSync kind missing in runtime config")
 
         state
 
-      {:error, {:unsupported_tracker_kind, kind}} ->
+      {:error, {:unsupported_state_type, kind}} ->
         Logger.error("Unsupported tracker kind in runtime config: #{inspect(kind)}")
 
         state
@@ -350,7 +350,7 @@ defmodule SymphonyElixir.Orchestrator do
     if running_ids == [] do
       state
     else
-      case Tracker.fetch_issue_states_by_ids(running_ids) do
+      case StateSync.fetch_issue_states_by_ids(running_ids) do
         {:ok, issues} ->
           issues
           |> reconcile_running_issue_states(
@@ -369,7 +369,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_tracker_watch_states(%State{} = state) do
-    case Tracker.reconcile_watch_states() do
+    case StateSync.reconcile_watch_states() do
       :ok ->
         state
 
@@ -380,7 +380,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp watch_state_set do
-    (Config.settings!().tracker.watch_states || [])
+    (Config.settings!().state.watch_states || [])
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -457,7 +457,7 @@ defmodule SymphonyElixir.Orchestrator do
   def transition_issue_for_dispatch_for_test(
         %Issue{} = issue,
         update_issue_state_fun,
-        fetch_issue_states_fun \\ &Tracker.fetch_issue_states_by_ids/1
+        fetch_issue_states_fun \\ &StateSync.fetch_issue_states_by_ids/1
       )
       when is_function(update_issue_state_fun, 2) and is_function(fetch_issue_states_fun, 1) do
     transition_issue_for_dispatch(issue, update_issue_state_fun, fetch_issue_states_fun)
@@ -860,7 +860,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp terminal_state_set do
-    Tracker.terminal_states()
+    StateSync.terminal_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -868,7 +868,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp active_state_set do
-    Tracker.active_states()
+    StateSync.active_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -884,7 +884,7 @@ defmodule SymphonyElixir.Orchestrator do
        ) do
     case revalidate_issue_for_dispatch(
            issue,
-           &Tracker.fetch_issue_states_by_ids/1,
+           &StateSync.fetch_issue_states_by_ids/1,
            terminal_state_set()
          ) do
       {:ok, %Issue{} = refreshed_issue} ->
@@ -892,8 +892,8 @@ defmodule SymphonyElixir.Orchestrator do
 
         case transition_issue_for_dispatch(
                refreshed_issue,
-               &Tracker.update_issue_state/2,
-               &Tracker.fetch_issue_states_by_ids/1
+               &StateSync.update_issue_state/2,
+               &StateSync.fetch_issue_states_by_ids/1
              ) do
           {:ok, %Issue{} = dispatch_issue} ->
             do_dispatch_issue(
@@ -1466,7 +1466,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
-    case Tracker.fetch_issue_states_by_ids([issue_id]) do
+    case StateSync.fetch_issue_states_by_ids([issue_id]) do
       {:ok, issues} ->
         issues
         |> find_issue_by_id(issue_id)
@@ -1519,7 +1519,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp cleanup_issue_workspace(_identifier, _worker_host), do: :ok
 
   defp run_terminal_workspace_cleanup do
-    case Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
+    case StateSync.fetch_issues_by_states(Config.settings!().state.terminal_states) do
       {:ok, issues} ->
         issues
         |> Enum.each(fn

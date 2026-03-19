@@ -49,7 +49,7 @@ defmodule SymphonyElixir.Codex.AppServer do
            validate_workspace_cwd(workspace, worker_host, allow_external_workspace),
          {:ok, port} <- start_port(expanded_workspace, worker_host, codex_command) do
       metadata = port_metadata(port, worker_host)
-      tracker_kind = Config.settings!().tracker.kind
+      tracker_kind = Config.settings!().state.type
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_state} <-

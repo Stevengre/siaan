@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.Local.Adapter do
+defmodule SymphonyElixir.StateSync.Local.Adapter do
   @moduledoc """
   Local-file-backed tracker adapter used by the orchestrator.
   """
@@ -6,12 +6,12 @@ defmodule SymphonyElixir.Local.Adapter do
   require Logger
 
   alias SymphonyElixir.Config
-  alias SymphonyElixir.Local.{Issue, ProjectConfig, Workflow}
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.Local.{Issue, ProjectConfig, Workflow}
+  alias SymphonyElixir.StateSync.Issue, as: StateIssue
 
   @directory_states MapSet.new(["in-progress", "review", "done"])
 
-  @behaviour SymphonyElixir.Tracker
+  @behaviour SymphonyElixir.StateSync
 
   @spec fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -30,7 +30,7 @@ defmodule SymphonyElixir.Local.Adapter do
 
       with {:ok, transitioned_issues} <-
              issues
-             |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
+             |> Enum.filter(&passes_state_filters?(&1, context.project.state))
              |> apply_transitions(context) do
         transitioned_issues
         |> Enum.filter(
@@ -59,7 +59,7 @@ defmodule SymphonyElixir.Local.Adapter do
            ) do
       with {:ok, transitioned_issues} <-
              issues
-             |> Enum.filter(&passes_adapter_filters?(&1, context.project.adapter))
+             |> Enum.filter(&passes_state_filters?(&1, context.project.state))
              |> apply_transitions(context) do
         transitioned_issues
         |> Enum.filter(&MapSet.member?(wanted, normalize_tracker_state(&1.state)))
@@ -119,10 +119,10 @@ defmodule SymphonyElixir.Local.Adapter do
   end
 
   @spec terminal_states() :: [String.t()]
-  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+  def terminal_states, do: Config.settings!().state.terminal_states || []
 
-  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(%TrackerIssue{state: issue_state, issue_path: issue_path}) do
+  @spec dispatch_target_state(StateIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%StateIssue{state: issue_state, issue_path: issue_path}) do
     normalized_state = normalize_storage_state(issue_state)
 
     with {:ok, context} <- load_context(),
@@ -172,7 +172,7 @@ defmodule SymphonyElixir.Local.Adapter do
 
   defp load_context do
     settings = Config.settings!()
-    tracker = settings.tracker
+    tracker = settings.state
 
     config_path =
       tracker.local_config_path ||
@@ -217,7 +217,7 @@ defmodule SymphonyElixir.Local.Adapter do
 
   defp fallback_dispatch_target_state(issue_state) when is_binary(issue_state) do
     normalized_issue_state = normalize_tracker_state(issue_state)
-    ready_state = normalize_tracker_state(Config.settings!().tracker.ready_label)
+    ready_state = normalize_tracker_state(Config.settings!().state.ready_label)
 
     if normalized_issue_state != ready_state do
       nil
@@ -244,7 +244,7 @@ defmodule SymphonyElixir.Local.Adapter do
   defp skill_activity?(_activity), do: false
 
   defp fallback_initial_dispatch_transition_name do
-    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+    with ready_state when is_binary(ready_state) <- Config.settings!().state.ready_label,
          target_state when is_binary(target_state) <- fallback_dispatch_target_state(ready_state) do
       SymphonyElixir.DispatchLifecycle.transition_name(ready_state, target_state)
     end
@@ -346,7 +346,7 @@ defmodule SymphonyElixir.Local.Adapter do
   defp fallback_active_states_if_empty(active_states), do: active_states
 
   defp fallback_active_states do
-    Config.settings!().tracker.active_states || []
+    Config.settings!().state.active_states || []
   end
 
   defp transition_issue(issue, workpad_status, context) do
@@ -520,8 +520,8 @@ defmodule SymphonyElixir.Local.Adapter do
     end
   end
 
-  defp passes_adapter_filters?(issue, adapter_config) when is_map(adapter_config) do
-    case Map.get(adapter_config, "filters", %{}) do
+  defp passes_state_filters?(issue, state_config) when is_map(state_config) do
+    case Map.get(state_config, "filters", %{}) do
       filters when is_map(filters) ->
         passes_state_filter?(issue, filters) and passes_assignee_filter?(issue, filters)
 

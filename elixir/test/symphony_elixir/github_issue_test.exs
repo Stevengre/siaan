@@ -1,7 +1,7 @@
-defmodule SymphonyElixir.GitHub.IssueTest do
+defmodule SymphonyElixir.StateSync.GitHub.IssueTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.GitHub.Issue
+  alias SymphonyElixir.StateSync.GitHub.Issue
 
   test "label helper normalizes and filters labels" do
     issue = %Issue{labels: [" Status:Ready ", "", nil, "Infra"]}

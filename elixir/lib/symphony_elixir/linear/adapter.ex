@@ -3,11 +3,11 @@ defmodule SymphonyElixir.Linear.Adapter do
   Linear-backed tracker adapter.
   """
 
-  @behaviour SymphonyElixir.Tracker
+  @behaviour SymphonyElixir.StateSync
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.Issue
 
   @create_comment_mutation """
   mutation SymphonyCreateComment($issueId: String!, $body: String!) {
@@ -76,17 +76,17 @@ defmodule SymphonyElixir.Linear.Adapter do
   end
 
   @spec active_states() :: [String.t()]
-  def active_states, do: Config.settings!().tracker.active_states || []
+  def active_states, do: Config.settings!().state.active_states || []
 
   @spec terminal_states() :: [String.t()]
-  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+  def terminal_states, do: Config.settings!().state.terminal_states || []
 
-  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(%TrackerIssue{state: issue_state}), do: dispatch_target_state(issue_state)
+  @spec dispatch_target_state(Issue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%Issue{state: issue_state}), do: dispatch_target_state(issue_state)
 
   def dispatch_target_state(issue_state) do
     normalized_issue_state = normalize_state(issue_state)
-    ready_state = normalize_state(Config.settings!().tracker.ready_label)
+    ready_state = normalize_state(Config.settings!().state.ready_label)
 
     if normalized_issue_state == "" or normalized_issue_state != ready_state do
       nil
@@ -101,7 +101,7 @@ defmodule SymphonyElixir.Linear.Adapter do
 
   @spec initial_dispatch_transition_name() :: String.t() | nil
   def initial_dispatch_transition_name do
-    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+    with ready_state when is_binary(ready_state) <- Config.settings!().state.ready_label,
          target_state when is_binary(target_state) <- dispatch_target_state(ready_state) do
       SymphonyElixir.DispatchLifecycle.transition_name(ready_state, target_state)
     end

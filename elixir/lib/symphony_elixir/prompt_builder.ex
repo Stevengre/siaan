@@ -7,7 +7,7 @@ defmodule SymphonyElixir.PromptBuilder do
 
   @render_opts [strict_variables: true, strict_filters: true]
 
-  @spec build_prompt(SymphonyElixir.TrackerIssue.t(), keyword()) :: String.t()
+  @spec build_prompt(SymphonyElixir.StateSync.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
     {template, allowlist} =
       prompt_context!(issue, RuntimeSource.current())
