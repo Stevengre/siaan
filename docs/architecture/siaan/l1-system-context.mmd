@@ -1,0 +1,11 @@
+C4Context
+title L1 System Context
+Person(operator, "Operator", "Starts and monitors automated issue execution.")
+System_Ext(tracker, "Issue tracker", "Supplies work items and receives state updates.")
+System_Ext(codex, "Codex app-server", "Executes agent turns inside issue workspaces.")
+System_Ext(repository, "Repository", "Source tree, runtime config, and generated docs.")
+System(core, "Repository automation system", "Polls tracker work, manages issue workspaces, and runs Codex-backed execution loops.")
+Rel(operator, core, "Configures and observes")
+Rel(core, tracker, "Polls and updates issue state")
+Rel(core, codex, "Starts sessions and dispatches turns")
+Rel(core, repository, "Reads code, writes docs, manages workspaces")

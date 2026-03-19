@@ -1,0 +1,33 @@
+stateDiagram-v2
+  [*] --> ready
+
+  state "Ready" as ready
+  note right of ready
+    activity: issue/bootstrap-workpad
+    activity: git/pull-origin-main
+    description: Prepare the issue for active execution.
+  end note
+
+  state "In Progress" as in_progress
+  note right of in_progress
+    activity: issue/reconcile-workpad
+    activity: implementation/execute-plan
+  end note
+
+  state "Review" as review
+  note right of review
+    activity: review/check-pr-feedback
+    activity: review/monitor-ci
+  end note
+
+  state "Closed" as closed
+  note right of closed
+    terminal: true
+    activity: issue/archive
+  end note
+
+  ready --> in_progress: dispatch [condition: issue_is_ready] [action: mark_in_progress]
+  in_progress --> review: handoff [condition: acceptance_complete] [action: open_or_update_pr] [action: mark_review]
+  review --> in_progress: rework [condition: review_blocked] [action: requeue_execution]
+  review --> closed: merge [condition: review_approved] [action: finalize_issue]
+  closed --> [*]
