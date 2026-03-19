@@ -441,41 +441,66 @@ defmodule SymphonyElixir.Codex.AppServer do
         # fall back to creating a fresh thread and retry the turn.
         case Map.get(session, :resume_fallback) do
           {:pending, fb_port, fb_workspace, fb_policies, fb_tracker_kind} ->
-            Logger.warning(
-              "Falling back to a new physical Codex session for #{issue_context(context.issue)}" <>
-                " previous_thread_id=#{thread_id}" <>
-                " reason=resume_turn_start_failed: #{inspect(reason)}"
+            fallback_to_fresh_thread(
+              session,
+              prompt,
+              context,
+              {fb_port, fb_workspace, fb_policies, fb_tracker_kind},
+              reason
             )
-
-            case start_thread(fb_port, fb_workspace, fb_policies, fb_tracker_kind) do
-              {:ok, new_thread_id} ->
-                new_session =
-                  session
-                  |> Map.put(:thread_id, new_thread_id)
-                  |> Map.put(:physical_session_reuse_decision, "started_new_physical_session")
-                  |> Map.put(:physical_session_fallback_reason, "resume_turn_start_failed")
-                  |> Map.delete(:resume_fallback)
-
-                case start_turn(
-                       port,
-                       new_thread_id,
-                       prompt,
-                       context.issue,
-                       context.workspace,
-                       context.approval_policy,
-                       context.turn_sandbox_policy
-                     ) do
-                  {:ok, turn_id} -> {:ok, new_session, turn_id}
-                  {:error, _} = fallback_error -> fallback_error
-                end
-
-              {:error, _} = thread_error ->
-                thread_error
-            end
 
           _ ->
             error
         end
+    end
+  end
+
+  defp fallback_to_fresh_thread(
+         %{thread_id: thread_id} = session,
+         prompt,
+         context,
+         {fb_port, fb_workspace, fb_policies, fb_tracker_kind},
+         reason
+       ) do
+    Logger.warning(
+      "Falling back to a new physical Codex session for #{issue_context(context.issue)}" <>
+        " previous_thread_id=#{thread_id}" <>
+        " reason=resume_turn_start_failed: #{inspect(reason)}"
+    )
+
+    case start_thread(fb_port, fb_workspace, fb_policies, fb_tracker_kind) do
+      {:ok, new_thread_id} ->
+        new_session =
+          session
+          |> Map.put(:thread_id, new_thread_id)
+          |> Map.put(:physical_session_reuse_decision, "started_new_physical_session")
+          |> Map.put(:physical_session_fallback_reason, "resume_turn_start_failed")
+          |> Map.delete(:resume_fallback)
+
+        start_fresh_turn(new_session, new_thread_id, prompt, context)
+
+      {:error, _} = thread_error ->
+        thread_error
+    end
+  end
+
+  defp start_fresh_turn(
+         %{port: port} = new_session,
+         new_thread_id,
+         prompt,
+         context
+       ) do
+    case start_turn(
+           port,
+           new_thread_id,
+           prompt,
+           context.issue,
+           context.workspace,
+           context.approval_policy,
+           context.turn_sandbox_policy
+         ) do
+      {:ok, turn_id} -> {:ok, new_session, turn_id}
+      {:error, _} = fallback_error -> fallback_error
     end
   end
 
