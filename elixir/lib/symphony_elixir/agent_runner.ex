@@ -139,6 +139,7 @@ defmodule SymphonyElixir.AgentRunner do
         {:stop, reason, %{state | session: updated_session}}
 
       :unhandled ->
+        Logger.debug("Unhandled message in AgentRunner: #{inspect(message)}")
         {:noreply, state}
     end
   end

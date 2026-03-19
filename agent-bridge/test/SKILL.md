@@ -1,3 +1,10 @@
+---
+name: agent-bridge-test
+description: >
+  Generic bridge contract helpers and mock implementations for validating
+  agent bridge behavior independently of any concrete bridge backend.
+---
+
 # Agent Bridge Test Framework
 
 Provides generic bridge-contract helpers and a mock implementation for bridge-level tests.

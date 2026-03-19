@@ -2367,6 +2367,83 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "persistent agent runner logs arbitrary unhandled messages while keeping the session alive" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-unhandled-message-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+
+      while IFS= read -r _line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-unhandled-message"}}}'
+            sleep 5
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 1
+      )
+
+      issue = %Issue{
+        id: "issue-unhandled-message",
+        identifier: "MT-248B",
+        title: "Log arbitrary idle messages",
+        description: "Unexpected messages should still be visible while the session stays alive",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-248B",
+        labels: []
+      }
+
+      log =
+        capture_log([level: :debug], fn ->
+          assert {:ok, pid} = AgentRunner.start(issue, self(), codex_command: "#{codex_binary} app-server")
+          assert_receive {:worker_runtime_info, "issue-unhandled-message", %{workspace_path: _workspace_path}}
+
+          send(pid, {:unexpected_idle_message, :still_visible})
+          Process.sleep(50)
+          assert Process.alive?(pid)
+
+          AgentRunner.stop(pid)
+          refute Process.alive?(pid)
+        end)
+
+      assert log =~ "Unhandled message in AgentRunner: {:unexpected_idle_message, :still_visible}"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "orchestrator restart terminates lingering persistent agent runners" do
     test_root = Path.join(System.tmp_dir!(), "symphony-elixir-agent-runner-restart-#{System.unique_integer([:positive])}")
     workspace_root = Path.join(test_root, "workspaces")

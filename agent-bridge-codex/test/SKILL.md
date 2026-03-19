@@ -1,3 +1,10 @@
+---
+name: agent-bridge-codex-test
+description: >
+  Codex-specific bridge test support and validation guidance for extracted
+  session, turn, approval, and compatibility behavior.
+---
+
 # Codex Bridge Tests
 
 Holds Codex-specific bridge contract helpers and fixtures.

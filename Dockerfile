@@ -43,18 +43,32 @@ RUN mix local.hex --force && \
 # ---------- build stage ----------
 FROM deps AS build
 
-COPY elixir/ ./
+WORKDIR /repo
+
+COPY agent-bridge ./agent-bridge
+COPY agent-bridge-codex ./agent-bridge-codex
+COPY prompt-engine ./prompt-engine
+COPY workflow-engine ./workflow-engine
+COPY workspace ./workspace
+COPY elixir ./elixir
+
+WORKDIR /repo/elixir
 RUN mix setup && mix build
 
 # ---------- runtime stage ----------
 FROM base AS runtime
 
 WORKDIR /app
-COPY --from=build /app/bin/siaan ./bin/siaan
-COPY --from=build /app/_build ./_build
-COPY --from=build /app/deps ./deps
-COPY --from=build /app/lib ./lib
-COPY --from=build /app/mix.exs ./mix.exs
+COPY --from=build /repo/agent-bridge ./agent-bridge
+COPY --from=build /repo/agent-bridge-codex ./agent-bridge-codex
+COPY --from=build /repo/prompt-engine ./prompt-engine
+COPY --from=build /repo/workflow-engine ./workflow-engine
+COPY --from=build /repo/workspace ./workspace
+COPY --from=build /repo/elixir/bin/siaan ./bin/siaan
+COPY --from=build /repo/elixir/_build ./_build
+COPY --from=build /repo/elixir/deps ./deps
+COPY --from=build /repo/elixir/lib ./lib
+COPY --from=build /repo/elixir/mix.exs ./mix.exs
 COPY --from=build /root/.mix /root/.mix
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
