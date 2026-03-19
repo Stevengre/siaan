@@ -44,6 +44,10 @@ RUN mix local.hex --force && \
 FROM deps AS build
 
 COPY elixir/ ./
+# Copy extracted skill folders referenced by mix.exs elixirc_paths (../folder)
+COPY workspace/ /workspace/
+COPY workflow-engine/ /workflow-engine/
+COPY prompt-engine/ /prompt-engine/
 RUN mix setup && mix build
 
 # ---------- runtime stage ----------
