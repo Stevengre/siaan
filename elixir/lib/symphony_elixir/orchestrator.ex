@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator do
   """
 
   use GenServer
+  require Logger
 
   alias SymphonyElixir.Orchestrator.{Operations, Runtime}
 
@@ -90,7 +91,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info({:retry_issue, _issue_id}, state), do: {:noreply, state}
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  def handle_info(msg, state) do
+    Logger.debug("Orchestrator ignored message: #{inspect(msg)}")
+    {:noreply, state}
+  end
 
   @spec request_refresh() :: map() | :unavailable
   def request_refresh do
