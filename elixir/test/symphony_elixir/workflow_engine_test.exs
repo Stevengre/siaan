@@ -122,6 +122,15 @@ defmodule SymphonyElixir.WorkflowEngineTest do
              """)
   end
 
+  test "parser rejects duplicate initial transitions" do
+    assert {:error, {:duplicate_initial_transition, "[*] --> second"}} =
+             MermaidParser.parse("""
+             stateDiagram-v2
+               [*] --> first
+               [*] --> second
+             """)
+  end
+
   test "interpreter evaluates transitions in order and runs activities/actions" do
     assert {:ok, machine} = MermaidParser.parse(Examples.github_issue_workflow_diagram())
 
@@ -180,6 +189,10 @@ defmodule SymphonyElixir.WorkflowEngineTest do
              Interpreter.start(machine, activity_runner: fn _, _ -> :bad_return end)
 
     assert {:error, :missing_initial_state} = Interpreter.start(%StateMachine{})
+
+    assert {:error, {:undefined_state, "missing"}} =
+             Interpreter.start(%StateMachine{initial_state: "missing", states: %{}})
+
     assert {:stalled, halted_runtime, [:halted]} = Interpreter.advance(%Interpreter.Runtime{halted: true})
     assert halted_runtime.halted
   end
@@ -259,6 +272,20 @@ defmodule SymphonyElixir.WorkflowEngineTest do
                  context: %{}
                },
                action_runner: fn _, _ -> {:error, :denied} end
+             )
+
+    assert {:error, {:undefined_state, "missing"}} =
+             Interpreter.advance(
+               %Interpreter.Runtime{
+                 machine: %StateMachine{
+                   initial_state: "draft",
+                   states: %{"draft" => %StateMachine.State{id: "draft", label: "draft"}},
+                   transitions: [%StateMachine.Transition{source: "draft", target: "missing"}]
+                 },
+                 current_state: "draft",
+                 context: %{}
+               },
+               condition_evaluator: fn nil, _ -> true end
              )
   end
 

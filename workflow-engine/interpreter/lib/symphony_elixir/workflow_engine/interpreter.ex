@@ -130,17 +130,22 @@ defmodule SymphonyElixir.WorkflowEngine.Interpreter do
   end
 
   defp enter_state(%Runtime{} = runtime, state_id, opts) do
-    state = Map.fetch!(runtime.machine.states, state_id)
-    runner = Keyword.get(opts, :activity_runner, &default_effect_runner/2)
+    case Map.fetch(runtime.machine.states, state_id) do
+      {:ok, state} ->
+        runner = Keyword.get(opts, :activity_runner, &default_effect_runner/2)
 
-    with {:ok, context} <- run_actions(state.activities, runtime.context, runner) do
-      {:ok,
-       %{
-         runtime
-         | current_state: state_id,
-           context: context,
-           history: runtime.history ++ [%{type: :enter, state: state_id, activities: state.activities}]
-       }}
+        with {:ok, context} <- run_actions(state.activities, runtime.context, runner) do
+          {:ok,
+           %{
+             runtime
+             | current_state: state_id,
+               context: context,
+               history: runtime.history ++ [%{type: :enter, state: state_id, activities: state.activities}]
+           }}
+        end
+
+      :error ->
+        {:error, {:undefined_state, state_id}}
     end
   end
 

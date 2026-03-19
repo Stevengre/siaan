@@ -97,7 +97,10 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
         {:error, {:invalid_initial_transition, line}}
 
       source == :start ->
-        {:ok, ensure_state(%{machine | initial_state: target}, target)}
+        case machine.initial_state do
+          nil -> {:ok, ensure_state(%{machine | initial_state: target}, target)}
+          _ -> {:error, {:duplicate_initial_transition, line}}
+        end
 
       true ->
         transition = build_transition(source, target, label)
