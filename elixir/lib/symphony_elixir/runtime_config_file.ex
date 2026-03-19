@@ -3,6 +3,8 @@ defmodule SymphonyElixir.RuntimeConfigFile do
   Loads runtime configuration from a standalone YAML file.
   """
 
+  alias SymphonyElixir.RuntimeStateConfig
+
   @type loaded_runtime_config :: %{
           config: map(),
           prompt: String.t(),
@@ -19,7 +21,7 @@ defmodule SymphonyElixir.RuntimeConfigFile do
          {:ok, prompt_template} <- resolve_prompt_template(decoded, path) do
       {:ok,
        %{
-         config: Map.drop(decoded, @prompt_keys),
+         config: decoded |> Map.drop(@prompt_keys) |> RuntimeStateConfig.normalize(),
          prompt: prompt_template,
          prompt_template: prompt_template
        }}

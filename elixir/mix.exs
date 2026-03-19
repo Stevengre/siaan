@@ -20,7 +20,9 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Dispatch.Scheduler,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.Linear.Issue,
-          SymphonyElixir.GitHub.Adapter,
+          SymphonyElixir.StateSync.GitHub.Adapter,
+          SymphonyElixir.StateSync.GitHub.MergeAutomation.AutoMerge,
+          SymphonyElixir.StateSync.GitHub.MergeAutomation.PRFeedback,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Orchestrator,
           SymphonyElixir.Orchestrator.State,
@@ -32,10 +34,10 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Linear.Adapter,
           SymphonyElixir.StatusDashboard,
           SymphonyElixir.LogFile,
-          SymphonyElixir.Local.Adapter,
-          SymphonyElixir.Local.Issue,
-          SymphonyElixir.Local.ProjectConfig,
-          SymphonyElixir.Local.Workflow,
+          SymphonyElixir.StateSync.Local.Adapter,
+          SymphonyElixir.StateSync.Local.Issue,
+          SymphonyElixir.StateSync.Local.ProjectConfig,
+          SymphonyElixir.StateSync.Local.Workflow,
           SymphonyElixir.PromptBuilder,
           SymphonyElixir.PromptEngine.Continuation,
           SymphonyElixir.PromptEngine.Renderer,
@@ -45,9 +47,11 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.RuntimeFile,
           SymphonyElixir.RuntimeSource,
           SymphonyElixir.RuntimeSourceStore,
+          SymphonyElixir.StateSync,
+          SymphonyElixir.StateSync.Issue,
+          SymphonyElixir.StateSync.Memory,
           SymphonyElixir.SessionTracker.Metering,
           SymphonyElixir.SessionTracker.Persistence,
-          SymphonyElixir.Tracker.Memory,
           SymphonyElixir.WorkflowStore,
           SymphonyElixir.Workspace,
           SymphonyElixir.Workspace.Hooks,
@@ -89,39 +93,6 @@ defmodule SymphonyElixir.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test) do
-    [
-      "lib",
-      "test/support",
-      external_elixir_path("../workflow-engine/interpreter/lib"),
-      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
-      external_elixir_path("../workflow-engine/validate/lib"),
-      external_elixir_path("../workflow-engine/test/lib"),
-      external_elixir_path("../workspace/provisioner/lib"),
-      external_elixir_path("../workspace/hooks/lib"),
-      external_elixir_path("../prompt-engine/renderer/lib"),
-      external_elixir_path("../prompt-engine/continuation/lib")
-    ]
-  end
-
-  defp elixirc_paths(_env) do
-    [
-      "lib",
-      external_elixir_path("../workflow-engine/interpreter/lib"),
-      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
-      external_elixir_path("../workflow-engine/validate/lib"),
-      external_elixir_path("../workflow-engine/test/lib"),
-      external_elixir_path("../workspace/provisioner/lib"),
-      external_elixir_path("../workspace/hooks/lib"),
-      external_elixir_path("../prompt-engine/renderer/lib"),
-      external_elixir_path("../prompt-engine/continuation/lib")
-    ]
-  end
-
-  defp external_elixir_path(relative_path) when is_binary(relative_path) do
-    Path.expand(relative_path, __DIR__)
-  end
-
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
@@ -139,6 +110,40 @@ defmodule SymphonyElixir.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]
+  end
+
+  defp elixirc_paths(:test) do
+    base_elixirc_paths() ++
+      [
+        "test/support",
+        external_elixir_path("../state-sync/test/lib"),
+        external_elixir_path("../state-sync-github/test/lib"),
+        external_elixir_path("../state-sync-local/test/lib")
+      ]
+  end
+
+  defp elixirc_paths(_env), do: base_elixirc_paths()
+
+  defp base_elixirc_paths do
+    [
+      "lib",
+      external_elixir_path("../workflow-engine/interpreter/lib"),
+      external_elixir_path("../workflow-engine/mermaid-parser/lib"),
+      external_elixir_path("../workflow-engine/validate/lib"),
+      external_elixir_path("../workflow-engine/test/lib"),
+      external_elixir_path("../workspace/provisioner/lib"),
+      external_elixir_path("../workspace/hooks/lib"),
+      external_elixir_path("../prompt-engine/renderer/lib"),
+      external_elixir_path("../prompt-engine/continuation/lib"),
+      external_elixir_path("../state-sync/interface/lib"),
+      external_elixir_path("../state-sync-github/adapter/lib"),
+      external_elixir_path("../state-sync-github/merge-automation/lib"),
+      external_elixir_path("../state-sync-local/adapter/lib")
+    ]
+  end
+
+  defp external_elixir_path(relative_path) when is_binary(relative_path) do
+    Path.expand(relative_path, __DIR__)
   end
 
   defp aliases do

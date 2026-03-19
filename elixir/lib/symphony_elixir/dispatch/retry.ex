@@ -4,9 +4,9 @@ defmodule SymphonyElixir.Dispatch.Retry do
   import Bitwise, only: [<<<: 2]
   require Logger
 
-  alias SymphonyElixir.{Config, Tracker}
+  alias SymphonyElixir.{Config, StateSync}
   alias SymphonyElixir.Dispatch.Scheduler
-  alias SymphonyElixir.TrackerIssue, as: Issue
+  alias SymphonyElixir.StateSync.Issue, as: Issue
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -104,7 +104,7 @@ defmodule SymphonyElixir.Dispatch.Retry do
       worker_slots_available: Keyword.fetch!(opts, :worker_slots_available)
     }
 
-    case Tracker.fetch_issue_states_by_ids([issue_id]) do
+    case StateSync.fetch_issue_states_by_ids([issue_id]) do
       {:ok, issues} ->
         issues
         |> find_issue_by_id(issue_id)

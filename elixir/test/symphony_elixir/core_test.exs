@@ -2,7 +2,8 @@ defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Config.Schema, as: ConfigSchema
-  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
+  alias SymphonyElixir.RuntimeStateConfig
+  alias SymphonyElixir.StateSync.GitHub.Adapter, as: GitHubAdapter
 
   defmodule StubRuntimeSource do
     @behaviour SymphonyElixir.RuntimeSource
@@ -12,7 +13,7 @@ defmodule SymphonyElixir.CoreTest do
       {:ok,
        %{
          config: %{
-           "tracker" => %{"kind" => "memory"},
+           "state" => %{"kind" => "memory"},
            "allowlist" => ["runtime-source-user"]
          },
          prompt: "Prompt from runtime source",
@@ -22,7 +23,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   defmodule RetryLookupGitHubClient do
-    alias SymphonyElixir.GitHub.Issue
+    alias SymphonyElixir.StateSync.GitHub.Issue
 
     def fetch_candidate_issues do
       notify(:fetch_candidate_issues_called)
@@ -54,19 +55,19 @@ defmodule SymphonyElixir.CoreTest do
 
   test "config defaults and validation checks" do
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_api_token: nil,
-      tracker_project_slug: nil,
+      state_api_token: nil,
+      state_project_slug: nil,
       poll_interval_ms: nil,
-      tracker_active_states: nil,
-      tracker_terminal_states: nil,
+      state_active_states: nil,
+      state_terminal_states: nil,
       codex_command: nil
     )
 
     config = Config.settings!()
     assert config.polling.interval_ms == 30_000
-    assert config.tracker.active_states == ["Todo", "In Progress"]
-    assert config.tracker.terminal_states == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
-    assert config.tracker.assignee == nil
+    assert config.state.active_states == ["Todo", "In Progress"]
+    assert config.state.terminal_states == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
+    assert config.state.assignee == nil
     assert config.agent.max_turns == 20
 
     write_workflow_file!(RuntimeConfig.path(), poll_interval_ms: "invalid")
@@ -241,33 +242,33 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "allowlist"
 
-    write_workflow_file!(RuntimeConfig.path(), tracker_active_states: "Todo,  Review,")
+    write_workflow_file!(RuntimeConfig.path(), state_active_states: "Todo,  Review,")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "tracker.active_states"
+    assert message =~ "state.active_states"
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_api_token: "token",
-      tracker_project_slug: nil
+      state_api_token: "token",
+      state_project_slug: nil
     )
 
     assert {:error, :missing_linear_project_slug} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_api_token: "   ",
-      tracker_project_slug: "project"
+      state_api_token: "   ",
+      state_project_slug: "project"
     )
 
     assert {:error, :missing_linear_api_token} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_api_token: "token",
-      tracker_project_slug: "   "
+      state_api_token: "token",
+      state_project_slug: "   "
     )
 
     assert {:error, :missing_linear_project_slug} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_project_slug: "project",
+      state_project_slug: "project",
       codex_command: ""
     )
 
@@ -302,92 +303,109 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.thread_sandbox"
 
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "123")
-    assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
+    write_workflow_file!(RuntimeConfig.path(), state_type: "123")
+    assert {:error, {:unsupported_state_type, "123"}} = Config.validate!()
 
     previous_github_token = System.get_env("GITHUB_TOKEN")
     on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
     System.put_env("GITHUB_TOKEN", "fallback-github-token")
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: nil,
-      tracker_project_slug: nil,
-      tracker_repo_owner: nil,
-      tracker_repo_name: nil,
-      tracker_active_states: nil,
-      tracker_terminal_states: nil
+      state_type: "github",
+      state_api_token: nil,
+      state_project_slug: nil,
+      state_repo_owner: nil,
+      state_repo_name: nil,
+      state_active_states: nil,
+      state_terminal_states: nil
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
-    assert Config.settings!().tracker.api_key == "fallback-github-token"
-    assert Config.settings!().tracker.endpoint == "https://api.github.com/graphql"
-    assert Config.settings!().tracker.ready_label == "status:ready"
-    assert Config.settings!().tracker.active_states == ["status:ready", "status:in-progress"]
-    assert Config.settings!().tracker.terminal_states == ["closed"]
+    assert Config.settings!().state.api_key == "fallback-github-token"
+    assert Config.settings!().state.endpoint == "https://api.github.com/graphql"
+    assert Config.settings!().state.ready_label == "status:ready"
+    assert Config.settings!().state.active_states == ["status:ready", "status:in-progress"]
+    assert Config.settings!().state.terminal_states == ["closed"]
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_project_slug: "acme/repo",
-      tracker_repo_owner: nil,
-      tracker_repo_name: nil,
-      tracker_active_states: nil,
-      tracker_terminal_states: nil
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_project_slug: "acme/repo",
+      state_repo_owner: nil,
+      state_repo_name: nil,
+      state_active_states: nil,
+      state_terminal_states: nil
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: nil
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "acme",
+      state_repo_name: nil
     )
 
     assert {:error, :missing_github_repo_name} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo"
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "acme",
+      state_repo_name: "repo"
     )
 
     assert :ok = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "   ",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo"
+      state_type: "github",
+      state_api_token: "   ",
+      state_repo_owner: "acme",
+      state_repo_name: "repo"
     )
 
     assert {:error, :missing_github_api_token} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "   ",
-      tracker_repo_name: "repo"
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "   ",
+      state_repo_name: "repo"
     )
 
     assert {:error, :missing_github_repo_owner} = Config.validate!()
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "   "
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "acme",
+      state_repo_name: "   "
     )
 
     assert {:error, :missing_github_repo_name} = Config.validate!()
   end
 
+  test "runtime state config normalizes legacy tracker and kind keys" do
+    assert RuntimeStateConfig.normalize(%{"state" => %{"type" => "memory", "ready_label" => "queued"}}) ==
+             %{"state" => %{"type" => "memory", "ready_label" => "queued"}}
+
+    assert RuntimeStateConfig.normalize(%{"state" => %{"kind" => "github", "repo" => "acme/repo"}}) ==
+             %{"state" => %{"type" => "github", "repo" => "acme/repo"}}
+
+    assert RuntimeStateConfig.normalize(%{"tracker" => %{"kind" => "local", "project" => "siaan"}}) ==
+             %{"state" => %{"type" => "local", "project" => "siaan"}}
+
+    assert RuntimeStateConfig.normalize(%{"state" => %{"project" => "siaan"}}) ==
+             %{"state" => %{"project" => "siaan"}}
+
+    assert RuntimeStateConfig.normalize(%{"allowlist" => ["octocat"]}) ==
+             %{"allowlist" => ["octocat"]}
+  end
+
   test "config reads settings and prompt from the runtime source boundary" do
     Application.put_env(:symphony_elixir, :runtime_source_module, StubRuntimeSource)
 
-    assert Config.settings!().tracker.kind == "memory"
+    assert Config.settings!().state.type == "memory"
     assert Config.settings!().allowlist == ["runtime-source-user"]
     assert Config.workflow_prompt() == "Prompt from runtime source"
   end
@@ -403,7 +421,7 @@ defmodule SymphonyElixir.CoreTest do
     File.write!(prompt_path, "Surface prompt for {{ issue.identifier }}")
 
     write_runtime_config_file!(runtime_path,
-      tracker_kind: "memory",
+      state_type: "memory",
       prompt: nil
     )
 
@@ -413,7 +431,7 @@ defmodule SymphonyElixir.CoreTest do
     assert SymphonyElixir.RuntimeConfig.path() == runtime_path
     assert Workflow.workflow_file_path() == runtime_path
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "memory"}}, prompt: prompt}} =
+    assert {:ok, %{config: %{"state" => %{"type" => "memory"}}, prompt: prompt}} =
              SymphonyElixir.RuntimeConfig.load()
 
     assert prompt == "Surface prompt for {{ issue.identifier }}"
@@ -428,10 +446,10 @@ defmodule SymphonyElixir.CoreTest do
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
 
     write_runtime_config_file!(runtime_path,
-      tracker_kind: "memory",
-      tracker_ready_label: "queued",
-      tracker_active_states: ["queued", "working"],
-      tracker_terminal_states: ["done"],
+      state_type: "memory",
+      state_ready_label: "queued",
+      state_active_states: ["queued", "working"],
+      state_terminal_states: ["done"],
       poll_interval_ms: 15_000,
       workspace_root: Path.join(runtime_root, "workspaces"),
       max_concurrent_agents: 2,
@@ -457,9 +475,9 @@ defmodule SymphonyElixir.CoreTest do
       url: "https://example.org/issues/MT-790"
     }
 
-    assert Config.settings!().tracker.kind == "memory"
-    assert Config.settings!().tracker.ready_label == "queued"
-    assert Config.settings!().tracker.active_states == ["queued", "working"]
+    assert Config.settings!().state.type == "memory"
+    assert Config.settings!().state.ready_label == "queued"
+    assert Config.settings!().state.active_states == ["queued", "working"]
     assert Config.settings!().allowlist == ["yaml-runtime-user"]
     assert Config.settings!().codex.command == "codex --model gpt-5.3-codex app-server"
     assert Config.workflow_prompt() == "YAML prompt for {{ issue.identifier }}"
@@ -475,13 +493,13 @@ defmodule SymphonyElixir.CoreTest do
     assert {:ok, %{config: config, prompt: prompt}} = Workflow.load()
     assert is_map(config)
 
-    tracker = Map.get(config, "tracker", %{})
-    assert is_map(tracker)
-    assert Map.get(tracker, "kind") == "github"
-    assert is_binary(Map.get(tracker, "repo_owner"))
-    assert is_binary(Map.get(tracker, "repo_name"))
-    assert is_list(Map.get(tracker, "active_states"))
-    assert is_list(Map.get(tracker, "terminal_states"))
+    state = Map.get(config, "state", %{})
+    assert is_map(state)
+    assert Map.get(state, "type") == "github"
+    assert is_binary(Map.get(state, "repo_owner"))
+    assert is_binary(Map.get(state, "repo_name"))
+    assert is_list(Map.get(state, "active_states"))
+    assert is_list(Map.get(state, "terminal_states"))
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
@@ -501,13 +519,13 @@ defmodule SymphonyElixir.CoreTest do
     System.put_env("LINEAR_API_KEY", env_api_key)
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_api_token: nil,
-      tracker_project_slug: "project",
+      state_api_token: nil,
+      state_project_slug: "project",
       codex_command: "/bin/sh app-server"
     )
 
-    assert Config.settings!().tracker.api_key == env_api_key
-    assert Config.settings!().tracker.project_slug == "project"
+    assert Config.settings!().state.api_key == env_api_key
+    assert Config.settings!().state.project_slug == "project"
     assert :ok = Config.validate!()
   end
 
@@ -519,12 +537,12 @@ defmodule SymphonyElixir.CoreTest do
     System.put_env("LINEAR_ASSIGNEE", env_assignee)
 
     write_workflow_file!(RuntimeConfig.path(),
-      tracker_assignee: nil,
-      tracker_project_slug: "project",
+      state_assignee: nil,
+      state_project_slug: "project",
       codex_command: "/bin/sh app-server"
     )
 
-    assert Config.settings!().tracker.assignee == env_assignee
+    assert Config.settings!().state.assignee == env_assignee
   end
 
   test "runtime config path defaults to the first available runtime config candidate in the current working directory" do
@@ -569,9 +587,9 @@ defmodule SymphonyElixir.CoreTest do
 
   test "workflow load accepts unterminated front matter with an empty prompt" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
-    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
+    File.write!(workflow_path, "---\nstate:\n  kind: linear\n")
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
+    assert {:ok, %{config: %{"state" => %{"type" => "linear"}}, prompt: "", prompt_template: ""}} =
              Workflow.load(workflow_path)
   end
 
@@ -583,7 +601,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "SymphonyElixir.start_link delegates to the orchestrator" do
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "memory")
+    write_workflow_file!(RuntimeConfig.path(), state_type: "memory")
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [])
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
@@ -624,8 +642,8 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(RuntimeConfig.path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+        state_active_states: ["Todo", "In Progress", "In Review"],
+        state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
       )
 
       File.mkdir_p!(test_root)
@@ -687,8 +705,8 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(RuntimeConfig.path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+        state_active_states: ["Todo", "In Progress", "In Review"],
+        state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
       )
 
       File.mkdir_p!(test_root)
@@ -763,8 +781,8 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(RuntimeConfig.path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+        state_active_states: ["Todo", "In Progress", "In Review"],
+        state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
       )
 
       File.mkdir_p!(test_root)
@@ -825,10 +843,10 @@ defmodule SymphonyElixir.CoreTest do
 
     try do
       write_workflow_file!(RuntimeConfig.path(),
-        tracker_kind: "memory",
+        state_type: "memory",
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"],
+        state_active_states: ["Todo", "In Progress", "In Review"],
+        state_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"],
         poll_interval_ms: 30_000
       )
 
@@ -977,7 +995,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "normal worker exit schedules active-state continuation retry" do
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "memory")
+    write_workflow_file!(RuntimeConfig.path(), state_type: "memory")
 
     issue_id = "issue-resume"
     ref = make_ref()
@@ -1042,7 +1060,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
-    write_workflow_file!(RuntimeConfig.path(), tracker_kind: "memory")
+    write_workflow_file!(RuntimeConfig.path(), state_type: "memory")
 
     issue_id = "issue-crash"
     ref = make_ref()
@@ -1198,18 +1216,18 @@ defmodule SymphonyElixir.CoreTest do
     end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_terminal_states: ["closed"],
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_terminal_states: ["closed"],
       workspace_root: workspace_root
     )
 
     Application.put_env(:symphony_elixir, :github_client_module, RetryLookupGitHubClient)
     Application.put_env(:symphony_elixir, :retry_lookup_recipient, self())
 
-    Application.put_env(:symphony_elixir, :retry_lookup_issue, %SymphonyElixir.GitHub.Issue{
+    Application.put_env(:symphony_elixir, :retry_lookup_issue, %SymphonyElixir.StateSync.GitHub.Issue{
       id: "42",
       number: 42,
       title: "Closed issue",
@@ -2602,12 +2620,12 @@ defmodule SymphonyElixir.CoreTest do
       on_exit(fn -> System.delete_env("SYMP_TEST_CODEX_TRACE") end)
 
       write_workflow_file!(Workflow.workflow_file_path(),
-        tracker_kind: "local",
-        tracker_local_config_path: Path.join(test_root, "config.toml"),
-        tracker_local_project: "siaan",
+        state_type: "local",
+        state_local_config_path: Path.join(test_root, "config.toml"),
+        state_local_project: "siaan",
         workspace_root: workspace_root,
         codex_command: "#{codex_binary} app-server",
-        tracker_active_states: ["status:in-progress"]
+        state_active_states: ["status:in-progress"]
       )
 
       issue = %Issue{
@@ -2739,13 +2757,13 @@ defmodule SymphonyElixir.CoreTest do
       File.chmod!(codex_binary, 0o755)
 
       write_workflow_file!(Workflow.workflow_file_path(),
-        tracker_kind: "local",
-        tracker_local_config_path: Path.join(test_root, "config.toml"),
-        tracker_local_project: "siaan",
+        state_type: "local",
+        state_local_config_path: Path.join(test_root, "config.toml"),
+        state_local_project: "siaan",
         workspace_root: workspace_root,
         worker_ssh_hosts: ["worker-a", "worker-b"],
         codex_command: "#{codex_binary} app-server",
-        tracker_active_states: ["status:in-progress"]
+        state_active_states: ["status:in-progress"]
       )
 
       issue = %Issue{

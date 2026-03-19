@@ -1,8 +1,8 @@
-defmodule SymphonyElixir.GitHub.AdapterTest do
+defmodule SymphonyElixir.StateSync.GitHub.AdapterTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.GitHub.Adapter
-  alias SymphonyElixir.GitHub.Issue, as: GitHubIssue
+  alias SymphonyElixir.StateSync.GitHub.Adapter
+  alias SymphonyElixir.StateSync.GitHub.Issue, as: GitHubIssue
 
   defmodule FakeGitHubClient do
     def fetch_candidate_issues do
@@ -160,12 +160,12 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
 
   test "tracker selects github adapter when tracker kind is github" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_project_slug: "acme/repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_project_slug: "acme/repo",
+      state_api_token: "gh-token"
     )
 
-    assert SymphonyElixir.Tracker.adapter() == SymphonyElixir.GitHub.Adapter
+    assert SymphonyElixir.StateSync.adapter() == SymphonyElixir.StateSync.GitHub.Adapter
   end
 
   test "adapter passes through native blocked_by relationships from GitHub client" do
@@ -199,13 +199,13 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     Application.put_env(:symphony_elixir, :github_client_module, WaitingWatchGitHubClient)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_watch_states: ["status:review"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_watch_states: ["status:review"],
+      state_terminal_states: ["status:done"]
     )
 
     assert :ok =

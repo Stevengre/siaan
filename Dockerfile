@@ -44,6 +44,12 @@ RUN mix local.hex --force && \
 FROM deps AS build
 
 COPY elixir/ ./
+COPY prompt-engine /prompt-engine
+COPY state-sync /state-sync
+COPY state-sync-github /state-sync-github
+COPY state-sync-local /state-sync-local
+COPY workflow-engine /workflow-engine
+COPY workspace /workspace
 RUN mix setup && mix build
 
 # ---------- runtime stage ----------

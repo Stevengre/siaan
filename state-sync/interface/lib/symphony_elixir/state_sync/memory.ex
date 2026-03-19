@@ -1,19 +1,19 @@
-defmodule SymphonyElixir.Tracker.Memory do
+defmodule SymphonyElixir.StateSync.Memory do
   @moduledoc """
-  In-memory tracker adapter used for tests and local development.
+  In-memory state sync implementation used for tests and local development.
   """
 
-  @behaviour SymphonyElixir.Tracker
+  @behaviour SymphonyElixir.StateSync
 
   alias SymphonyElixir.Config
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.Issue
 
-  @spec fetch_candidate_issues() :: {:ok, [TrackerIssue.t()]} | {:error, term()}
+  @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     {:ok, issue_entries()}
   end
 
-  @spec fetch_issues_by_states([String.t()]) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
+  @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_states(state_names) do
     normalized_states =
       state_names
@@ -21,17 +21,17 @@ defmodule SymphonyElixir.Tracker.Memory do
       |> MapSet.new()
 
     {:ok,
-     Enum.filter(issue_entries(), fn %TrackerIssue{state: state} ->
+     Enum.filter(issue_entries(), fn %Issue{state: state} ->
        MapSet.member?(normalized_states, normalize_state(state))
      end)}
   end
 
-  @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [TrackerIssue.t()]} | {:error, term()}
+  @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) do
     wanted_ids = MapSet.new(issue_ids)
 
     {:ok,
-     Enum.filter(issue_entries(), fn %TrackerIssue{id: id} ->
+     Enum.filter(issue_entries(), fn %Issue{id: id} ->
        MapSet.member?(wanted_ids, id)
      end)}
   end
@@ -49,17 +49,17 @@ defmodule SymphonyElixir.Tracker.Memory do
   end
 
   @spec active_states() :: [String.t()]
-  def active_states, do: Config.settings!().tracker.active_states || []
+  def active_states, do: Config.settings!().state.active_states || []
 
   @spec terminal_states() :: [String.t()]
-  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+  def terminal_states, do: Config.settings!().state.terminal_states || []
 
-  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(%TrackerIssue{state: issue_state}), do: dispatch_target_state(issue_state)
+  @spec dispatch_target_state(Issue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%Issue{state: issue_state}), do: dispatch_target_state(issue_state)
 
   def dispatch_target_state(issue_state) do
     normalized_issue_state = normalize_state(issue_state)
-    ready_state = normalize_state(Config.settings!().tracker.ready_label)
+    ready_state = normalize_state(Config.settings!().state.ready_label)
 
     if normalized_issue_state == "" or normalized_issue_state != ready_state do
       nil
@@ -74,7 +74,7 @@ defmodule SymphonyElixir.Tracker.Memory do
 
   @spec initial_dispatch_transition_name() :: String.t() | nil
   def initial_dispatch_transition_name do
-    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+    with ready_state when is_binary(ready_state) <- Config.settings!().state.ready_label,
          target_state when is_binary(target_state) <- dispatch_target_state(ready_state) do
       SymphonyElixir.DispatchLifecycle.transition_name(ready_state, target_state)
     end
@@ -91,7 +91,7 @@ defmodule SymphonyElixir.Tracker.Memory do
   end
 
   defp issue_entries do
-    Enum.filter(configured_issues(), &match?(%TrackerIssue{}, &1))
+    Enum.filter(configured_issues(), &match?(%Issue{}, &1))
   end
 
   defp send_event(message) do

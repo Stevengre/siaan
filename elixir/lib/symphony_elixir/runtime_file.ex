@@ -3,7 +3,7 @@ defmodule SymphonyElixir.RuntimeFile do
   Loads runtime configuration and prompt content from the legacy markdown file format.
   """
 
-  alias SymphonyElixir.{RuntimeConfigStore, RuntimeSourceStore, WorkflowStore}
+  alias SymphonyElixir.{RuntimeConfigStore, RuntimeSourceStore, RuntimeStateConfig, WorkflowStore}
 
   @default_runtime_file_names ["runtime.yaml", "runtime.yml", "WORKFLOW.md"]
 
@@ -67,7 +67,7 @@ defmodule SymphonyElixir.RuntimeFile do
 
         {:ok,
          %{
-           config: front_matter,
+           config: RuntimeStateConfig.normalize(front_matter),
            prompt: prompt,
            prompt_template: prompt
          }}

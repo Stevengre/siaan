@@ -3,8 +3,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
-  alias SymphonyElixir.GitHub.Issue, as: GitHubIssue
   alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.StateSync.GitHub.Issue, as: GitHubIssue
 
   test "workspace bootstrap can be implemented in after_create hook" do
     test_root =
@@ -538,8 +538,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
   test "linear client trims api token before building authorization headers" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: "  linear-token  ",
-      tracker_project_slug: "project"
+      state_api_token: "  linear-token  ",
+      state_project_slug: "project"
     )
 
     assert {:ok, %{"data" => %{"viewer" => %{"id" => "viewer-id"}}}} =
@@ -630,7 +630,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   end
 
   test "issue assigned to another worker is not dispatch-eligible" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_assignee: "dev@example.com")
+    write_workflow_file!(Workflow.workflow_file_path(), state_assignee: "dev@example.com")
 
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
@@ -909,17 +909,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       codex_turn_timeout_ms: nil,
       codex_read_timeout_ms: nil,
       codex_stall_timeout_ms: nil,
-      tracker_api_token: nil,
-      tracker_project_slug: nil
+      state_api_token: nil,
+      state_project_slug: nil
     )
 
     config = Config.settings!()
-    assert config.tracker.endpoint == "https://api.linear.app/graphql"
-    assert config.tracker.api_key == nil
-    assert config.tracker.project_slug == nil
-    assert config.tracker.repo_owner == nil
-    assert config.tracker.repo_name == nil
-    assert config.tracker.ready_label == "status:ready"
+    assert config.state.endpoint == "https://api.linear.app/graphql"
+    assert config.state.api_key == nil
+    assert config.state.project_slug == nil
+    assert config.state.repo_owner == nil
+    assert config.state.repo_name == nil
+    assert config.state.ready_label == "status:ready"
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
@@ -985,17 +985,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              "writableRoots" => [explicit_workspace, explicit_cache]
            }
 
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
+    write_workflow_file!(Workflow.workflow_file_path(), state_active_states: ",")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "tracker.active_states"
+    assert message =~ "state.active_states"
 
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: [nil, "Todo"])
+    write_workflow_file!(Workflow.workflow_file_path(), state_active_states: [nil, "Todo"])
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "tracker.active_states"
+    assert message =~ "state.active_states"
 
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_terminal_states: [nil, "Closed"])
+    write_workflow_file!(Workflow.workflow_file_path(), state_terminal_states: [nil, "Closed"])
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "tracker.terminal_states"
+    assert message =~ "state.terminal_states"
 
     write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
@@ -1018,8 +1018,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert message =~ "codex.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_active_states: %{todo: true},
-      tracker_terminal_states: %{done: true},
+      state_active_states: %{todo: true},
+      state_terminal_states: %{done: true},
       poll_interval_ms: %{bad: true},
       workspace_root: 123,
       max_retry_backoff_ms: 0,
@@ -1072,10 +1072,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
   test "config namespaces default workspace root by github repository when workspace.root is omitted" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_api_token: "gh-token",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
+      state_type: "github",
+      state_api_token: "gh-token",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
       workspace_root: nil
     )
 
@@ -1102,13 +1102,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: "$#{api_key_env_var}",
+      state_api_token: "$#{api_key_env_var}",
       workspace_root: "$#{workspace_env_var}",
       codex_command: "#{codex_bin} app-server"
     )
 
     config = Config.settings!()
-    assert config.tracker.api_key == api_key
+    assert config.state.api_key == api_key
     assert config.workspace.root == Path.expand(workspace_root)
     assert config.codex.command == "#{codex_bin} app-server"
   end
@@ -1131,12 +1131,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: "env:#{api_key_env_var}",
+      state_api_token: "env:#{api_key_env_var}",
       workspace_root: "env:#{workspace_env_var}"
     )
 
     config = Config.settings!()
-    assert config.tracker.api_key == "env:#{api_key_env_var}"
+    assert config.state.api_key == "env:#{api_key_env_var}"
     assert config.workspace.root == "env:#{workspace_env_var}"
   end
 
@@ -1228,12 +1228,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:ok, settings} =
              Schema.parse(%{
-               tracker: %{api_key: "$#{empty_secret_env}"},
+               state: %{api_key: "$#{empty_secret_env}"},
                workspace: %{root: "$#{missing_workspace_env}"},
                codex: %{approval_policy: %{reject: %{sandbox_approval: true}}}
              })
 
-    assert settings.tracker.api_key == nil
+    assert settings.state.api_key == nil
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
 
     assert settings.codex.approval_policy == %{
@@ -1242,33 +1242,73 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:ok, settings} =
              Schema.parse(%{
-               tracker: %{api_key: "$#{missing_secret_env}"},
+               state: %{api_key: "$#{missing_secret_env}"},
                workspace: %{root: ""}
              })
 
-    assert settings.tracker.api_key == "fallback-linear-token"
+    assert settings.state.api_key == "fallback-linear-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
 
     assert {:ok, github_settings} =
              Schema.parse(%{
-               tracker: %{kind: "github", endpoint: nil}
+               state: %{kind: "github", endpoint: nil}
              })
 
-    assert github_settings.tracker.endpoint == "https://api.github.com/graphql"
+    assert github_settings.state.endpoint == "https://api.github.com/graphql"
 
     assert {:ok, blank_endpoint_settings} =
              Schema.parse(%{
-               tracker: %{kind: "linear", endpoint: "   "}
+               state: %{kind: "linear", endpoint: "   "}
              })
 
-    assert blank_endpoint_settings.tracker.endpoint == "https://api.linear.app/graphql"
+    assert blank_endpoint_settings.state.endpoint == "https://api.linear.app/graphql"
 
     assert {:ok, env_endpoint_settings} =
              Schema.parse(%{
-               tracker: %{kind: "github", endpoint: "$#{empty_endpoint_env}"}
+               state: %{kind: "github", endpoint: "$#{empty_endpoint_env}"}
              })
 
-    assert env_endpoint_settings.tracker.endpoint == "https://api.github.com/graphql"
+    assert env_endpoint_settings.state.endpoint == "https://api.github.com/graphql"
+  end
+
+  test "schema.parse normalizes legacy tracker sections into state config" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               tracker: %{
+                 kind: "github",
+                 api_key: "gh-token",
+                 repo_owner: "acme",
+                 repo_name: "repo"
+               }
+             })
+
+    assert settings.state.type == "github"
+    assert settings.state.api_key == "gh-token"
+
+    assert settings.workspace.root ==
+             Path.join(Path.join(System.tmp_dir!(), "symphony_workspaces"), "acme-repo")
+  end
+
+  test "schema.parse normalizes legacy state.kind while preferring explicit state.type" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               tracker: %{
+                 kind: "github",
+                 api_key: "ignored-token",
+                 repo_owner: "ignored",
+                 repo_name: "ignored"
+               },
+               state: %{
+                 type: "linear",
+                 kind: "github",
+                 api_key: "linear-token",
+                 project_slug: "project"
+               }
+             })
+
+    assert settings.state.type == "linear"
+    assert settings.state.api_key == "linear-token"
+    assert settings.state.project_slug == "project"
   end
 
   test "schema resolves sandbox policies from explicit and default workspaces" do

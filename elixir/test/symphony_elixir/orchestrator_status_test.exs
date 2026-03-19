@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
+  alias SymphonyElixir.StateSync.GitHub.Adapter, as: GitHubAdapter
 
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
@@ -25,10 +25,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "ready issues transition to in-progress before normal dispatch" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     issue = %Issue{
@@ -75,10 +75,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "ready issues are not dispatched when the transition to in-progress fails" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     issue = %Issue{
@@ -101,10 +101,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "ready issues are not dispatched when the transitioned issue cannot be refreshed" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     issue = %Issue{
@@ -135,9 +135,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "dispatch target state is derived from configured ready label and active states" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "memory",
-      tracker_ready_label: "queued",
-      tracker_active_states: ["queued", "working", "reviewing"]
+      state_type: "memory",
+      state_ready_label: "queued",
+      state_active_states: ["queued", "working", "reviewing"]
     )
 
     issue = %Issue{
@@ -204,11 +204,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     )
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_local_config_path: config_path,
-      tracker_local_project: "siaan",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
+      state_type: "local",
+      state_local_config_path: config_path,
+      state_local_project: "siaan",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready"]
     )
 
     issue = %Issue{
@@ -240,8 +240,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "resume dispatch transition and profile names derive from the current active state" do
     configure_execution_profile_workspace!(
-      tracker_ready_label: "queued",
-      tracker_active_states: ["queued", "working", "reviewing"],
+      state_ready_label: "queued",
+      state_active_states: ["queued", "working", "reviewing"],
       execution_profiles: %{
         "resume_working" => %{
           "session_reuse" => "reuse_issue_session",
@@ -294,10 +294,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "ready-state dispatch transition overrides queued retry metadata" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "local",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"],
-      tracker_terminal_states: ["status:done"]
+      state_type: "local",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"],
+      state_terminal_states: ["status:done"]
     )
 
     issue = %Issue{
@@ -967,7 +967,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     workspace_root = tmp_dir!("session-history-single-completion")
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
+      state_api_token: nil,
       workspace_root: workspace_root
     )
 
@@ -1663,7 +1663,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator triggers an immediate poll cycle shortly after startup" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
+      state_api_token: nil,
       poll_interval_ms: 5_000
     )
 
@@ -1715,7 +1715,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator poll cycle resets next refresh countdown after a check" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
+      state_api_token: nil,
       poll_interval_ms: 50
     )
 
@@ -1764,7 +1764,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator restarts stalled workers with retry backoff" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
+      state_api_token: nil,
       codex_stall_timeout_ms: 1_000
     )
 
@@ -1828,7 +1828,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator does not restart idle persistent runners during watch-state stalls" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
+      state_api_token: nil,
       codex_stall_timeout_ms: 1_000
     )
 
@@ -1887,8 +1887,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator stops busy runners when an issue moves to a watch state" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: nil,
-      tracker_watch_states: ["status:review"]
+      state_api_token: nil,
+      state_watch_states: ["status:review"]
     )
 
     issue_id = "issue-busy-review"

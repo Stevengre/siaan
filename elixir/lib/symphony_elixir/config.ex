@@ -141,24 +141,24 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_semantics(settings) do
-    case settings.tracker.kind do
+    case settings.state.type do
       nil ->
-        {:error, :missing_tracker_kind}
+        {:error, :missing_state_type}
 
       "memory" ->
         :ok
 
       "linear" ->
-        validate_linear_tracker(settings.tracker)
+        validate_linear_tracker(settings.state)
 
       "github" ->
-        validate_github_tracker(settings.tracker)
+        validate_github_tracker(settings.state)
 
       "local" ->
-        validate_local_tracker(settings.tracker)
+        validate_local_tracker(settings.state)
 
-      kind ->
-        {:error, {:unsupported_tracker_kind, kind}}
+      type ->
+        {:error, {:unsupported_state_type, type}}
     end
   end
 

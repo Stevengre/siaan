@@ -3,5 +3,5 @@ defmodule SymphonyElixir.Linear.Issue do
   Deprecated alias for the tracker issue model retained for compatibility.
   """
 
-  defdelegate label_names(issue), to: SymphonyElixir.TrackerIssue
+  defdelegate label_names(issue), to: SymphonyElixir.StateSync.Issue
 end

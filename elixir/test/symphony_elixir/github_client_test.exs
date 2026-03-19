@@ -1,8 +1,8 @@
-defmodule SymphonyElixir.GitHub.ClientTest do
+defmodule SymphonyElixir.StateSync.GitHub.ClientTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.GitHub.Client
-  alias SymphonyElixir.GitHub.Issue
+  alias SymphonyElixir.StateSync.GitHub.Client
+  alias SymphonyElixir.StateSync.GitHub.Issue
 
   test "normalize_issue_for_test extracts status labels and assignees" do
     issue =
@@ -46,13 +46,13 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test fetches all active-state labels and skips pull requests" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_project_slug: "acme/repo",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready", "status:in-progress"]
+      state_type: "github",
+      state_project_slug: "acme/repo",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready", "status:in-progress"]
     )
 
     request_fun = fn method, url, opts ->
@@ -136,12 +136,12 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test handles pagination, malformed entries, and status failures" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: ["status:ready"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_ready_label: "status:ready",
+      state_active_states: ["status:ready"]
     )
 
     paged_request = fn method, url, opts ->
@@ -188,11 +188,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test honors open/closed entries in active states" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_active_states: ["closed", "open"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_active_states: ["closed", "open"]
     )
 
     request_fun = fn method, url, opts ->
@@ -233,12 +233,12 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test returns no candidates when active_states is explicitly empty" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_ready_label: "status:ready",
-      tracker_active_states: []
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_ready_label: "status:ready",
+      state_active_states: []
     )
 
     request_fun = fn :get, _url, _opts ->
@@ -250,11 +250,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issue_states_by_ids_for_test keeps requested id order" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_project_slug: "acme/repo",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_project_slug: "acme/repo",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     request_fun = fn method, url, _opts ->
@@ -309,11 +309,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test reads native GitHub blockedBy dependencies" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_active_states: ["status:in-progress"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_active_states: ["status:in-progress"]
     )
 
     request_fun = fn method, url, opts ->
@@ -372,11 +372,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test tolerates missing issue entries and malformed blocker nodes" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_active_states: ["status:in-progress"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_active_states: ["status:in-progress"]
     )
 
     request_fun = fn method, url, _opts ->
@@ -467,11 +467,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test surfaces native blocker GraphQL errors and malformed responses" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_active_states: ["status:in-progress"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_active_states: ["status:in-progress"]
     )
 
     base_issue = [
@@ -529,11 +529,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "graphql/3 uses github auth headers and surfaces status failures" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_project_slug: "acme/repo",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "  gh-token  "
+      state_type: "github",
+      state_project_slug: "acme/repo",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "  gh-token  "
     )
 
     request_fun = fn method, url, opts ->
@@ -561,9 +561,9 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "graphql/3 maps legacy linear endpoint to github endpoint when called through this client" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "linear",
-      tracker_endpoint: "https://api.linear.app/graphql",
-      tracker_api_token: "linear-token"
+      state_type: "linear",
+      state_endpoint: "https://api.linear.app/graphql",
+      state_api_token: "linear-token"
     )
 
     request_fun = fn method, url, _opts ->
@@ -579,22 +579,22 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "build_repo_context derives the correct REST base URL from the configured GitHub endpoint" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com/api/graphql"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com/api/graphql"
     )
 
     assert {:ok, context} = Client.build_repo_context("acme", "repo", "gh-token")
     assert context.rest_endpoint == "https://ghe.example.com/api/v3"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com/api/v3/graphql"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com/api/v3/graphql"
     )
 
     assert {:ok, v3_context} = Client.build_repo_context("acme", "repo", "gh-token")
@@ -605,11 +605,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     restore_env("GITHUB_TOKEN", "env-token")
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: nil
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: nil
     )
 
     assert {:ok, context} = Client.build_repo_context("acme", "repo")
@@ -617,44 +617,44 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     assert context.rest_endpoint == "https://api.github.com"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://api.linear.app/graphql"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://api.linear.app/graphql"
     )
 
     assert {:ok, linear_context} = Client.build_repo_context("acme", "repo", "gh-token")
     assert linear_context.rest_endpoint == "https://api.github.com"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com"
     )
 
     assert {:ok, pathless_context} = Client.build_repo_context("acme", "repo", "gh-token")
     assert pathless_context.rest_endpoint == "https://ghe.example.com"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com/custom/path"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com/custom/path"
     )
 
     assert {:ok, passthrough_context} = Client.build_repo_context("acme", "repo", "gh-token")
     assert passthrough_context.rest_endpoint == "https://ghe.example.com/custom/path"
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "not a url"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "not a url"
     )
 
     assert {:ok, invalid_context} = Client.build_repo_context("acme", "repo", "gh-token")
@@ -664,7 +664,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   test "build_repo_context falls back to the default REST endpoint when workflow config is invalid" do
     valid_workflow = Workflow.workflow_file_path()
     invalid_workflow = Path.join(Path.dirname(valid_workflow), "BROKEN_WORKFLOW.md")
-    File.write!(invalid_workflow, "---\ntracker: [\n---\nBroken prompt\n")
+    File.write!(invalid_workflow, "---\nstate: [\n---\nBroken prompt\n")
 
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
     Workflow.set_workflow_file_path(invalid_workflow)
@@ -680,7 +680,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
   test "build_repo_context honors an explicit REST endpoint override" do
     valid_workflow = Workflow.workflow_file_path()
     invalid_workflow = Path.join(Path.dirname(valid_workflow), "BROKEN_WORKFLOW_OVERRIDE.md")
-    File.write!(invalid_workflow, "---\ntracker: [\n---\nBroken prompt\n")
+    File.write!(invalid_workflow, "---\nstate: [\n---\nBroken prompt\n")
 
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
     Workflow.set_workflow_file_path(invalid_workflow)
@@ -698,11 +698,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "build_repo_context ignores blank REST endpoint overrides" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com/api/graphql"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com/api/graphql"
     )
 
     assert {:ok, context} =
@@ -713,12 +713,12 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_candidate_issues_for_test uses the configured REST endpoint" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "https://ghe.example.com/api/graphql",
-      tracker_active_states: ["status:ready"]
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "https://ghe.example.com/api/graphql",
+      state_active_states: ["status:ready"]
     )
 
     request_fun = fn method, url, opts ->
@@ -946,11 +946,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "graphql/3 uses the default GitHub endpoint when tracker endpoint is nil" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: nil
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: nil
     )
 
     assert {:ok, %{"data" => %{"ok" => true}}} =
@@ -970,10 +970,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: nil,
-      tracker_repo_name: nil,
-      tracker_api_token: nil
+      state_type: "github",
+      state_repo_owner: nil,
+      state_repo_name: nil,
+      state_api_token: nil
     )
 
     assert {:error, :missing_github_api_token} = Client.fetch_candidate_issues()
@@ -989,10 +989,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: nil
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: nil
     )
 
     assert {:error, :missing_github_api_token} =
@@ -1001,10 +1001,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: nil,
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: nil,
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     assert {:error, :missing_github_repo_owner} =
@@ -1013,11 +1013,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_project_slug: "acme/repo",
-      tracker_repo_owner: nil,
-      tracker_repo_name: nil,
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_project_slug: "acme/repo",
+      state_repo_owner: nil,
+      state_repo_name: nil,
+      state_api_token: "gh-token"
     )
 
     assert {:error, :missing_github_repo_owner} =
@@ -1026,10 +1026,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: nil,
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: nil,
+      state_api_token: "gh-token"
     )
 
     assert {:error, :missing_github_repo_name} =
@@ -1040,10 +1040,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issues_by_states_for_test deduplicates repeated issues and handles empty state filters" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     assert {:ok, []} = Client.fetch_issues_by_states_for_test([], fn _method, _url, _opts -> flunk("no request expected") end)
@@ -1091,10 +1091,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issues_by_states_for_test supports open/closed issue state filters" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     request_fun = fn method, url, opts ->
@@ -1166,10 +1166,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issues_by_states_for_test surfaces transport failures" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     request_failure = fn _method, _url, _opts -> {:error, :timeout} end
@@ -1180,10 +1180,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issues_by_states_for_test surfaces non-200 status responses" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     status_failure = fn _method, _url, _opts -> {:ok, %{status: 422, body: %{}}} end
@@ -1192,10 +1192,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "fetch_issue_states_by_ids_for_test handles 404 and invalid issue ids" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     request_fun = fn method, url, _opts ->
@@ -1248,10 +1248,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "create_comment_for_test handles success, status failures, transport failures, and invalid ids" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     success = fn :post, _url, opts ->
@@ -1275,10 +1275,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "update_issue_state_for_test retargets status labels and handles error branches" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     success = fn method, _url, opts ->
@@ -1356,10 +1356,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "update_issue_state_for_test allows initializing triage and keeping the same status label" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     open_to_triage = fn method, _url, opts ->
@@ -1417,10 +1417,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "update_issue_state_for_test rejects malformed issues with missing current state" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     malformed_issue = fn method, _url, _opts ->
@@ -1450,10 +1450,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "update_issue_state_for_test normalizes non-binary current states before rejecting them" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     malformed_issue = fn method, _url, _opts ->
@@ -1483,10 +1483,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
 
   test "graphql/3 surfaces request failures and default request path errors" do
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token"
     )
 
     request_failure = fn _method, _url, _opts -> {:error, :closed} end
@@ -1495,11 +1495,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
              Client.graphql("query Viewer { viewer { login } }", %{}, request_fun: request_failure)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: "gh-token",
-      tracker_endpoint: "http://127.0.0.1:1/graphql"
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: "gh-token",
+      state_endpoint: "http://127.0.0.1:1/graphql"
     )
 
     assert {:error, {:github_api_request, _reason}} =
@@ -1510,11 +1510,11 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_kind: "github",
-      tracker_repo_owner: "acme",
-      tracker_repo_name: "repo",
-      tracker_api_token: nil,
-      tracker_endpoint: ""
+      state_type: "github",
+      state_repo_owner: "acme",
+      state_repo_name: "repo",
+      state_api_token: nil,
+      state_endpoint: ""
     )
 
     assert {:error, {:github_api_request, :missing_github_api_token}} =
@@ -1530,7 +1530,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     System.delete_env("GITHUB_TOKEN")
     on_exit(fn -> restore_env("GITHUB_TOKEN", previous_github_token) end)
 
-    write_github_tracker_workflow(tracker_api_token: nil)
+    write_github_tracker_workflow(state_api_token: nil)
 
     assert {:error, :missing_github_api_token} = Client.has_actionable_pr_feedback?("7", [])
     assert {:error, :missing_github_api_token} = Client.has_pr_approval?("7")
@@ -3803,10 +3803,10 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       Workflow.workflow_file_path(),
       Keyword.merge(
         [
-          tracker_kind: "github",
-          tracker_repo_owner: "acme",
-          tracker_repo_name: "repo",
-          tracker_api_token: "gh-token",
+          state_type: "github",
+          state_repo_owner: "acme",
+          state_repo_name: "repo",
+          state_api_token: "gh-token",
           allowlist: ["reviewer", "maintainer", "siaan-bot", "chatgpt-codex-connector[bot]"]
         ],
         overrides

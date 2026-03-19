@@ -1,6 +1,6 @@
 ---
-tracker:
-  kind: memory
+state:
+  type: memory
   endpoint: null
   api_key: null
   project_slug: null

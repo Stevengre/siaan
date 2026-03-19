@@ -1,4 +1,4 @@
-defmodule SymphonyElixir.TrackerIssue do
+defmodule SymphonyElixir.StateSync.Issue do
   @moduledoc """
   Normalized tracker issue representation used by the orchestrator runtime.
   """

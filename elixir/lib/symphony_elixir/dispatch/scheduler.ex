@@ -1,8 +1,8 @@
 defmodule SymphonyElixir.Dispatch.Scheduler do
   @moduledoc false
 
-  alias SymphonyElixir.{Config, Tracker}
-  alias SymphonyElixir.TrackerIssue, as: Issue
+  alias SymphonyElixir.{Config, StateSync}
+  alias SymphonyElixir.StateSync.Issue, as: Issue
 
   @spec sort_issues_for_dispatch([Issue.t()]) :: [Issue.t()]
   def sort_issues_for_dispatch(issues) when is_list(issues) do
@@ -143,7 +143,7 @@ defmodule SymphonyElixir.Dispatch.Scheduler do
 
   @spec active_state_set() :: MapSet.t()
   def active_state_set do
-    Tracker.active_states()
+    StateSync.active_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
@@ -152,7 +152,7 @@ defmodule SymphonyElixir.Dispatch.Scheduler do
 
   @spec terminal_state_set() :: MapSet.t()
   def terminal_state_set do
-    Tracker.terminal_states()
+    StateSync.terminal_states()
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))

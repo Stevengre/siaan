@@ -1,15 +1,16 @@
-defmodule SymphonyElixir.GitHub.Adapter do
+defmodule SymphonyElixir.StateSync.GitHub.Adapter do
   @moduledoc """
   GitHub-backed tracker adapter.
   """
 
   require Logger
 
-  @behaviour SymphonyElixir.Tracker
+  @behaviour SymphonyElixir.StateSync
 
   alias SymphonyElixir.{Config, DispatchLifecycle}
-  alias SymphonyElixir.GitHub.{Client, Issue}
-  alias SymphonyElixir.TrackerIssue
+  alias SymphonyElixir.StateSync.GitHub.{Client, Issue}
+  alias SymphonyElixir.StateSync.GitHub.MergeAutomation.AutoMerge
+  alias SymphonyElixir.StateSync.Issue, as: StateIssue
 
   @spec fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -44,17 +45,17 @@ defmodule SymphonyElixir.GitHub.Adapter do
   end
 
   @spec active_states() :: [String.t()]
-  def active_states, do: Config.settings!().tracker.active_states || []
+  def active_states, do: Config.settings!().state.active_states || []
 
   @spec terminal_states() :: [String.t()]
-  def terminal_states, do: Config.settings!().tracker.terminal_states || []
+  def terminal_states, do: Config.settings!().state.terminal_states || []
 
-  @spec dispatch_target_state(TrackerIssue.t() | String.t() | nil) :: String.t() | nil
-  def dispatch_target_state(%TrackerIssue{state: issue_state}), do: dispatch_target_state(issue_state)
+  @spec dispatch_target_state(StateIssue.t() | String.t() | nil) :: String.t() | nil
+  def dispatch_target_state(%StateIssue{state: issue_state}), do: dispatch_target_state(issue_state)
 
   def dispatch_target_state(issue_state) do
     normalized_issue_state = normalize_state(issue_state)
-    ready_state = normalize_state(Config.settings!().tracker.ready_label)
+    ready_state = normalize_state(Config.settings!().state.ready_label)
 
     if normalized_issue_state == "" or normalized_issue_state != ready_state do
       nil
@@ -69,7 +70,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
 
   @spec initial_dispatch_transition_name() :: String.t() | nil
   def initial_dispatch_transition_name do
-    with ready_state when is_binary(ready_state) <- Config.settings!().tracker.ready_label,
+    with ready_state when is_binary(ready_state) <- Config.settings!().state.ready_label,
          target_state when is_binary(target_state) <- dispatch_target_state(ready_state) do
       DispatchLifecycle.transition_name(ready_state, target_state)
     end
@@ -95,13 +96,13 @@ defmodule SymphonyElixir.GitHub.Adapter do
 
   @doc false
   @spec dispatch_watched_issue_for_test(
-          TrackerIssue.t(),
+          StateIssue.t(),
           [String.t()],
           (String.t(), String.t() -> term()),
           (String.t(), String.t() | nil, String.t() -> term())
         ) :: :ok
   def dispatch_watched_issue_for_test(
-        %TrackerIssue{} = issue,
+        %StateIssue{} = issue,
         reasons,
         update_issue_state_fun,
         mark_pending_transition_fun
@@ -140,7 +141,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
   end
 
   defp evaluate_watched_issue(issue, update_issue_state_fun, mark_pending_transition_fun) do
-    case client_module().check_auto_merge_readiness(issue.id) do
+    case AutoMerge.check_readiness(issue.id) do
       {:ok, :ready, pr_number} ->
         Logger.info("Auto-merge: #{issue_context(issue)} PR ##{pr_number} is ready; merging")
         handle_ready_watch_issue(issue, pr_number, update_issue_state_fun, mark_pending_transition_fun)
@@ -154,7 +155,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
   end
 
   defp handle_ready_watch_issue(issue, pr_number, update_issue_state_fun, mark_pending_transition_fun) do
-    case client_module().auto_merge_pr(pr_number) do
+    case AutoMerge.merge_pull_request(pr_number) do
       :ok ->
         Logger.info("Auto-merge complete: #{issue_context(issue)} PR ##{pr_number}")
 
@@ -199,13 +200,13 @@ defmodule SymphonyElixir.GitHub.Adapter do
   end
 
   defp watch_state_names do
-    (Config.settings!().tracker.watch_states || [])
+    (Config.settings!().state.watch_states || [])
     |> Enum.filter(&is_binary/1)
     |> Enum.map(&normalize_state/1)
     |> Enum.filter(&(&1 != ""))
   end
 
-  defp watched_issue_merge_candidate?(%TrackerIssue{state: state_name}) when is_binary(state_name) do
+  defp watched_issue_merge_candidate?(%StateIssue{state: state_name}) when is_binary(state_name) do
     normalized_state = normalize_state(state_name)
     normalized_state != "closed" and normalized_state not in terminal_state_names()
   end
@@ -234,7 +235,7 @@ defmodule SymphonyElixir.GitHub.Adapter do
 
   defp normalize_state(_state), do: ""
 
-  defp issue_context(%TrackerIssue{id: issue_id, identifier: identifier}) do
+  defp issue_context(%StateIssue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 end

@@ -41,33 +41,61 @@ resolve_absolute_path() {
   fi
 }
 
-extract_tracker_kind() {
+extract_state_type() {
   local workflow_path="$1"
 
   awk '
-    function normalize_kind_value(value) {
-      sub(/^[[:space:]]*kind:[[:space:]]*/, "", value)
+    function normalize_type_value(value) {
+      sub(/^[[:space:]]*(type|kind):[[:space:]]*/, "", value)
       sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
       gsub(/^["'"'"']/, "", value)
       gsub(/["'"'"']$/, "", value)
       return tolower(value)
     }
 
-    function print_inline_tracker_kind(line, candidate) {
+    function normalize_scalar_value(value) {
+      sub(/[[:space:]]*(,|}|#.*)?$/, "", value)
+      gsub(/^["'"'"']/, "", value)
+      gsub(/["'"'"']$/, "", value)
+      return tolower(value)
+    }
+
+    function section_name(line, section) {
+      section = line
+      sub(/^[[:space:]]*/, "", section)
+      sub(/:.*/, "", section)
+      return section
+    }
+
+    function capture_type(section, value) {
+      value = normalize_scalar_value(value)
+
+      if (section == "state" && state_type == "") {
+        state_type = value
+      }
+
+      if (section == "tracker" && tracker_type == "") {
+        tracker_type = value
+      }
+    }
+
+    function capture_inline_state_type(section, line, candidate) {
       candidate = line
 
-      if (!match(candidate, /kind:[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
+      if (!match(candidate, /(type|kind):[[:space:]]*["'"'"']?[^,}#[:space:]]+["'"'"']?/)) {
         return 0
       }
 
       candidate = substr(candidate, RSTART, RLENGTH)
-      print normalize_kind_value(candidate)
+      capture_type(section, normalize_type_value(candidate))
       return 1
     }
 
     BEGIN {
-      in_tracker = 0
-      tracker_indent = -1
+      current_section = ""
+      section_indent = -1
+      state_type = ""
+      tracker_type = ""
     }
 
     {
@@ -79,33 +107,42 @@ extract_tracker_kind() {
       indent = RSTART ? RSTART - 1 : 0
     }
 
-    /^[[:space:]]*tracker:[[:space:]]*{/ {
-      if (print_inline_tracker_kind($0)) {
-        exit
-      }
+    /^[[:space:]]*(state|tracker):[[:space:]]*{/ {
+      capture_inline_state_type(section_name($0), $0)
+      current_section = ""
+      section_indent = -1
 
       next
     }
 
-    /^[[:space:]]*tracker:[[:space:]]*$/ {
-      in_tracker = 1
-      tracker_indent = indent
+    /^[[:space:]]*(state|tracker):[[:space:]]*$/ {
+      current_section = section_name($0)
+      section_indent = indent
       next
     }
 
-    in_tracker {
-      if (indent <= tracker_indent) {
-        exit
+    current_section != "" {
+      if (indent <= section_indent) {
+        current_section = ""
+        section_indent = -1
       }
+    }
 
-      if ($0 ~ /^[[:space:]]*kind:[[:space:]]*/) {
+    current_section != "" {
+      if ($0 ~ /^[[:space:]]*(type|kind):[[:space:]]*/) {
         line = $0
-        sub(/^[[:space:]]*kind:[[:space:]]*/, "", line)
-        sub(/[[:space:]]*(#.*)?$/, "", line)
-        gsub(/^["'"'"']/, "", line)
-        gsub(/["'"'"']$/, "", line)
-        print tolower(line)
-        exit
+        sub(/^[[:space:]]*(type|kind):[[:space:]]*/, "", line)
+        capture_type(current_section, line)
+        current_section = ""
+        section_indent = -1
+      }
+    }
+
+    END {
+      if (state_type != "") {
+        print state_type
+      } else if (tracker_type != "") {
+        print tracker_type
       }
     }
   ' "$workflow_path"
@@ -179,7 +216,7 @@ if [[ ! -f "$workflow" ]]; then
   exit 1
 fi
 
-tracker_kind="$(extract_tracker_kind "$workflow")"
+tracker_kind="$(extract_state_type "$workflow")"
 
 if [[ "$tracker_kind" == "github" ]] && [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "error: GITHUB_TOKEN is not set." >&2
