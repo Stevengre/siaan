@@ -24,14 +24,14 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
-  max_concurrent_agents: 5
+  max_concurrent_agents: 1
   max_turns: 20
   execution_profiles:
     ready_to_in_progress:
       session_reuse: new_issue_session
     review_to_in_progress:
       session_reuse: reuse_issue_session
-      codex_command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=medium --model gpt-5.3-spark app-server
+      codex_command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=medium --model gpt-5.3-codex-spark app-server
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=medium --model gpt-5.3-codex app-server
   approval_policy: never

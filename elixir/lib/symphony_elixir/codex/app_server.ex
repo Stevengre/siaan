@@ -57,7 +57,8 @@ defmodule SymphonyElixir.Codex.AppServer do
                port,
                expanded_workspace,
                session_policies,
-               tracker_kind
+               tracker_kind,
+               opts
              ) do
         {:ok,
          %{
@@ -314,17 +315,32 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies, tracker_kind) do
+  defp do_start_session(port, workspace, session_policies, tracker_kind, opts \\ []) do
+    resume_thread_id = normalize_resume_thread_id(Keyword.get(opts, :resume_thread_id))
+
     case send_initialize(port) do
       :ok ->
-        initialize_thread_state(port, workspace, session_policies, tracker_kind)
+        initialize_thread_state(port, workspace, session_policies, tracker_kind, resume_thread_id)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp initialize_thread_state(port, workspace, session_policies, tracker_kind) do
+  defp initialize_thread_state(port, workspace, session_policies, tracker_kind, resume_thread_id)
+       when is_binary(resume_thread_id) do
+    # Try to reuse the previous thread by skipping thread/start.
+    # If the first turn/start fails, fall back to a fresh thread.
+    {:ok,
+     %{
+       thread_id: resume_thread_id,
+       physical_session_reuse_decision: "resume_physical_session",
+       physical_session_fallback_reason: nil,
+       resume_fallback: {:pending, port, workspace, session_policies, tracker_kind}
+     }}
+  end
+
+  defp initialize_thread_state(port, workspace, session_policies, tracker_kind, _resume_thread_id) do
     with {:ok, thread_id} <- start_thread(port, workspace, session_policies, tracker_kind) do
       {:ok,
        %{
@@ -334,6 +350,15 @@ defmodule SymphonyElixir.Codex.AppServer do
        }}
     end
   end
+
+  defp normalize_resume_thread_id(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_resume_thread_id(_value), do: nil
 
   defp start_thread(
          port,
@@ -409,10 +434,73 @@ defmodule SymphonyElixir.Codex.AppServer do
            context.turn_sandbox_policy
          ) do
       {:ok, turn_id} ->
-        {:ok, session, turn_id}
+        {:ok, Map.delete(session, :resume_fallback), turn_id}
 
-      {:error, _reason} = error ->
-        error
+      {:error, reason} = error ->
+        # If we were trying to resume a previous thread and it failed,
+        # fall back to creating a fresh thread and retry the turn.
+        case Map.get(session, :resume_fallback) do
+          {:pending, fb_port, fb_workspace, fb_policies, fb_tracker_kind} ->
+            fallback_to_fresh_thread(
+              session,
+              prompt,
+              context,
+              {fb_port, fb_workspace, fb_policies, fb_tracker_kind},
+              reason
+            )
+
+          _ ->
+            error
+        end
+    end
+  end
+
+  defp fallback_to_fresh_thread(
+         %{thread_id: thread_id} = session,
+         prompt,
+         context,
+         {fb_port, fb_workspace, fb_policies, fb_tracker_kind},
+         reason
+       ) do
+    Logger.warning(
+      "Falling back to a new physical Codex session for #{issue_context(context.issue)}" <>
+        " previous_thread_id=#{thread_id}" <>
+        " reason=resume_turn_start_failed: #{inspect(reason)}"
+    )
+
+    case start_thread(fb_port, fb_workspace, fb_policies, fb_tracker_kind) do
+      {:ok, new_thread_id} ->
+        new_session =
+          session
+          |> Map.put(:thread_id, new_thread_id)
+          |> Map.put(:physical_session_reuse_decision, "started_new_physical_session")
+          |> Map.put(:physical_session_fallback_reason, "resume_turn_start_failed")
+          |> Map.delete(:resume_fallback)
+
+        start_fresh_turn(new_session, new_thread_id, prompt, context)
+
+      {:error, _} = thread_error ->
+        thread_error
+    end
+  end
+
+  defp start_fresh_turn(
+         %{port: port} = new_session,
+         new_thread_id,
+         prompt,
+         context
+       ) do
+    case start_turn(
+           port,
+           new_thread_id,
+           prompt,
+           context.issue,
+           context.workspace,
+           context.approval_policy,
+           context.turn_sandbox_policy
+         ) do
+      {:ok, turn_id} -> {:ok, new_session, turn_id}
+      {:error, _} = fallback_error -> fallback_error
     end
   end
 
