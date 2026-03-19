@@ -1,0 +1,30 @@
+conditions:
+  issue_is_ready:
+    kind: script
+    path: scripts/workflow/issue_is_ready.sh
+  acceptance_complete:
+    kind: script
+    path: scripts/workflow/acceptance_complete.sh
+  review_blocked:
+    kind: script
+    path: scripts/workflow/review_blocked.sh
+  review_approved:
+    kind: script
+    path: scripts/workflow/review_approved.sh
+
+actions:
+  mark_in_progress:
+    kind: skill
+    ref: github/update-status
+  open_or_update_pr:
+    kind: skill
+    ref: push
+  mark_review:
+    kind: skill
+    ref: github/update-status
+  requeue_execution:
+    kind: skill
+    ref: github/update-status
+  finalize_issue:
+    kind: skill
+    ref: github/update-status
