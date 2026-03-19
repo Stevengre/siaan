@@ -3,7 +3,7 @@ defmodule SymphonyElixir.RuntimeFile do
   Loads runtime configuration and prompt content from the legacy markdown file format.
   """
 
-  alias SymphonyElixir.{RuntimeConfigStore, RuntimeSourceStore, WorkflowStore}
+  alias SymphonyElixir.{RuntimeConfigStore, RuntimeSourceStore, RuntimeStateConfig, WorkflowStore}
 
   @default_runtime_file_names ["runtime.yaml", "runtime.yml", "WORKFLOW.md"]
 
@@ -67,7 +67,7 @@ defmodule SymphonyElixir.RuntimeFile do
 
         {:ok,
          %{
-           config: normalize_state_config(front_matter),
+           config: RuntimeStateConfig.normalize(front_matter),
            prompt: prompt,
            prompt_template: prompt
          }}
@@ -79,28 +79,6 @@ defmodule SymphonyElixir.RuntimeFile do
         {:error, {:workflow_parse_error, reason}}
     end
   end
-
-  defp normalize_state_config(%{"state" => state} = config) when is_map(state) do
-    Map.put(config, "state", normalize_state_section(state))
-  end
-
-  defp normalize_state_config(%{"tracker" => tracker} = config) when is_map(tracker) do
-    config
-    |> Map.delete("tracker")
-    |> Map.put("state", normalize_state_section(tracker))
-  end
-
-  defp normalize_state_config(config), do: config
-
-  defp normalize_state_section(%{"type" => _type} = state), do: state
-
-  defp normalize_state_section(%{"kind" => kind} = state) do
-    state
-    |> Map.delete("kind")
-    |> Map.put("type", kind)
-  end
-
-  defp normalize_state_section(state), do: state
 
   defp split_front_matter(content) do
     lines = String.split(content, ~r/\R/, trim: false)

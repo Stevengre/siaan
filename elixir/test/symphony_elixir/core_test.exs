@@ -2,6 +2,7 @@ defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Config.Schema, as: ConfigSchema
+  alias SymphonyElixir.RuntimeStateConfig
   alias SymphonyElixir.StateSync.GitHub.Adapter, as: GitHubAdapter
 
   defmodule StubRuntimeSource do
@@ -382,6 +383,23 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert {:error, :missing_github_repo_name} = Config.validate!()
+  end
+
+  test "runtime state config normalizes legacy tracker and kind keys" do
+    assert RuntimeStateConfig.normalize(%{"state" => %{"type" => "memory", "ready_label" => "queued"}}) ==
+             %{"state" => %{"type" => "memory", "ready_label" => "queued"}}
+
+    assert RuntimeStateConfig.normalize(%{"state" => %{"kind" => "github", "repo" => "acme/repo"}}) ==
+             %{"state" => %{"type" => "github", "repo" => "acme/repo"}}
+
+    assert RuntimeStateConfig.normalize(%{"tracker" => %{"kind" => "local", "project" => "siaan"}}) ==
+             %{"state" => %{"type" => "local", "project" => "siaan"}}
+
+    assert RuntimeStateConfig.normalize(%{"state" => %{"project" => "siaan"}}) ==
+             %{"state" => %{"project" => "siaan"}}
+
+    assert RuntimeStateConfig.normalize(%{"allowlist" => ["octocat"]}) ==
+             %{"allowlist" => ["octocat"]}
   end
 
   test "config reads settings and prompt from the runtime source boundary" do

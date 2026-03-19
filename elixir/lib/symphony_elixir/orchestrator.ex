@@ -320,12 +320,12 @@ defmodule SymphonyElixir.Orchestrator do
         state
 
       {:error, :missing_state_type} ->
-        Logger.error("StateSync kind missing in runtime config")
+        Logger.error("StateSync type missing in runtime config")
 
         state
 
-      {:error, {:unsupported_state_type, kind}} ->
-        Logger.error("Unsupported tracker kind in runtime config: #{inspect(kind)}")
+      {:error, {:unsupported_state_type, type}} ->
+        Logger.error("Unsupported state type in runtime config: #{inspect(type)}")
 
         state
 

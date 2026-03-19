@@ -84,7 +84,7 @@ defmodule SymphonyElixir.StateSync do
     end
   end
 
-  @doc false
+  @deprecated "Use implementation/0 instead; adapter/0 will be removed after 2026-06-30."
   @spec adapter() :: module()
   def adapter, do: implementation()
 end
