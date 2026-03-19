@@ -1032,12 +1032,24 @@ defmodule SymphonyElixir.ExtensionsTest do
   defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
 
   defp ensure_workflow_store_running do
+    SymphonyElixir.TestSupport.ensure_test_application_started!()
+
     if Process.whereis(WorkflowStore) do
       :ok
     else
-      case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+      try do
+        case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+        end
+      catch
+        :exit, _reason ->
+          SymphonyElixir.TestSupport.ensure_test_application_started!()
+
+          case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+          end
       end
     end
   end

@@ -1290,7 +1290,8 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "ignored codex worker updates do not broadcast dashboard refreshes" do
-    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.subscribe()
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.put_test_recipient(self())
+    on_exit(fn -> SymphonyElixirWeb.ObservabilityPubSub.clear_test_recipient() end)
     state = %Orchestrator.State{running: %{}}
 
     assert {:noreply, ^state} =
@@ -1299,11 +1300,12 @@ defmodule SymphonyElixir.CoreTest do
                state
              )
 
-    refute_receive :observability_updated, 50
+    refute_receive :observability_broadcast, 50
   end
 
   test "ignored runtime info updates do not broadcast dashboard refreshes" do
-    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.subscribe()
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.put_test_recipient(self())
+    on_exit(fn -> SymphonyElixirWeb.ObservabilityPubSub.clear_test_recipient() end)
     state = %Orchestrator.State{running: %{}}
 
     assert {:noreply, ^state} =
@@ -1312,11 +1314,12 @@ defmodule SymphonyElixir.CoreTest do
                state
              )
 
-    refute_receive :observability_updated, 50
+    refute_receive :observability_broadcast, 50
   end
 
   test "ignored dispatch completion updates do not broadcast dashboard refreshes" do
-    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.subscribe()
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.put_test_recipient(self())
+    on_exit(fn -> SymphonyElixirWeb.ObservabilityPubSub.clear_test_recipient() end)
     state = %Orchestrator.State{running: %{}}
 
     assert {:noreply, ^state} =
@@ -1325,7 +1328,17 @@ defmodule SymphonyElixir.CoreTest do
                state
              )
 
-    refute_receive :observability_updated, 50
+    refute_receive :observability_broadcast, 50
+  end
+
+  test "observability pubsub test recipient can be installed and cleared" do
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.put_test_recipient(self())
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.broadcast_update()
+    assert_receive :observability_broadcast, 50
+
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.clear_test_recipient()
+    assert :ok = SymphonyElixirWeb.ObservabilityPubSub.broadcast_update()
+    refute_receive :observability_broadcast, 50
   end
 
   test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
