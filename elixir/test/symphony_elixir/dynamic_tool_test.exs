@@ -7,11 +7,15 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     linear_specs = DynamicTool.tool_specs(tracker_kind: "linear")
     github_specs = DynamicTool.tool_specs(tracker_kind: "github")
     memory_specs = DynamicTool.tool_specs(tracker_kind: "memory")
+    atom_github_specs = DynamicTool.tool_specs(tracker_kind: :github)
+    atom_linear_specs = DynamicTool.tool_specs(tracker_kind: :linear)
     specs = linear_specs ++ github_specs
 
     assert Enum.map(linear_specs, & &1["name"]) == ["linear_graphql"]
     assert Enum.map(github_specs, & &1["name"]) == ["github_graphql"]
     assert memory_specs == []
+    assert Enum.map(atom_github_specs, & &1["name"]) == ["github_graphql"]
+    assert Enum.map(atom_linear_specs, & &1["name"]) == ["linear_graphql"]
 
     assert Enum.all?(specs, fn spec ->
              get_in(spec, ["inputSchema", "type"]) == "object" and
@@ -21,6 +25,24 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert Enum.any?(specs, &String.contains?(&1["description"], "Linear"))
     assert Enum.any?(specs, &String.contains?(&1["description"], "GitHub"))
+  end
+
+  test "execute accepts atom tracker kinds when selecting supported tools" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "github_graphql",
+        %{"query" => "query Viewer { viewer { login } }"},
+        tracker_kind: :github,
+        github_client: fn query, variables, opts ->
+          send(test_pid, {:github_client_called, query, variables, opts})
+          {:ok, %{"data" => %{"viewer" => %{"login" => "siaan-bot"}}}}
+        end
+      )
+
+    assert_received {:github_client_called, "query Viewer { viewer { login } }", %{}, []}
+    assert response["success"] == true
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
