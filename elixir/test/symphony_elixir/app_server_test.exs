@@ -315,7 +315,7 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:ok, session} = AppServer.start_session(workspace, resume_thread_id: "thread-existing")
+      assert {:ok, session} = AppServer.start_session(workspace)
       assert session.thread_id == "thread-fresh"
       assert session.physical_session_reuse_decision == "started_new_physical_session"
       assert session.physical_session_fallback_reason == nil

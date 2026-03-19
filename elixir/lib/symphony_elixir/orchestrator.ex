@@ -940,7 +940,8 @@ defmodule SymphonyElixir.Orchestrator do
       attempt: attempt,
       worker_host: worker_host,
       codex_command: dispatch_profile.codex_command,
-      issue_turn_count: dispatch_profile.issue_turn_count
+      issue_turn_count: dispatch_profile.issue_turn_count,
+      resume_thread_id: dispatch_profile.codex_thread_id
     ]
 
     case AgentRunner.start(issue, recipient, agent_opts) do
@@ -1243,7 +1244,7 @@ defmodule SymphonyElixir.Orchestrator do
     if physical_session_reuse_allowed?(profile, transition_name) do
       case existing_physical_session_id(existing_issue_session) do
         thread_id when is_binary(thread_id) ->
-          {"started_new_physical_session", "ephemeral_app_server_lifecycle", nil}
+          {"resume_physical_session", nil, thread_id}
 
         _ ->
           {"started_new_physical_session", "missing_previous_physical_session_id", nil}

@@ -356,12 +356,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert profile.profile_name == "review_to_in_progress"
     assert profile.session_reuse_policy == "reuse_issue_session"
     assert profile.session_reuse_decision == "reused_issue_session"
-    assert profile.physical_session_reuse_decision == "started_new_physical_session"
-    assert profile.physical_session_fallback_reason == "ephemeral_app_server_lifecycle"
+    assert profile.physical_session_reuse_decision == "resume_physical_session"
+    assert profile.physical_session_fallback_reason == nil
     assert profile.issue_session_id == "existing-issue-session"
     assert profile.issue_turn_count == 3
     assert profile.physical_session_count == 1
-    assert profile.codex_thread_id == nil
+    assert profile.codex_thread_id == "thread-existing"
     assert profile.codex_command == "codex --model gpt-5.3-spark app-server"
   end
 

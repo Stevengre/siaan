@@ -209,13 +209,16 @@ defmodule SymphonyElixir.AgentRunner do
         writable_roots = local_runtime_writable_roots(issue, workspace)
         codex_command = Keyword.get(opts, :codex_command)
 
+        resume_thread_id = Keyword.get(opts, :resume_thread_id)
+
         with {:ok, session} <-
                AppServer.start_session(
                  workspace,
                  worker_host: worker_host,
                  codex_command: codex_command,
                  allow_external_workspace: allow_external_workspace,
-                 writable_roots: writable_roots
+                 writable_roots: writable_roots,
+                 resume_thread_id: resume_thread_id
                ) do
           {:ok,
            %State{
