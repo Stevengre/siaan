@@ -10,6 +10,7 @@ defmodule SymphonyElixir.WorkflowEngine.Validator do
   def analyze(%StateMachine{} = machine) do
     reachable = reachable_states(machine)
     state_ids = Map.keys(machine.states) |> MapSet.new()
+    initial_state_findings = initial_state_findings(machine, state_ids)
 
     invalid_transitions =
       Enum.flat_map(machine.transitions, fn transition ->
@@ -40,7 +41,8 @@ defmodule SymphonyElixir.WorkflowEngine.Validator do
       |> Enum.map(fn transition -> %{source: transition.source, target: transition.target} end)
 
     findings =
-      invalid_transitions ++
+      initial_state_findings ++
+        invalid_transitions ++
         Enum.map(unreachable, &{:unreachable_state, &1}) ++
         Enum.map(deadlocks, &{:deadlock_state, &1}) ++
         Enum.map(missing_conditions, &{:missing_condition, &1})
@@ -113,6 +115,16 @@ defmodule SymphonyElixir.WorkflowEngine.Validator do
 
   defp blank?(nil), do: true
   defp blank?(value), do: String.trim(value) == ""
+
+  defp initial_state_findings(%StateMachine{initial_state: nil}, _state_ids), do: []
+
+  defp initial_state_findings(%StateMachine{initial_state: initial_state}, state_ids) do
+    if MapSet.member?(state_ids, initial_state) do
+      []
+    else
+      [{:unknown_initial_state, initial_state}]
+    end
+  end
 
   defp maybe_prepend_missing_initial_state(findings, nil), do: [{:missing_initial_state, nil} | findings]
   defp maybe_prepend_missing_initial_state(findings, _initial_state), do: findings

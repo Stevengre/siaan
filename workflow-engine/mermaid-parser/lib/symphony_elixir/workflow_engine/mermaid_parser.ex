@@ -180,7 +180,7 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
         end
       end)
 
-    put_state(machine, %{state | activities: activities, metadata: metadata})
+    replace_state(machine, %{state | activities: activities, metadata: metadata})
   end
 
   defp ensure_state(machine, state_id) when state_id == @end_state_id, do: machine
@@ -195,6 +195,10 @@ defmodule SymphonyElixir.WorkflowEngine.MermaidParser do
 
   defp put_state(machine, %State{id: state_id} = state) do
     %{machine | states: Map.put(machine.states, state_id, merge_state(Map.get(machine.states, state_id), state))}
+  end
+
+  defp replace_state(machine, %State{id: state_id} = state) do
+    %{machine | states: Map.put(machine.states, state_id, state)}
   end
 
   defp merge_state(nil, state), do: state

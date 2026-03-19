@@ -81,6 +81,22 @@ defmodule SymphonyElixir.WorkflowEngineTest do
     assert Map.fetch!(machine.states, "idle").label == "idle"
   end
 
+  test "parser does not duplicate activities when a state has multiple notes" do
+    assert {:ok, machine} =
+             MermaidParser.parse("""
+             stateDiagram-v2
+               [*] --> ready
+               note right of ready
+                 activity: setup
+               end note
+               note left of ready
+                 activity: verify
+               end note
+             """)
+
+    assert Map.fetch!(machine.states, "ready").activities == ["setup", "verify"]
+  end
+
   test "parser supports annotation-only transition labels" do
     assert {:ok, machine} =
              MermaidParser.parse("""
@@ -261,6 +277,15 @@ defmodule SymphonyElixir.WorkflowEngineTest do
     blank_initial = %StateMachine{states: %{"ready" => %StateMachine.State{id: "ready", label: "ready"}}}
     assert {:error, blank_findings} = Validator.validate(blank_initial)
     assert {:missing_initial_state, nil} in blank_findings
+  end
+
+  test "validator reports an initial state that is not declared" do
+    machine = %StateMachine{initial_state: "ready", states: %{}}
+
+    analysis = Validator.analyze(machine)
+    assert {:unknown_initial_state, "ready"} in analysis.findings
+    assert {:error, findings} = Validator.validate(machine)
+    assert {:unknown_initial_state, "ready"} in findings
   end
 
   test "validator reports transitions that reference unknown states" do
