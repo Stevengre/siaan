@@ -30,7 +30,6 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.CLI,
           SymphonyElixir.Codex.AppServer,
           SymphonyElixir.Codex.DynamicTool,
-
           SymphonyElixir.HttpServer,
           SymphonyElixir.Linear.Adapter,
           SymphonyElixir.StatusDashboard,
@@ -93,8 +92,6 @@ defmodule SymphonyElixir.MixProject do
       extra_applications: [:logger]
     ]
   end
-
-
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
