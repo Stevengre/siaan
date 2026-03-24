@@ -138,7 +138,10 @@ defmodule SymphonyElixir.MixProject do
       external_elixir_path("../state-sync/interface/lib"),
       external_elixir_path("../state-sync-github/adapter/lib"),
       external_elixir_path("../state-sync-github/merge-automation/lib"),
-      external_elixir_path("../state-sync-local/adapter/lib")
+      external_elixir_path("../state-sync-local/adapter/lib"),
+      dashboard_path("terminal-ui/lib"),
+      dashboard_path("metrics/lib"),
+      dashboard_path("http-api/lib")
     ]
   end
 
@@ -161,5 +164,17 @@ defmodule SymphonyElixir.MixProject do
       name: "siaan",
       path: "bin/siaan"
     ]
+  end
+
+  defp dashboard_path(path) do
+    local_path = "dashboard/" <> path
+    local_abs_path = Path.expand(local_path, __DIR__)
+    sibling_abs_path = Path.expand("../dashboard/" <> path, __DIR__)
+
+    cond do
+      File.exists?(local_abs_path) -> local_path
+      File.exists?(sibling_abs_path) -> sibling_abs_path
+      true -> sibling_abs_path
+    end
   end
 end
