@@ -30,6 +30,11 @@ defmodule SymphonyElixir.DashboardMetricsTest do
     assert Metrics.rolling_tps([], 10_000, 100) == 0.0
   end
 
+  test "rolling_tps returns zero when elapsed is zero with multiple same-timestamp samples" do
+    # Two samples at exact same ms -> elapsed_ms == 0 branch
+    assert Metrics.rolling_tps([{10_000, 50}], 10_000, 100) == 0.0
+  end
+
   test "throttled_tps reuses the cached value within the same second" do
     assert Metrics.throttled_tps(10, 42.5, 10_999, [{9_000, 20}], 100) == {10, 42.5}
   end

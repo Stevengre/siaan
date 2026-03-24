@@ -25,9 +25,6 @@ defmodule SymphonyElixir.Dashboard.Metrics do
     samples = prune_samples(samples, now_ms)
 
     case samples do
-      [] ->
-        0.0
-
       [_one] ->
         0.0
 
